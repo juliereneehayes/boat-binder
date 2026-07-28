@@ -48,7 +48,7 @@ Stripe is configured centrally in `config/initializers/stripe.rb` and `Billing::
 - `STRIPE_PUBLISHABLE_KEY`
 - `STRIPE_WEBHOOK_SECRET`
 
-The Stripe webhook endpoint is `POST /webhooks/stripe`. It is unauthenticated, skips CSRF only for that webhook action, verifies the raw request body with Stripe's official signature verifier, stores event metadata in `billing_webhook_events`, and intentionally ignores recognized subscription/invoice events for now. Local `Subscription` records remain the source of truth for access; normal requests do not call Stripe.
+The Stripe webhook endpoint is `POST /webhooks/stripe`. It is unauthenticated, skips CSRF only for that webhook action, verifies the raw request body using Stripe's official signature verification, records event metadata in `billing_webhook_events`, and currently treats all events as observational only. Recognized subscription, invoice, and checkout events are recorded with a status of `ignored` and a `deferred` reason to support future processing, while unknown event types are also recorded as ignored. Local `Subscription` records remain the source of truth for access; normal application requests do not call Stripe.
 
 GitHub Actions CI runs on pull requests and pushes to `main`. It includes separate jobs for Ruby security scanning, importmap audit, RuboCop, Rails tests, and system tests. CI uses PostgreSQL service containers and does not deploy the app.
 
