@@ -33,3 +33,28 @@ Stripe keys and webhook secrets should be set in Heroku config vars or Rails cre
 - `BUILD_WEEK_DEMO_PASSWORD` - required in production. Development/test default: `boat-binder-build-week-demo`.
 
 The demo runner never prints the password. Do not expose the production demo password in committed documentation.
+
+## Active Storage Image Processing Security
+
+Boat Binder uses the Rails 8.1 default Vips variant processor. `image_processing` supplies
+`ruby-vips`, while the native libvips library is installed by the runtime rather than Bundler.
+
+Rails and Active Storage 8.1.3.1 remediate
+[GHSA-xr9x-r78c-5hrm](https://github.com/rails/rails/security/advisories/GHSA-xr9x-r78c-5hrm)
+(`CVE-2026-66066`) by disabling untrusted libvips operations. The patched release requires
+`ruby-vips` 2.2.1 or later and native libvips 8.13 or later.
+
+Boat Binder's permitted image formats (JPEG, PNG, and WebP) remain supported. The release changes
+variant processing and analysis for unfuzzed formats that Boat Binder does not accept; attachment
+uploads, downloads, document storage, and the S3 service behavior are otherwise unchanged.
+
+The production native version cannot be confirmed from this repository. Verify it after deployment:
+
+```sh
+heroku run 'bundle exec ruby -rvips -e "puts Vips.version_string"' --app boat-binder
+```
+
+After deploying and confirming the patched runtime, rotate application secrets accessible to the
+production process as directed by the advisory. This includes Rails signing/encryption secrets and
+credentials for the database, Active Storage, email, Stripe, and other connected services. Do not
+retain potentially exposed values as fallbacks.
