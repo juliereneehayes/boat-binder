@@ -6,6 +6,15 @@ Core local boot usually works without production credentials. The variables belo
 
 - `APP_HOST` - host used in production email links, such as `app.boat-binder.com`.
 
+## Rails Application Secrets
+
+- `SECRET_KEY_BASE` - required in production and stored as a Heroku config var.
+
+Production intentionally does not use `RAILS_MASTER_KEY`, and `config/credentials.yml.enc` is no
+longer part of the production secret model. Do not restore the retired signing secret or master key
+as fallbacks. If Rails encrypted credentials are introduced again, they must use a new, independent
+master key and must not reuse retired production secrets.
+
 ## SMTP / Mailgun
 
 - `SMTP_ADDRESS`
@@ -25,7 +34,11 @@ These are required before production transactional email can actually deliver.
 - `STRIPE_SELF_MANAGED_MONTHLY_PRICE_ID` - Stripe Price ID for the Self Managed monthly option.
 - `STRIPE_SELF_MANAGED_ANNUAL_PRICE_ID` - Stripe Price ID for the Self Managed annual option.
 
-Stripe keys and webhook secrets should be set in Heroku config vars or Rails credentials. Do not commit real keys. The app can boot without Stripe secrets for development/test workflows that do not invoke Stripe; webhook verification fails safely until `STRIPE_WEBHOOK_SECRET` is configured.
+Production Stripe values are stored in Heroku environment/config vars. The initializer prefers those
+environment values and retains its existing Rails-credentials fallback for environments that may use
+encrypted credentials in the future. Do not commit real keys. The app can boot without Stripe secrets
+for development/test workflows that do not invoke Stripe; webhook verification fails safely until
+`STRIPE_WEBHOOK_SECRET` is configured.
 
 ## Build Week Demo
 
