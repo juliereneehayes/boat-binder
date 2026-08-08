@@ -14,6 +14,7 @@ Local development uses `Procfile.dev` with Rails and Tailwind watchers through `
 Production Rails configuration lives in `config/environments/production.rb` and currently assumes a Heroku-style runtime:
 
 - `RAILS_ENV=production`
+- `SECRET_KEY_BASE` supplied as an environment-specific Heroku config var
 - SSL forced with `config.assume_ssl = true` and `config.force_ssl = true`
 - logs emitted to STDOUT
 - assets served with long-lived cache headers
@@ -42,13 +43,17 @@ Transactional email is production-only SMTP through Mailgun-compatible settings:
 
 Production mailer URL helpers use `APP_HOST` with `https`. Development uses `localhost:3000`; test uses `example.com`.
 
-Stripe is configured centrally in `config/initializers/stripe.rb` and `Billing::StripeConfiguration`. The app reads Stripe values from environment variables first, then Rails credentials:
+Stripe is configured centrally in `config/initializers/stripe.rb` and `Billing::StripeConfiguration`. Production stores Stripe values in Heroku config vars. The initializer reads environment variables first and retains its existing Rails-credentials fallback:
 
 - `STRIPE_SECRET_KEY`
 - `STRIPE_PUBLISHABLE_KEY`
 - `STRIPE_WEBHOOK_SECRET`
 
 The Stripe webhook endpoint is `POST /webhooks/stripe`. It is unauthenticated, skips CSRF only for that webhook action, verifies the raw request body using Stripe's official signature verification, records event metadata in `billing_webhook_events`, and currently treats all events as observational only. Recognized subscription, invoice, and checkout events are recorded with a status of `ignored` and a `deferred` reason to support future processing, while unknown event types are also recorded as ignored. Local `Subscription` records remain the source of truth for access; normal application requests do not call Stripe.
+
+Rails signing uses `SECRET_KEY_BASE` from the production Heroku environment. Production intentionally
+does not set `RAILS_MASTER_KEY`, and the repository no longer carries `config/credentials.yml.enc` as
+an alternate source. Retired signing and master keys must not be restored as fallbacks.
 
 GitHub Actions CI runs on pull requests and pushes to `main`. It includes separate jobs for Ruby security scanning, importmap audit, RuboCop, Rails tests, and system tests. CI uses PostgreSQL service containers and does not deploy the app.
 
@@ -64,6 +69,7 @@ The Build Week demo setup is implemented by `BuildWeek::DemoAccountSetup` and `d
 ## Current Strengths
 
 - Production runtime configuration is environment-variable driven and does not hardcode credentials.
+- Production signing has one explicit source of truth in the `SECRET_KEY_BASE` Heroku config var.
 - Email, Stripe, S3, demo credentials, and app host values are already externalized.
 - Stripe webhook processing has a clear boundary, signature verification, idempotent receipt storage, and privacy-conscious logging/filtering.
 - Rails uses account-local timezone helpers for user-facing dates.
@@ -89,6 +95,7 @@ The Build Week demo setup is implemented by `BuildWeek::DemoAccountSetup` and `d
 The following values or behaviors will need environment-specific decisions before staging exists:
 
 - `APP_HOST` controls email and service-visit report links.
+- `SECRET_KEY_BASE` is required in production and must be unique to that environment.
 - `docs/email.md` examples use `app.boat-binder.com`.
 - `docs/stripe.md` documents `https://app.boat-binder.com/webhooks/stripe` as the production webhook endpoint.
 - `README.md` lists `https://boat-binder.com` as the live demo.
@@ -128,6 +135,7 @@ Create a separate Heroku app, for example `boat-binder-staging`, running the sam
 - separate S3 bucket, such as `boat-binder-staging`
 - separate Mailgun domain or sandbox-compatible SMTP credentials
 - staging `APP_HOST`, such as `staging.boat-binder.com` or the Heroku app hostname
+- separate staging `SECRET_KEY_BASE` that is never shared with production
 - separate Stripe test-mode webhook endpoint and signing secret
 - Stripe test-mode Price IDs once billing checkout exists
 - separate `BUILD_WEEK_DEMO_EMAIL` and `BUILD_WEEK_DEMO_PASSWORD`
@@ -145,6 +153,7 @@ Recommended staging process types:
 Keep the current Heroku production app as the live environment:
 
 - production PostgreSQL
+- production-only `SECRET_KEY_BASE` stored as a Heroku config var
 - production S3 bucket
 - production Mailgun SMTP credentials
 - production `APP_HOST`
@@ -172,6 +181,7 @@ Heroku Pipelines are a good fit if the team wants explicit promotion from stagin
 ## Environment Separation Recommendations
 
 - Use separate Heroku apps for staging and production.
+- Use separate `SECRET_KEY_BASE` values. Staging and production must never share Rails signing secrets.
 - Use separate PostgreSQL databases.
 - Use separate S3 buckets. Do not share production uploads with staging.
 - Use separate Mailgun sending domains or clearly labeled staging sender addresses.
@@ -200,7 +210,6 @@ Heroku Pipelines are a good fit if the team wants explicit promotion from stagin
 - Confirm whether Mailgun staging should send real email, use a sandbox, or redirect to internal test recipients.
 - Confirm whether Heroku deploys are manual, GitHub-connected, or pipeline-based today.
 - Decide whether staging should run `RAILS_ENV=production` or a dedicated Rails `staging` environment. The recommendation is `RAILS_ENV=production` for parity unless a concrete staging-only need appears.
-- Confirm how production `RAILS_MASTER_KEY` or Rails credentials are managed, if credentials are used in addition to environment variables.
 - Decide whether host authorization should be explicitly configured once staging and production domains are finalized.
 - Reconcile Stripe plan Price ID documentation with the application plan catalog when the plan catalog is present in the deployed branch.
 
@@ -209,7 +218,7 @@ Heroku Pipelines are a good fit if the team wants explicit promotion from stagin
 Recommended implementation order:
 
 1. Create the Heroku staging app and attach a separate PostgreSQL database.
-2. Configure staging `APP_HOST`, SMTP, S3, Stripe test-mode, and demo credentials.
+2. Configure a staging-only `SECRET_KEY_BASE`, plus staging `APP_HOST`, SMTP, S3, Stripe test-mode, and demo credentials.
 3. Create a staging S3 bucket and least-privilege IAM credentials.
 4. Configure a staging Stripe webhook endpoint and store its signing secret.
 5. Decide the Solid Queue runtime strategy: `SOLID_QUEUE_IN_PUMA` for MVP staging or a dedicated worker dyno.
@@ -218,4 +227,3 @@ Recommended implementation order:
 8. Add a safe staging demo-data refresh command or task that uses the scoped Build Week demo setup.
 9. Add optional GitHub Actions deployment automation or Heroku Pipeline promotion after manual deployment is stable.
 10. Add environment-specific observability checks for email delivery, Stripe webhook receipt, background jobs, and Active Storage uploads.
-
