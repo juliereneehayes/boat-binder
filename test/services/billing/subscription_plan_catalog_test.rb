@@ -51,13 +51,32 @@ module Billing
       assert_equal %w[self_managed_monthly self_managed_annual], catalog.enabled_options.map(&:key)
     end
 
-    test "catalog options and entitlement metadata are immutable" do
-      option = catalog.fetch("self_managed_monthly")
+    test "catalog option strings and nested entitlement metadata are immutable" do
+      definitions = mutable_definitions
+      loaded_catalog = build_catalog(definitions: definitions)
+      option = loaded_catalog.fetch("self_managed_monthly")
 
-      assert_predicate catalog.options, :frozen?
+      assert_predicate loaded_catalog.options, :frozen?
       assert_predicate option, :frozen?
       assert_predicate option.entitlements, :frozen?
       assert_raises(FrozenError) { option.name = "Changed" }
+      assert_raises(FrozenError) { option.name.replace("Changed") }
+      assert_raises(FrozenError) { option.entitlements.fetch(:features) << "Changed" }
+      assert_raises(FrozenError) { option.entitlements.fetch(:labels).fetch(0).replace("Changed") }
+    end
+
+    test "caller mutations cannot change published catalog options" do
+      definitions = mutable_definitions
+      loaded_catalog = build_catalog(definitions: definitions)
+
+      definitions.first[:name].replace("Changed")
+      definitions.first[:entitlements][:features] << "Changed"
+      definitions.first[:entitlements][:labels].first.replace("Changed")
+
+      option = loaded_catalog.fetch("self_managed_monthly")
+      assert_equal "Self Managed", option.name
+      assert_equal [ "service_history" ], option.entitlements.fetch(:features)
+      assert_equal [ "Original" ], option.entitlements.fetch(:labels)
     end
 
     test "looks up options by stable option key" do
@@ -101,6 +120,18 @@ module Billing
       end
 
       assert_includes error.message, "Duplicate subscription billing option keys"
+    end
+
+    test "blank option keys are rejected without exposing price ids" do
+      bad_definition = definition_for("self_managed_monthly").merge(key: "")
+
+      error = assert_raises(SubscriptionPlanCatalog::ConfigurationError) do
+        build_catalog(definitions: [ bad_definition, definition_for("self_managed_annual") ])
+      end
+
+      assert_includes error.message, "Subscription billing option key is required"
+      assert_not_includes error.message, MONTHLY_PRICE_ID
+      assert_not_includes error.message, ANNUAL_PRICE_ID
     end
 
     test "duplicate Stripe price ids are rejected" do
@@ -156,6 +187,20 @@ module Billing
       end
 
       assert_includes error.message, "self_managed_monthly amount must be a positive integer"
+    end
+
+    test "invalid interval counts are rejected" do
+      [ 0, "1" ].each do |invalid_interval_count|
+        bad_definition = definition_for("self_managed_monthly").merge(
+          interval_count: invalid_interval_count
+        )
+
+        error = assert_raises(SubscriptionPlanCatalog::ConfigurationError) do
+          build_catalog(definitions: [ bad_definition, definition_for("self_managed_annual") ])
+        end
+
+        assert_includes error.message, "self_managed_monthly interval count must be a positive integer"
+      end
     end
 
     test "invalid trial durations are rejected" do
@@ -216,6 +261,18 @@ module Billing
 
     def definition_for(key)
       SubscriptionPlanCatalog::DEFAULT_DEFINITIONS.find { |definition| definition.fetch(:key) == key }.dup
+    end
+
+    def mutable_definitions
+      monthly_definition = definition_for("self_managed_monthly").merge(
+        name: +"Self Managed",
+        entitlements: {
+          features: [ "service_history" ],
+          labels: [ +"Original" ]
+        }
+      )
+
+      [ monthly_definition, definition_for("self_managed_annual") ]
     end
 
     def with_plan_price_configuration(monthly:, annual:)

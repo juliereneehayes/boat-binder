@@ -228,9 +228,55 @@ class SubscriptionTest < ActiveSupport::TestCase
     assert_match(/self_managed/, plan_constraint.expression)
   end
 
+  test "plan migration rollback is refused before changing the constraint when self managed records exist" do
+    subscription = Subscription.create!(
+      account: bare_account(name: "Self Managed Rollback Protection"),
+      plan: "self_managed",
+      status: "trialing",
+      provider: "stripe",
+      external_subscription_id: "sub_self_managed_rollback"
+    )
+    migration = self_managed_plan_migration
+
+    error = assert_raises(ActiveRecord::IrreversibleMigration) do
+      migration.migrate(:down)
+    end
+
+    assert_includes error.message, "self-managed subscriptions exist"
+    assert_equal "self_managed", subscription.reload.plan
+    assert_match(/self_managed/, subscription_plan_constraint.expression)
+  end
+
+  test "plan migration rollback restores the old constraint when no self managed records exist" do
+    assert_not Subscription.exists?(plan: "self_managed")
+    migration = self_managed_plan_migration
+
+    migration.migrate(:down)
+
+    assert_no_match(/self_managed/, subscription_plan_constraint.expression)
+  ensure
+    migration&.migrate(:up) unless subscription_plan_constraint.expression.match?(/self_managed/)
+  end
+
   private
 
   def bare_account(name:)
     Account.create!(name: name, account_type: "client", time_zone: Account::DEFAULT_TIME_ZONE)
+  end
+
+  def self_managed_plan_migration
+    migration_paths = Dir.glob(
+      Rails.root.join("db/migrate/*_add_self_managed_to_subscription_plans.rb").to_s
+    )
+    assert_equal 1, migration_paths.length, "Expected exactly one self-managed plan migration"
+    require migration_paths.fetch(0)
+
+    AddSelfManagedToSubscriptionPlans.new
+  end
+
+  def subscription_plan_constraint
+    ActiveRecord::Base.connection.check_constraints(:subscriptions).find do |constraint|
+      constraint.name == "chk_subscriptions_plan"
+    end
   end
 end

@@ -147,7 +147,7 @@ module Billing
       normalized_definition = definition.with_indifferent_access
       key = normalized_definition.fetch(:key).to_s
 
-      Option.new(
+      attributes = {
         key: key,
         plan_key: normalized_definition.fetch(:plan_key).to_s,
         name: normalized_definition.fetch(:name).to_s,
@@ -159,8 +159,10 @@ module Billing
         stripe_price_id: @price_ids[key].presence,
         trial_days: normalized_definition.fetch(:trial_days),
         enabled: normalized_definition.fetch(:enabled),
-        entitlements: normalized_definition.fetch(:entitlements, {}).dup.freeze
-      )
+        entitlements: normalized_definition.fetch(:entitlements, {})
+      }
+
+      Option.new(**deep_frozen_copy(attributes))
     rescue KeyError => error
       raise ConfigurationError, "Subscription billing option is missing required configuration: #{error.key}"
     end
@@ -196,6 +198,8 @@ module Billing
     end
 
     def option_errors(option)
+      return [ "Subscription billing option key is required" ] if option.key.blank?
+
       errors = []
       errors << "#{option.key} name is required" if option.name.blank?
       errors << "#{option.key} description is required" if option.description.blank?
@@ -212,6 +216,24 @@ module Billing
       errors << "#{option.key} trial days must be a non-negative integer" unless non_negative_integer?(option.trial_days)
       errors << "#{option.key} enabled must be true or false" unless [ true, false ].include?(option.enabled)
       errors
+    end
+
+    def deep_frozen_copy(value)
+      deep_freeze(value.deep_dup)
+    end
+
+    def deep_freeze(value)
+      case value
+      when Hash
+        value.each do |key, nested_value|
+          deep_freeze(key)
+          deep_freeze(nested_value)
+        end
+      when Array
+        value.each { |nested_value| deep_freeze(nested_value) }
+      end
+
+      value.freeze
     end
 
     def duplicates(values)
