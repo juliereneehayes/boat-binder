@@ -52,6 +52,9 @@ bin/rails db:prepare
 bin/dev
 ```
 
+`db:prepare` initializes the application, Solid Cache, Solid Queue, and Solid Cable tables in the
+same local PostgreSQL database.
+
 `bin/dev` runs Rails and Tailwind watchers through `Procfile.dev`. The app defaults to port 3000 unless `PORT` is set. You can also run `bin/rails server`.
 
 ## Tests And Security Checks

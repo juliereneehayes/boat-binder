@@ -22,7 +22,13 @@ Production Rails configuration lives in `config/environments/production.rb` and 
 - Action Mailer configured for SMTP delivery
 - Solid Cache, Solid Queue, and Solid Cable enabled through database-backed adapters
 
-PostgreSQL is the only configured database adapter. In production, `config/database.yml` uses `DATABASE_URL` for the primary database and defines separate logical `cache`, `queue`, and `cable` database configurations that inherit from the same production URL with separate migration paths. The repository does not define separate Heroku add-ons or URLs for those logical databases.
+PostgreSQL is the only configured database adapter. Production has one primary database configuration
+backed by `DATABASE_URL`; application data, Solid Cache, Solid Queue, and Solid Cable all use that
+connection. Their tables are maintained by ordinary migrations in `db/migrate`, so the Heroku release
+command `bin/rails db:migrate` initializes a fresh database and upgrades an existing database through
+one tracked path. The former component-specific schema files and logical aliases were removed because
+Rails tracks initialization at the physical database level, making separate schema dumps unreliable
+when every alias points to the same PostgreSQL database.
 
 Active Storage uses local disk in development, test disk storage in test, and S3 in production. The S3 service reads:
 
@@ -75,6 +81,7 @@ The Build Week demo setup is implemented by `BuildWeek::DemoAccountSetup` and `d
 - Rails uses account-local timezone helpers for user-facing dates.
 - CI is reasonably complete for a small Rails SaaS: tests, system tests, linting, Brakeman, Bundler Audit, and importmap audit.
 - The Heroku release phase runs migrations automatically.
+- Fresh and existing databases use the same standard migration path for application and Solid tables.
 - The demo account setup is repeatable and scoped to a marked fictional account.
 
 ## Current Limitations
