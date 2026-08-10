@@ -23,7 +23,7 @@
           </div>
           <%= status_chip(reminder.status.humanize, tone: reminder.status == "completed" ? :success : :warning) %>
         </div>
-        <% if can_manage_records? %>
+        <% if can_manage_account?(reminder.asset.account) %>
           <div class="mt-4 flex flex-col gap-2 sm:flex-row">
             <% if reminder.status == "pending" %>
               <%= button_to "Mark complete", reminder_path(reminder, status_action: "complete"), method: :patch, class: "min-h-12 w-full rounded-md bg-emerald-700 px-4 py-3 text-base font-bold text-white sm:w-auto", data: { turbo_submits_with: "Saving..." } %>

@@ -1,5 +1,5 @@
 class ServiceVisitsController < ApplicationController
-  before_action :require_write_access!, only: %i[new create]
+  before_action :require_internal!, only: %i[new create]
   before_action :set_vessel, if: -> { params[:vessel_id].present? }
   before_action :set_service_visit, only: %i[show report]
 

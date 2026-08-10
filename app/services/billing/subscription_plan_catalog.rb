@@ -6,6 +6,7 @@ module Billing
     SELF_MANAGED_MONTHLY_KEY = "self_managed_monthly"
     SELF_MANAGED_ANNUAL_KEY = "self_managed_annual"
 
+    SUPPORTED_PLAN_KEYS = [ SELF_MANAGED_PLAN_KEY ].freeze
     SUPPORTED_INTERVALS = %w[month year].freeze
     SUPPORTED_CURRENCIES = %w[usd].freeze
 
@@ -67,7 +68,7 @@ module Billing
         key: SELF_MANAGED_ANNUAL_KEY,
         plan_key: SELF_MANAGED_PLAN_KEY,
         name: "Self Managed",
-        description: "For owners managing their own vessel binder.",
+        description: "For owners managing their own vessel binder, with one month free.",
         interval: "year",
         interval_count: 1,
         amount_cents: 15_400,
@@ -160,6 +161,8 @@ module Billing
         enabled: normalized_definition.fetch(:enabled),
         entitlements: normalized_definition.fetch(:entitlements, {}).dup.freeze
       )
+    rescue KeyError => error
+      raise ConfigurationError, "Subscription billing option is missing required configuration: #{error.key}"
     end
 
     def validate!
@@ -181,17 +184,26 @@ module Billing
     end
 
     def duplicate_price_id_errors
-      duplicate_price_ids = duplicates(options.filter_map(&:stripe_price_id))
-      return [] if duplicate_price_ids.empty?
-
-      [ "Duplicate Stripe Price IDs configured for subscription billing options" ]
+      options
+        .select { |option| option.stripe_price_id.present? }
+        .group_by(&:stripe_price_id)
+        .values
+        .select { |matching_options| matching_options.many? }
+        .map do |matching_options|
+          option_keys = matching_options.map(&:key).join(", ")
+          "Duplicate Stripe Price ID configured for options: #{option_keys}"
+        end
     end
 
     def option_errors(option)
       errors = []
       errors << "#{option.key} name is required" if option.name.blank?
       errors << "#{option.key} description is required" if option.description.blank?
-      errors << "#{option.key} plan key is required" if option.plan_key.blank?
+      if option.plan_key.blank?
+        errors << "#{option.key} plan key is required"
+      elsif SUPPORTED_PLAN_KEYS.exclude?(option.plan_key)
+        errors << "#{option.key} plan key is not supported"
+      end
       errors << "#{option.key} Stripe Price ID is required (set #{price_id_env_key(option.key)})" if option.stripe_price_id.blank?
       errors << "#{option.key} interval is not supported" unless SUPPORTED_INTERVALS.include?(option.interval)
       errors << "#{option.key} currency is not supported" unless SUPPORTED_CURRENCIES.include?(option.currency)

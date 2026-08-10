@@ -74,5 +74,11 @@ module ActiveSupport
         password: "password"
       }
     end
+
+    def assert_access_denied_redirect
+      assert_redirected_to root_path
+      follow_redirect!
+      assert_includes response.body, Authorization::ACCESS_DENIED_MESSAGE
+    end
   end
 end

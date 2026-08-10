@@ -5,7 +5,7 @@
       <h1 class="mt-1 text-3xl font-black tracking-normal md:text-5xl">Vessels</h1>
       <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-600">A premium fleet view for owners, captains, locations, documents, and next service priorities.</p>
     </div>
-    <% if can_manage_records? %>
+    <% if internal_user? %>
       <%= link_to "Add Vessel", new_vessel_path, class: primary_button_class %>
     <% end %>
   </div>
@@ -73,7 +73,7 @@
     <div class="<%= app_card_class("p-8 text-center") %>">
       <p class="text-2xl font-black">No vessels found.</p>
       <p class="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-600">Try a different search, include inactive vessels, or add the first vessel for this owner account.</p>
-      <% if can_manage_records? %>
+      <% if internal_user? %>
         <%= link_to "Add Vessel", new_vessel_path, class: primary_button_class("mt-5") %>
       <% end %>
     </div>

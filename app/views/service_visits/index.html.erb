@@ -19,7 +19,7 @@
       </div>
 
       <div class="flex flex-wrap gap-2">
-        <% if @vessel && can_manage_records? %>
+        <% if @vessel && internal_user? %>
           <%= link_to "Add Service Visit", new_vessel_service_visit_path(@vessel), class: primary_button_class("bg-[#7DAAB3] text-[#0B1F35] hover:bg-[#B9D5DA]") %>
         <% end %>
       </div>
@@ -104,7 +104,7 @@
       <p class="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-600">
         Completed service visits will appear here as owner-ready reports with summaries, inspection notes, engine readings, and follow-up recommendations.
       </p>
-      <% if @vessel && can_manage_records? %>
+      <% if @vessel && internal_user? %>
         <%= link_to "Add Service Visit", new_vessel_service_visit_path(@vessel), class: primary_button_class("mt-5") %>
       <% end %>
     </div>

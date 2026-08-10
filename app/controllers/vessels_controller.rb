@@ -1,8 +1,9 @@
 class VesselsController < ApplicationController
   PrimaryPhotoAttachmentError = Class.new(StandardError)
 
-  before_action :require_write_access!, only: %i[new create edit update destroy destroy_primary_photo]
+  before_action :require_internal!, only: %i[new create destroy]
   before_action :set_vessel, only: %i[show edit update destroy destroy_primary_photo]
+  before_action :require_vessel_write_access!, only: %i[edit update destroy_primary_photo]
 
   def index
     @query = params[:q].to_s.strip
@@ -18,7 +19,7 @@ class VesselsController < ApplicationController
       service_visit_engine_readings: :asset_engine,
       service_visit_battery_checks: :asset_battery
     ).recent.limit(5)
-    @documents = @vessel.documents.order(created_at: :desc).limit(6)
+    @documents = @vessel.documents.with_attached_file.order(created_at: :desc).limit(6)
     @binder_notes = @vessel.binder_notes.order(created_at: :desc).limit(6)
     @overdue_reminders = @vessel.overdue_reminders.limit(4)
     @upcoming_reminders = @vessel.reminders.upcoming.limit(5)
@@ -34,7 +35,7 @@ class VesselsController < ApplicationController
 
   def new
     @vessel = Asset.new(asset_type: "vessel")
-    @accounts = scoped_accounts.active.ordered
+    @accounts = manageable_accounts.active.ordered
   end
 
   def create
@@ -55,7 +56,7 @@ class VesselsController < ApplicationController
 
     redirect_to vessel_path(@vessel), notice: "Vessel added."
   rescue ActiveRecord::RecordInvalid
-    @accounts = scoped_accounts.active.ordered
+    @accounts = manageable_accounts.active.ordered
     render :new, status: :unprocessable_entity
   rescue PrimaryPhotoAttachmentError => error
     Rails.logger.error("Primary photo attachment failed for vessel create: #{error.message}")
@@ -133,25 +134,21 @@ class VesselsController < ApplicationController
   end
 
   def owner_options_for(vessel)
-    scoped_accounts.where(active: true).or(scoped_accounts.where(id: vessel.account_id)).ordered
+    manageable_accounts.where(active: true).or(manageable_accounts.where(id: vessel.account_id)).ordered
   end
 
   def render_vessel_form_with_primary_photo_error(vessel, message, template)
     vessel.valid?
     vessel.errors.add(:primary_photo, message)
-    @accounts = template == :new ? scoped_accounts.active.ordered : owner_options_for(vessel)
+    @accounts = template == :new ? manageable_accounts.active.ordered : owner_options_for(vessel)
     render template, status: :unprocessable_entity
   end
 
   def assign_vessel_account(vessel)
     return true if vessel_account_id.blank?
+    return true unless internal_user?
 
-    unless can_manage_vessel_accounts?
-      deny_access!
-      return false
-    end
-
-    vessel.account = scoped_accounts.find(vessel_account_id)
+    vessel.account = manageable_accounts.find(vessel_account_id)
     true
   end
 
@@ -159,7 +156,7 @@ class VesselsController < ApplicationController
     params.require(:asset)[:account_id]
   end
 
-  def can_manage_vessel_accounts?
-    can_manage_records?
+  def require_vessel_write_access!
+    require_write_access!(@vessel.account)
   end
 end

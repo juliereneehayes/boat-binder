@@ -109,7 +109,7 @@ class AccessControlTest < ActionDispatch::IntegrationTest
     assert_response :not_found
 
     get edit_vessel_path(@owner_b_vessel)
-    assert_access_denied_redirect
+    assert_response :not_found
 
     get vessel_path(@owner_a_vessel)
     assert_response :success
@@ -561,12 +561,6 @@ class AccessControlTest < ActionDispatch::IntegrationTest
   end
 
   private
-
-  def assert_access_denied_redirect
-    assert_redirected_to root_path
-    follow_redirect!
-    assert_includes response.body, Authorization::ACCESS_DENIED_MESSAGE
-  end
 
   def setup_access_records
     @admin = create_user(email: "admin@example.test", role: "admin", name: "Admin User")

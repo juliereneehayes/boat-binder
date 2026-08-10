@@ -59,6 +59,23 @@ class VesselManagementTest < ActionDispatch::IntegrationTest
     assert_redirected_to vessels_path
   end
 
+  test "internal user can reassign a vessel account" do
+    sign_in_as
+    source_account = create_account(name: "Elliott Family")
+    target_account = create_account(name: "Harbor North")
+    vessel = create_vessel(account: source_account, name: "Transferable Vessel")
+
+    patch vessel_path(vessel), params: {
+      asset: {
+        name: vessel.name,
+        account_id: target_account.id
+      }
+    }
+
+    assert_redirected_to vessel_path(vessel.reload)
+    assert_equal target_account, vessel.account
+  end
+
   test "internal users create vessels with valid primary photos" do
     %w[captain admin].each do |role|
       sign_in_as create_user(email: "#{role}-create-photo@example.test", role: role)
@@ -539,7 +556,7 @@ class VesselManagementTest < ActionDispatch::IntegrationTest
       }
     }
 
-    assert_redirected_to root_path
+    assert_response :not_found
     assert_not other_vessel.reload.primary_photo.attached?
   end
 
@@ -555,7 +572,7 @@ class VesselManagementTest < ActionDispatch::IntegrationTest
 
     delete primary_photo_vessel_path(other_vessel)
 
-    assert_redirected_to root_path
+    assert_response :not_found
     assert other_vessel.reload.primary_photo.attached?
     assert ActiveStorage::Blob.exists?(primary_photo_blob_id)
   end
@@ -567,9 +584,7 @@ class VesselManagementTest < ActionDispatch::IntegrationTest
 
     patch vessel_path(vessel), params: { asset: { name: vessel.name, account_id: other_account.id } }
 
-    assert_redirected_to root_path
-    follow_redirect!
-    assert_includes response.body, Authorization::ACCESS_DENIED_MESSAGE
+    assert_response :not_found
     assert_equal vessel.account, vessel.reload.account
   end
 

@@ -25,7 +25,7 @@ Rails.application.routes.draw do
     resources :batteries, controller: :asset_batteries, except: %i[index show]
   end
 
-  resources :documents, only: %i[index new create destroy]
+  resources :documents, only: %i[index show new create edit update destroy]
   resources :reminders, only: %i[index new create edit update]
   resources :service_visits, only: %i[index]
   get "users", to: redirect("/admin/users")

@@ -1,5 +1,5 @@
 class AssetBatteriesController < ApplicationController
-  before_action :require_write_access!
+  before_action :require_internal!
   before_action :set_vessel
   before_action :set_battery, only: %i[edit update destroy]
 

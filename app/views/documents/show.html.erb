@@ -1,0 +1,75 @@
+<section class="space-y-5">
+  <div class="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
+    <div>
+      <%= link_to @document.asset&.asset_type == "vessel" ? "Back to #{@document.asset.name}" : "Back to documents", @document.asset&.asset_type == "vessel" ? vessel_path(@document.asset, anchor: "documents") : documents_path, class: "inline-flex min-h-10 items-center rounded-md py-2 text-sm font-bold text-cyan-700" %>
+      <p class="mt-3 text-sm font-bold uppercase tracking-normal text-cyan-700">Document details</p>
+      <h1 class="mt-1 text-3xl font-black tracking-normal md:text-5xl"><%= @document.title %></h1>
+      <p class="mt-2 text-sm leading-6 text-slate-600"><%= @document.account.name %><%= " · #{@document.asset.name}" if @document.asset.present? %></p>
+    </div>
+    <div class="flex flex-wrap gap-2 md:justify-end">
+      <% if can_manage_account?(@document.account) %>
+        <%= link_to @document.file.attached? ? "Edit" : "Edit / Add file", edit_document_path(@document), class: primary_button_class %>
+        <%= button_to "Delete", document_path(@document), method: :delete, form: { data: { turbo_confirm: "Delete #{@document.title}?" } }, class: "min-h-11 rounded-md border border-red-200 px-4 py-2 text-sm font-bold text-red-700", data: { turbo_submits_with: "Deleting..." } %>
+      <% end %>
+    </div>
+  </div>
+
+  <div class="grid gap-5 lg:grid-cols-[1.15fr_0.85fr]">
+    <section class="<%= app_card_class("p-5") %>">
+      <div class="flex items-start justify-between gap-3">
+        <div>
+          <h2 class="text-xl font-black">Overview</h2>
+          <p class="mt-1 text-sm text-slate-600">Filed <%= local_datetime(@document.created_at, account: @document.account) %></p>
+        </div>
+        <%= status_chip(@document.document_type.humanize, tone: :neutral) %>
+      </div>
+
+      <dl class="mt-5 grid gap-3 sm:grid-cols-2">
+        <div class="rounded-md bg-slate-50 p-4">
+          <dt class="text-sm font-semibold text-slate-500">Owner</dt>
+          <dd class="mt-1 font-black"><%= @document.account.name %></dd>
+        </div>
+        <div class="rounded-md bg-slate-50 p-4">
+          <dt class="text-sm font-semibold text-slate-500">Vessel</dt>
+          <dd class="mt-1 font-black"><%= @document.asset&.name || "Not linked" %></dd>
+        </div>
+        <div class="rounded-md bg-slate-50 p-4">
+          <dt class="text-sm font-semibold text-slate-500">Document type</dt>
+          <dd class="mt-1 font-black"><%= @document.document_type.humanize %></dd>
+        </div>
+        <div class="rounded-md bg-slate-50 p-4">
+          <dt class="text-sm font-semibold text-slate-500">Last updated</dt>
+          <dd class="mt-1 font-black"><%= local_datetime(@document.updated_at, account: @document.account) %></dd>
+        </div>
+      </dl>
+
+      <div class="mt-5 rounded-md border border-slate-200 p-4">
+        <h3 class="font-black">Notes</h3>
+        <p class="mt-2 text-sm leading-6 text-slate-600"><%= @document.notes.presence || "No notes recorded." %></p>
+      </div>
+    </section>
+
+    <aside class="<%= app_card_class("p-5") %>">
+      <h2 class="text-xl font-black">File</h2>
+      <% if @document.file.attached? %>
+        <div class="mt-4 space-y-3 text-sm text-slate-600">
+          <p><span class="font-semibold text-slate-800">Filename:</span> <%= @document.file.filename %></p>
+          <p><span class="font-semibold text-slate-800">Type:</span> <%= @document.file.blob.content_type %></p>
+          <p><span class="font-semibold text-slate-800">Size:</span> <%= number_to_human_size(@document.file.blob.byte_size) %></p>
+        </div>
+        <div class="mt-5 flex flex-wrap gap-2">
+          <%= link_to "Open file", url_for(@document.file), class: primary_button_class %>
+          <%= link_to "Download", rails_blob_path(@document.file, disposition: "attachment"), class: secondary_button_class %>
+        </div>
+      <% else %>
+        <div class="mt-4 rounded-md border border-dashed border-slate-300 bg-slate-50 p-5">
+          <p class="font-black">No file is currently attached.</p>
+          <p class="mt-2 text-sm leading-6 text-slate-600">Add a PDF or image file from the edit screen when you are ready.</p>
+          <% if can_manage_account?(@document.account) %>
+            <%= link_to "Edit / Add file", edit_document_path(@document), class: primary_button_class("mt-4") %>
+          <% end %>
+        </div>
+      <% end %>
+    </aside>
+  </div>
+</section>

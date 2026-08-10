@@ -30,6 +30,7 @@ module Billing
       assert_equal "self_managed_annual", option.key
       assert_equal "self_managed", option.plan_key
       assert_equal "Self Managed", option.name
+      assert_includes option.description, "one month free"
       assert_equal "year", option.interval
       assert_equal 15_400, option.amount_cents
       assert_equal "$154/year", option.display_price
@@ -48,6 +49,15 @@ module Billing
 
     test "enabled options lists available billing options" do
       assert_equal %w[self_managed_monthly self_managed_annual], catalog.enabled_options.map(&:key)
+    end
+
+    test "catalog options and entitlement metadata are immutable" do
+      option = catalog.fetch("self_managed_monthly")
+
+      assert_predicate catalog.options, :frozen?
+      assert_predicate option, :frozen?
+      assert_predicate option.entitlements, :frozen?
+      assert_raises(FrozenError) { option.name = "Changed" }
     end
 
     test "looks up options by stable option key" do
@@ -103,8 +113,19 @@ module Billing
         )
       end
 
-      assert_includes error.message, "Duplicate Stripe Price IDs"
+      assert_includes error.message,
+        "Duplicate Stripe Price ID configured for options: self_managed_monthly, self_managed_annual"
       assert_not_includes error.message, MONTHLY_PRICE_ID
+    end
+
+    test "unknown plan keys are rejected" do
+      bad_definition = definition_for("self_managed_monthly").merge(plan_key: "self-managed")
+
+      error = assert_raises(SubscriptionPlanCatalog::ConfigurationError) do
+        build_catalog(definitions: [ bad_definition, definition_for("self_managed_annual") ])
+      end
+
+      assert_includes error.message, "self_managed_monthly plan key is not supported"
     end
 
     test "unsupported intervals are rejected" do
@@ -115,6 +136,16 @@ module Billing
       end
 
       assert_includes error.message, "self_managed_monthly interval is not supported"
+    end
+
+    test "unsupported currencies are rejected" do
+      bad_definition = definition_for("self_managed_monthly").merge(currency: "cad")
+
+      error = assert_raises(SubscriptionPlanCatalog::ConfigurationError) do
+        build_catalog(definitions: [ bad_definition, definition_for("self_managed_annual") ])
+      end
+
+      assert_includes error.message, "self_managed_monthly currency is not supported"
     end
 
     test "invalid amounts are rejected" do
@@ -135,6 +166,26 @@ module Billing
       end
 
       assert_includes error.message, "self_managed_monthly trial days must be a non-negative integer"
+    end
+
+    test "invalid enabled values are rejected" do
+      bad_definition = definition_for("self_managed_monthly").merge(enabled: "true")
+
+      error = assert_raises(SubscriptionPlanCatalog::ConfigurationError) do
+        build_catalog(definitions: [ bad_definition, definition_for("self_managed_annual") ])
+      end
+
+      assert_includes error.message, "self_managed_monthly enabled must be true or false"
+    end
+
+    test "missing required attributes fail with a catalog configuration error" do
+      bad_definition = definition_for("self_managed_monthly").except(:name)
+
+      error = assert_raises(SubscriptionPlanCatalog::ConfigurationError) do
+        build_catalog(definitions: [ bad_definition, definition_for("self_managed_annual") ])
+      end
+
+      assert_includes error.message, "missing required configuration: name"
     end
 
     test "catalog loading and lookups do not call Stripe APIs" do

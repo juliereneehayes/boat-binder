@@ -1,0 +1,1 @@
+BuildWeek::DemoAccountSetup.call

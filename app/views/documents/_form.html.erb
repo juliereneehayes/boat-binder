@@ -1,0 +1,48 @@
+<%= field_error_messages(document) %>
+
+<%= form_with model: document, url: form_url, method: form_method, class: "space-y-5" do |form| %>
+  <section class="space-y-4 rounded-md border border-slate-200 bg-white p-4 shadow-sm" data-controller="<%= vessel ? nil : "dependent-vessels" %>">
+    <% unless vessel %>
+      <div>
+        <%= form.label :account_id, "Owner", class: "text-sm font-semibold text-slate-700" %>
+        <%= form.collection_select :account_id, accounts, :id, :name, { prompt: "Select owner" }, class: "mt-2 min-h-12 w-full rounded-md border border-slate-300 px-4 py-3 text-base", data: { dependent_vessels_target: "account", action: "dependent-vessels#filter" } %>
+      </div>
+      <div>
+        <%= form.label :asset_id, "Vessel", class: "text-sm font-semibold text-slate-700" %>
+        <select name="document[asset_id]" id="document_asset_id" class="mt-2 min-h-12 w-full rounded-md border border-slate-300 px-4 py-3 text-base" data-dependent-vessels-target="asset" data-action="dependent-vessels#syncAccount">
+          <option value="" <%= "selected" if document.asset_id.blank? %>>No vessel</option>
+          <% accounts.each do |account| %>
+            <optgroup label="<%= account.name %>" data-account-id="<%= account.id %>">
+              <% account.vessel_assets.each do |account_vessel| %>
+                <option value="<%= account_vessel.id %>" data-account-id="<%= account.id %>" <%= "selected" if account_vessel.id == document.asset_id %>><%= account_vessel.name %></option>
+              <% end %>
+            </optgroup>
+          <% end %>
+        </select>
+      </div>
+    <% end %>
+    <div>
+      <%= form.label :title, class: "text-sm font-semibold text-slate-700" %>
+      <%= form.text_field :title, placeholder: "Insurance policy, registration, maintenance receipt", class: "mt-2 min-h-12 w-full rounded-md border border-slate-300 px-4 py-3 text-base" %>
+    </div>
+    <div>
+      <%= form.label :document_type, class: "text-sm font-semibold text-slate-700" %>
+      <%= form.select :document_type, Document::DOCUMENT_TYPES.map { |type| [type.humanize, type] }, {}, class: "mt-2 min-h-12 w-full rounded-md border border-slate-300 px-4 py-3 text-base" %>
+    </div>
+    <div>
+      <%= form.label :file, document.file.attached? ? "Replace file" : "Choose document or photo", class: "text-sm font-semibold text-slate-700" %>
+      <% if document.file.attached? %>
+        <p class="mt-1 text-sm leading-6 text-slate-600">Current file: <span class="font-bold text-slate-800"><%= document.file.filename %></span>. Leave this blank to keep the current file.</p>
+      <% end %>
+      <%= form.file_field :file, accept: Document::ALLOWED_FILE_CONTENT_TYPES.join(","), class: "mt-2 block min-h-12 w-full rounded-md border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-base file:mr-3 file:rounded-md file:border-0 file:bg-cyan-700 file:px-4 file:py-2 file:font-bold file:text-white" %>
+      <p class="mt-2 text-sm leading-6 text-slate-600 md:hidden">On mobile: choose a file, select a photo, or take a new photo where supported.</p>
+      <p class="mt-2 hidden text-sm leading-6 text-slate-600 md:block">On desktop: upload a PDF or image.</p>
+    </div>
+    <div>
+      <%= form.label :notes, class: "text-sm font-semibold text-slate-700" %>
+      <%= form.text_area :notes, rows: 4, class: "mt-2 w-full rounded-md border border-slate-300 px-4 py-3 text-base" %>
+    </div>
+  </section>
+
+  <%= form.submit submit_label, class: "min-h-14 w-full rounded-md bg-cyan-700 px-5 py-4 text-base font-black text-white shadow-sm", data: { turbo_submits_with: submitting_label } %>
+<% end %>

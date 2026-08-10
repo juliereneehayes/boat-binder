@@ -1,0 +1,16 @@
+<section class="mx-auto max-w-2xl space-y-5">
+  <div>
+    <%= link_to "Back to document", document_path(@document), class: "inline-flex min-h-10 items-center rounded-md py-2 text-sm font-bold text-cyan-700" %>
+    <p class="mt-3 text-sm font-bold uppercase tracking-normal text-cyan-700">Document library</p>
+    <h1 class="mt-1 text-3xl font-black tracking-normal">Edit document</h1>
+  </div>
+
+  <%= render "form",
+    document: @document,
+    vessel: nil,
+    accounts: @accounts,
+    form_url: document_path(@document),
+    form_method: :patch,
+    submit_label: "Save document",
+    submitting_label: "Saving..." %>
+</section>

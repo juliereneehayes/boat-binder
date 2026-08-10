@@ -1,6 +1,7 @@
 class RemindersController < ApplicationController
   before_action :require_write_access!, except: %i[index]
   before_action :set_reminder, only: %i[edit update]
+  before_action :require_reminder_write_access!, only: %i[edit update]
   before_action :set_form_collections, only: %i[new create edit update]
 
   def index
@@ -50,8 +51,8 @@ class RemindersController < ApplicationController
   end
 
   def set_form_collections
-    @accounts = scoped_accounts.active.includes(:assets).ordered
-    @vessels = scoped_vessels.active.includes(:account).ordered
+    @accounts = manageable_accounts.active.includes(:assets).ordered
+    @vessels = manageable_vessels.active.includes(:account).ordered
   end
 
   def reminder_params
@@ -60,6 +61,10 @@ class RemindersController < ApplicationController
 
   def assign_reminder_asset(reminder)
     asset_id = params.require(:reminder)[:asset_id]
-    reminder.asset = scoped_vessels.find(asset_id) if asset_id.present?
+    reminder.asset = manageable_vessels.find(asset_id) if asset_id.present?
+  end
+
+  def require_reminder_write_access!
+    require_write_access!(@reminder.asset.account)
   end
 end
