@@ -2,6 +2,29 @@
 
 Core local boot usually works without production credentials. The variables below enable optional production-like behavior.
 
+## Database Initialization
+
+Boat Binder uses one PostgreSQL database per environment. Application tables and the Solid Cache,
+Solid Queue, and Solid Cable tables are all managed by the standard migrations in `db/migrate`.
+
+Local setup uses:
+
+```sh
+bin/rails db:prepare
+```
+
+Heroku uses this release command from `Procfile`:
+
+```sh
+bin/rails db:migrate
+```
+
+Both commands are safe to repeat. A failed migration exits unsuccessfully so the Heroku release does
+not continue. Do not load the former component-specific schema files manually; migrations are the
+single initialization path for fresh and existing databases. The Solid adoption migrations are
+intentionally irreversible because their tables may predate the migration records; recover from a
+verified database backup instead of attempting to roll them back.
+
 ## Application Host
 
 - `APP_HOST` - host used in production email links, such as `app.boat-binder.com`.
