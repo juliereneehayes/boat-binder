@@ -1,0 +1,10 @@
+<% content_for :title, "Checkout complete | Boat Binder" %>
+
+<section class="mx-auto max-w-2xl py-8">
+  <div class="<%= app_card_class("p-7 md:p-10") %>">
+    <%= status_chip("Checkout complete", tone: :success) %>
+    <h1 class="mt-5 text-3xl font-black">Your subscription is being synchronized.</h1>
+    <p class="mt-4 leading-7 text-slate-600">Stripe has returned you to Boat Binder. Verified billing updates may take a moment to appear, and this page does not change your subscription by itself.</p>
+    <%= link_to "Return to dashboard", root_path, class: primary_button_class("mt-7") %>
+  </div>
+</section>

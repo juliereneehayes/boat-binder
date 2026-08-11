@@ -26,6 +26,10 @@ module Billing
       def webhook_secret!
         webhook_secret || raise(MissingConfigurationError, "Stripe webhook signing secret is not configured")
       end
+
+      def secret_key!
+        secret_key || raise(MissingConfigurationError, "Stripe API secret is not configured")
+      end
     end
   end
 end

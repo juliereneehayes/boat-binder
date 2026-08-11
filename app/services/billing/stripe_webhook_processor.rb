@@ -1,11 +1,13 @@
 module Billing
   class StripeWebhookProcessor
     STRIPE_PROVIDER = BillingWebhookEvent::STRIPE_PROVIDER
-    IGNORED_EVENT_TYPES = %w[
+    PROCESSED_EVENT_TYPES = %w[
       checkout.session.completed
       customer.subscription.created
-      customer.subscription.deleted
       customer.subscription.updated
+    ].freeze
+    DEFERRED_EVENT_TYPES = %w[
+      customer.subscription.deleted
       invoice.paid
       invoice.payment_failed
       invoice.payment_succeeded
@@ -63,7 +65,36 @@ module Billing
     end
 
     def process_event!(billing_webhook_event)
-      ignore_reason = IGNORED_EVENT_TYPES.include?(event_type) ? "deferred" : "unknown"
+      if PROCESSED_EVENT_TYPES.include?(event_type)
+        process_supported_event!(billing_webhook_event)
+      else
+        ignore_event!(billing_webhook_event)
+      end
+    rescue StripeWebhookAssociationError => error
+      billing_webhook_event.mark_ignored!
+
+      Rails.logger.info(
+        "Stripe webhook ignored reason=invalid_association association_code=#{error.code} event_id=#{event_id} " \
+        "event_type=#{event_type} livemode=#{livemode}"
+      )
+    end
+
+    def process_supported_event!(billing_webhook_event)
+      case event_type
+      when "checkout.session.completed"
+        StripeCheckoutCompletionSynchronizer.call(event.data.object)
+      when "customer.subscription.created", "customer.subscription.updated"
+        StripeSubscriptionSynchronizer.call(event.data.object)
+      end
+
+      billing_webhook_event.mark_processed!
+      Rails.logger.info(
+        "Stripe webhook processed event_id=#{event_id} event_type=#{event_type} livemode=#{livemode}"
+      )
+    end
+
+    def ignore_event!(billing_webhook_event)
+      ignore_reason = DEFERRED_EVENT_TYPES.include?(event_type) ? "deferred" : "unknown"
       billing_webhook_event.mark_ignored!
 
       Rails.logger.info(

@@ -1,0 +1,13 @@
+<% content_for :title, "Checkout canceled | Boat Binder" %>
+
+<section class="mx-auto max-w-2xl py-8">
+  <div class="<%= app_card_class("p-7 md:p-10") %>">
+    <%= status_chip("No changes made", tone: :neutral) %>
+    <h1 class="mt-5 text-3xl font-black">Checkout was canceled.</h1>
+    <p class="mt-4 leading-7 text-slate-600">Your current subscription and Boat Binder records were not changed. You can review the options and try again whenever you're ready.</p>
+    <div class="mt-7 flex flex-wrap gap-3">
+      <%= link_to "Review plans", billing_checkout_path, class: primary_button_class %>
+      <%= link_to "Return to dashboard", root_path, class: secondary_button_class %>
+    </div>
+  </div>
+</section>
