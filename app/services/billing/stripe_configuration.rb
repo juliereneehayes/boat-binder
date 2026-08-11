@@ -15,6 +15,14 @@ module Billing
         Rails.configuration.x.stripe.webhook_secret.presence
       end
 
+      def self_managed_monthly_price_id
+        Rails.configuration.x.stripe.self_managed_monthly_price_id.presence
+      end
+
+      def self_managed_annual_price_id
+        Rails.configuration.x.stripe.self_managed_annual_price_id.presence
+      end
+
       def webhook_secret!
         webhook_secret || raise(MissingConfigurationError, "Stripe webhook signing secret is not configured")
       end

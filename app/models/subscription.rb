@@ -2,7 +2,7 @@ class Subscription < ApplicationRecord
   LOCAL_PROVIDER = "local"
   STRIPE_PROVIDER = "stripe"
   PROVIDERS = [ LOCAL_PROVIDER, STRIPE_PROVIDER ].freeze
-  PLANS = %w[legacy starter professional].freeze
+  PLANS = %w[legacy self_managed starter professional].freeze
   STATUSES = %w[legacy trialing active past_due canceled expired suspended].freeze
   ACCESS_ALLOWED_STATUSES = %w[legacy trialing active].freeze
 

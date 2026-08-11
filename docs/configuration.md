@@ -58,10 +58,11 @@ These are required before production transactional email can actually deliver.
 - `STRIPE_SELF_MANAGED_ANNUAL_PRICE_ID` - Stripe Price ID for the Self Managed annual option.
 
 Production Stripe values are stored in Heroku environment/config vars. The initializer prefers those
-environment values and retains its existing Rails-credentials fallback for environments that may use
-encrypted credentials in the future. Do not commit real keys. The app can boot without Stripe secrets
-for development/test workflows that do not invoke Stripe; webhook verification fails safely until
-`STRIPE_WEBHOOK_SECRET` is configured.
+environment values and retains its existing Rails-credentials fallback for API and webhook secrets in
+environments that may use encrypted credentials in the future. Subscription Price IDs are read only
+from the two environment variables above. Do not commit real keys or live Price IDs. The app can boot
+without Stripe secrets or Price IDs for development/test workflows that do not invoke Stripe; webhook
+verification and plan-catalog validation fail safely when their required configuration is used.
 
 ## Build Week Demo
 

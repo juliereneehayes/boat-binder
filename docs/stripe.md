@@ -2,6 +2,24 @@
 
 Boat Binder uses the official `stripe` Ruby gem for verified webhook receipt. Local `Subscription` records remain the app source of truth for access and UI behavior; normal app requests do not call Stripe to decide access.
 
+## Subscription Plan Catalog
+
+`Billing::SubscriptionPlanCatalog` is the local, immutable source for customer-facing plan metadata.
+The initial `self_managed` application plan has two billing options:
+
+- `self_managed_monthly`: $14 per month with 7-day trial metadata
+- `self_managed_annual`: $154 per year (one month free) with 7-day trial metadata
+
+Stripe Products and Prices are created outside Boat Binder in Stripe. Configure their Price IDs with:
+
+- `STRIPE_SELF_MANAGED_MONTHLY_PRICE_ID`
+- `STRIPE_SELF_MANAGED_ANNUAL_PRICE_ID`
+
+Use test-mode Price IDs in development and staging. Configure live-mode IDs separately before launch.
+Catalog loading and lookup read local configuration only and never call Stripe. Checkout, trial
+application, customer and subscription creation, billing portal access, lifecycle synchronization,
+access enforcement, and entitlement enforcement remain deferred.
+
 Webhook endpoint:
 
 ```text
