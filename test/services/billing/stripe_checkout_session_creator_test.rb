@@ -337,14 +337,117 @@ module Billing
       end
     end
 
+    test "a reserved open attempt is not reused after its webhook completes" do
+      attempt = create_attempt(
+        customer_id: "cus_completed_between_steps",
+        session_id: "cs_completed_between_steps",
+        status: "open"
+      )
+      creator = checkout_creator(option_key: "self_managed_monthly")
+      option = creator.send(:selected_option)
+      customer_id = creator.send(:checkout_customer_id)
+      attempt_id = creator.send(:reserve_attempt, option, customer_id)
+
+      StripeCheckoutCompletionSynchronizer.call(completed_checkout_session(attempt))
+
+      assert_no_stripe_calls do
+        assert_raises(StripeCheckoutSessionCreator::InvalidAccountError) do
+          creator.send(:advance_attempt, attempt_id, option, customer_id)
+        end
+      end
+
+      assert_equal "completed", attempt.reload.status
+      assert_equal 0, @account.billing_checkout_attempts.active.count
+      assert_equal "sub_completed_between_steps", @account.subscription.reload.external_subscription_id
+    end
+
+    test "a creating attempt cannot activate after the Subscription becomes Stripe-backed" do
+      attempt = create_attempt(
+        customer_id: "cus_creating_stale",
+        session_id: nil,
+        status: "creating"
+      )
+      @account.subscription.update!(
+        provider: "stripe",
+        external_customer_id: "cus_creating_stale",
+        external_subscription_id: "sub_creating_stale",
+        plan: "self_managed",
+        status: "trialing"
+      )
+
+      assert_no_stripe_calls do
+        assert_raises(StripeCheckoutSessionCreator::InvalidAccountError) do
+          create_checkout(option_key: "self_managed_monthly")
+        end
+      end
+
+      assert_equal "completed", attempt.reload.status
+      assert_equal 0, @account.billing_checkout_attempts.active.count
+    end
+
+    test "a Session response is expired when the Subscription becomes authoritative during creation" do
+      account = @account
+      expired_session_ids = []
+
+      with_stripe_methods(
+        customer_create: ->(*) { Stripe::Customer.construct_from(id: "cus_activation_race") },
+        session_create: ->(*) {
+          account.subscription.update!(
+            provider: "stripe",
+            external_customer_id: "cus_activation_race",
+            external_subscription_id: "sub_activation_race",
+            plan: "self_managed",
+            status: "trialing"
+          )
+          CHECKOUT_SESSION.call(id: "cs_activation_race")
+        },
+        session_expire: ->(session_id, _params, _options) {
+          expired_session_ids << session_id
+          CHECKOUT_SESSION.call(id: session_id, status: "expired")
+        }
+      ) do
+        assert_raises(StripeCheckoutSessionCreator::InvalidAccountError) do
+          create_checkout(option_key: "self_managed_monthly")
+        end
+      end
+
+      attempt = @account.billing_checkout_attempts.find_by!(stripe_customer_id: "cus_activation_race")
+      assert_equal [ "cs_activation_race" ], expired_session_ids
+      assert_equal "canceled", attempt.status
+      assert_equal 0, @account.billing_checkout_attempts.active.count
+      assert_equal "sub_activation_race", @account.subscription.reload.external_subscription_id
+    end
+
     private
 
     def create_checkout(option_key:)
-      StripeCheckoutSessionCreator.call(
+      checkout_creator(option_key: option_key).call
+    end
+
+    def checkout_creator(option_key:)
+      StripeCheckoutSessionCreator.new(
         account: @account,
         option_key: option_key,
         success_url: success_url,
         cancel_url: cancel_url
+      )
+    end
+
+    def completed_checkout_session(attempt)
+      account_reference = StripeAccountReference.generate(@account)
+
+      Stripe::Checkout::Session.construct_from(
+        id: attempt.stripe_checkout_session_id,
+        mode: "subscription",
+        customer: attempt.stripe_customer_id,
+        subscription: "sub_completed_between_steps",
+        client_reference_id: account_reference,
+        metadata: {
+          StripeCheckoutSessionCreator::ACCOUNT_REFERENCE_KEY => account_reference,
+          StripeCheckoutSessionCreator::ATTEMPT_REFERENCE_KEY =>
+            StripeCheckoutAttemptReference.generate(attempt),
+          StripeCheckoutSessionCreator::OPTION_KEY => attempt.option_key
+        }
       )
     end
 

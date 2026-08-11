@@ -1,6 +1,6 @@
 module Billing
   class StripeSubscriptionSynchronizer
-    WEBHOOK_ELIGIBLE_ATTEMPT_STATUSES = %w[open submitted completed].freeze
+    WEBHOOK_ELIGIBLE_ATTEMPT_STATUSES = %w[open replacing submitted completed].freeze
     STATUS_MAP = {
       "trialing" => "trialing",
       "active" => "active",
@@ -24,18 +24,18 @@ module Billing
     def call
       option = resolve_option
       attempt = checkout_attempt
+      account = attempt.account
 
-      attempt.with_lock do
-        subscription = attempt.account.subscription
+      StripeAccountStateLock.call(account: account, attempt_id: attempt.id) do |subscription, locked_attempt|
         raise_association_error("missing_local_subscription") unless subscription
+        raise_association_error("missing_checkout_attempt") unless locked_attempt
 
-        subscription.lock!
-        validate_attempt!(attempt, option)
+        validate_attempt!(locked_attempt, option)
         validate_association!(subscription)
         raise StripeWebhookStaleEvent if stale_event?(subscription)
 
         subscription.update!(synchronized_attributes(option))
-        attempt.update!(status: "completed") unless attempt.status == "completed"
+        locked_attempt.update!(status: "completed") unless locked_attempt.status == "completed"
         subscription
       end
     end

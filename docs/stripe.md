@@ -40,14 +40,22 @@ stable option key, Stripe Customer and Checkout Session identifiers, an opaque i
 small lifecycle status. It does not contain payment data or raw Stripe payloads. Starting Checkout
 does not mutate the Account's authoritative `Subscription`.
 
-The database permits only one active (`creating`, `open`, or `submitted`) attempt per Account. Account
-locking protects the reservation flow, while a per-attempt Stripe idempotency key protects Session
-creation retries. A repeated request for the same option retrieves and reuses the open Session. A
-request for another option expires the old open Stripe Session before marking its attempt `replaced`
-and reserving a new one. Stripe-reported expired Sessions are marked `expired` and no longer block a
-new attempt. Browser success and cancellation pages are display-only; canceling the page leaves both
-the open attempt and the authoritative local Subscription unchanged, so the same Session can still be
-resumed until Stripe expires it or a different option replaces it.
+The database permits only one active (`creating`, `open`, `replacing`, or `submitted`) attempt per
+Account. Every Checkout and webhook transition uses the same lock order: Account, then Subscription,
+then Checkout attempt. Mutable records are requeried after those locks are acquired. Stripe Customer
+and Checkout Session create/retrieve/expire calls happen outside database transactions; their results
+are committed only after the same lock order is reacquired and authoritative state is checked again.
+A per-attempt Stripe idempotency key protects Session creation retries.
+
+A repeated request for the same option retrieves and reuses the open Session. A request for another
+option first marks the old attempt `replacing`, keeping it inside the one-active-attempt constraint,
+then expires the old Stripe Session before marking its attempt `replaced` and reserving a new one.
+Stripe-reported expired Sessions are marked `expired` and no longer block a new attempt. Terminal
+attempts cannot transition back to an active state. If a verified webhook wins a race, a stale
+Checkout request observes the freshly locked `completed` attempt or Stripe-backed Subscription and
+stops without creating or reviving a Session. Browser success and cancellation pages are display-only;
+canceling the page leaves both the open attempt and the authoritative local Subscription unchanged,
+so the same Session can still be resumed until Stripe expires it or a different option replaces it.
 
 Checkout metadata contains purpose-specific signed Account and Checkout-attempt references plus the
 stable Boat Binder option key. Webhook synchronization requires those signed references and also

@@ -32,6 +32,26 @@ class BillingCheckoutAttemptTest < ActiveSupport::TestCase
     end
   end
 
+  test "replacing remains active for the database uniqueness invariant" do
+    account = create_account(name: "Replacing Checkout Database Invariant")
+    create_attempt(account: account, status: "replacing")
+    timestamp = Time.current
+
+    assert_raises(ActiveRecord::RecordNotUnique) do
+      BillingCheckoutAttempt.insert_all!([
+        {
+          account_id: account.id,
+          option_key: "self_managed_annual",
+          stripe_customer_id: "cus_replacing_duplicate",
+          idempotency_key: SecureRandom.uuid,
+          status: "creating",
+          created_at: timestamp,
+          updated_at: timestamp
+        }
+      ])
+    end
+  end
+
   test "completed canceled expired and replaced attempts do not block a new attempt" do
     account = create_account(name: "Inactive Checkout Attempts")
 
@@ -49,6 +69,17 @@ class BillingCheckoutAttemptTest < ActiveSupport::TestCase
       BillingCheckoutAttempt.transaction(requires_new: true) do
         attempt.update_column(:status, "unknown")
       end
+    end
+  end
+
+  test "completed attempts cannot regress to an active state" do
+    attempt = create_attempt(status: "completed")
+
+    BillingCheckoutAttempt::ACTIVE_STATUSES.each do |status|
+      attempt.status = status
+
+      assert_not attempt.valid?
+      assert_includes attempt.errors[:status], "cannot transition from completed to #{status}"
     end
   end
 

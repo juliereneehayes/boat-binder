@@ -1,5 +1,5 @@
 class AddCheckoutAttemptsAndSubscriptionEventOrdering < ActiveRecord::Migration[8.1]
-  ACTIVE_ATTEMPT_STATUSES = %w[creating open submitted].freeze
+  ACTIVE_ATTEMPT_STATUSES = %w[creating open replacing submitted].freeze
   ATTEMPT_STATUSES = (ACTIVE_ATTEMPT_STATUSES + %w[completed canceled expired replaced]).freeze
 
   def change
