@@ -56,15 +56,17 @@ signed references are additional correlation defenses, not replacements for iden
 
 Verified events actively processed in this phase:
 
-- `checkout.session.completed` is the first point at which Stripe identifiers are written to the
-  authoritative local `Subscription`. It verifies the pending attempt, then associates its Stripe
-  Customer and Subscription identifiers. It does not infer or grant `trialing` status.
+- `checkout.session.completed` verifies the pending attempt, then associates its Stripe Customer and
+  Subscription identifiers with the authoritative local `Subscription`. It does not infer or grant
+  `trialing` status.
 - `customer.subscription.created`
 - `customer.subscription.updated`
 
-Subscription lifecycle events map Stripe's signed status and timestamps into the existing local
-`Subscription`. The Price in the event determines the stable Boat Binder plan. No follow-up Stripe
-request is made to decide application access.
+The authoritative local `Subscription` first changes only when one of these verified events passes
+all signed-reference and identifier checks; no webhook delivery order is assumed. Subscription
+lifecycle events map Stripe's signed status and timestamps into the existing local `Subscription`.
+The Price in the event determines the stable Boat Binder plan. No follow-up Stripe request is made to
+decide application access.
 
 Stripe does not guarantee webhook delivery order. Each applied lifecycle event records Stripe's
 `event.created` timestamp and event ID on the local Subscription. The synchronizer compares that pair
