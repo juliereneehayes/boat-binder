@@ -51,11 +51,10 @@ module Billing
     end
 
     def validate_account_reference!(account_id)
-      referenced_account = StripeAccountReference.find(account_reference)
-      return unless referenced_account
-      return if referenced_account.id == account_id
-
-      raise_association_error("account_mismatch")
+      StripeWebhookAccountReferenceValidator.call(
+        reference: account_reference,
+        account_id: account_id
+      )
     end
 
     def validate_identifiers!(subscription)

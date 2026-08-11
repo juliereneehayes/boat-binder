@@ -63,9 +63,10 @@ module Billing
     def validate_association!(subscription)
       raise_association_error("missing_subscription") if external_subscription_id.blank?
       raise_association_error("missing_customer") if customer_id.blank?
-      if account_reference.present? && (referenced_account = StripeAccountReference.find(account_reference))
-        raise_association_error("account_mismatch") unless referenced_account.id == subscription.account_id
-      end
+      StripeWebhookAccountReferenceValidator.call(
+        reference: account_reference,
+        account_id: subscription.account_id
+      )
       if subscription.external_customer_id.present? && subscription.external_customer_id != customer_id
         raise_association_error("customer_mismatch")
       end

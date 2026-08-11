@@ -237,6 +237,106 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
     assert_equal other_original, subscription_state(other_account.subscription.reload)
   end
 
+  test "Checkout completion with an invalid signed account reference is ignored without mutation" do
+    account = create_account(name: "Invalid Checkout Reference Account")
+    account.subscription.update!(provider: "stripe", external_customer_id: "cus_invalid_checkout_reference")
+    original_attributes = subscription_state(account.subscription)
+
+    log_output = capture_rails_logs do
+      post_signed_event(
+        event_id: "evt_invalid_checkout_reference",
+        event_type: "checkout.session.completed",
+        data_object: checkout_session_data(
+          account_reference: "tampered-account-reference",
+          customer_id: "cus_invalid_checkout_reference",
+          subscription_id: "sub_invalid_checkout_reference"
+        )
+      )
+    end
+
+    assert_response :success
+    receipt = BillingWebhookEvent.find_by!(external_event_id: "evt_invalid_checkout_reference")
+    assert_equal "ignored", receipt.status
+    assert_includes log_output, "association_code=invalid_account_reference"
+    assert_equal original_attributes, subscription_state(account.subscription.reload)
+  end
+
+  test "Checkout completion with another account signed reference is ignored without mutation" do
+    account = create_account(name: "Checkout Reference Target")
+    other_account = create_account(name: "Checkout Reference Other")
+    account.subscription.update!(provider: "stripe", external_customer_id: "cus_wrong_checkout_reference")
+    original_attributes = subscription_state(account.subscription)
+
+    log_output = capture_rails_logs do
+      post_signed_event(
+        event_id: "evt_wrong_checkout_reference",
+        event_type: "checkout.session.completed",
+        data_object: checkout_session_data(
+          account_reference: Billing::StripeAccountReference.generate(other_account),
+          customer_id: "cus_wrong_checkout_reference",
+          subscription_id: "sub_wrong_checkout_reference"
+        )
+      )
+    end
+
+    assert_response :success
+    receipt = BillingWebhookEvent.find_by!(external_event_id: "evt_wrong_checkout_reference")
+    assert_equal "ignored", receipt.status
+    assert_includes log_output, "association_code=account_mismatch"
+    assert_equal original_attributes, subscription_state(account.subscription.reload)
+  end
+
+  test "subscription event with an invalid signed account reference is ignored without mutation" do
+    account = create_account(name: "Invalid Subscription Reference Account")
+    account.subscription.update!(provider: "stripe", external_customer_id: "cus_invalid_subscription_reference")
+    original_attributes = subscription_state(account.subscription)
+
+    log_output = capture_rails_logs do
+      post_signed_event(
+        event_id: "evt_invalid_subscription_reference",
+        event_type: "customer.subscription.created",
+        data_object: subscription_data(
+          account_reference: "tampered-account-reference",
+          customer_id: "cus_invalid_subscription_reference",
+          subscription_id: "sub_invalid_subscription_reference",
+          status: "trialing"
+        )
+      )
+    end
+
+    assert_response :success
+    receipt = BillingWebhookEvent.find_by!(external_event_id: "evt_invalid_subscription_reference")
+    assert_equal "ignored", receipt.status
+    assert_includes log_output, "association_code=invalid_account_reference"
+    assert_equal original_attributes, subscription_state(account.subscription.reload)
+  end
+
+  test "subscription event with another account signed reference is ignored without mutation" do
+    account = create_account(name: "Subscription Reference Target")
+    other_account = create_account(name: "Subscription Reference Other")
+    account.subscription.update!(provider: "stripe", external_customer_id: "cus_wrong_subscription_reference")
+    original_attributes = subscription_state(account.subscription)
+
+    log_output = capture_rails_logs do
+      post_signed_event(
+        event_id: "evt_wrong_subscription_reference",
+        event_type: "customer.subscription.updated",
+        data_object: subscription_data(
+          account_reference: Billing::StripeAccountReference.generate(other_account),
+          customer_id: "cus_wrong_subscription_reference",
+          subscription_id: "sub_wrong_subscription_reference",
+          status: "active"
+        )
+      )
+    end
+
+    assert_response :success
+    receipt = BillingWebhookEvent.find_by!(external_event_id: "evt_wrong_subscription_reference")
+    assert_equal "ignored", receipt.status
+    assert_includes log_output, "association_code=account_mismatch"
+    assert_equal original_attributes, subscription_state(account.subscription.reload)
+  end
+
   test "subscription metadata and configured price mismatch is ignored" do
     account = create_account(name: "Mismatched Price Account")
     original_attributes = subscription_state(account.subscription)
