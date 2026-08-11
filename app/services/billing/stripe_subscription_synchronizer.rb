@@ -1,5 +1,6 @@
 module Billing
   class StripeSubscriptionSynchronizer
+    WEBHOOK_ELIGIBLE_ATTEMPT_STATUSES = %w[open submitted completed].freeze
     STATUS_MAP = {
       "trialing" => "trialing",
       "active" => "active",
@@ -11,30 +12,37 @@ module Billing
       "incomplete_expired" => "expired"
     }.freeze
 
-    def self.call(stripe_subscription)
-      new(stripe_subscription).call
+    def self.call(event)
+      new(event).call
     end
 
-    def initialize(stripe_subscription)
-      @stripe_subscription = stripe_subscription
+    def initialize(event)
+      @event = event
+      @stripe_subscription = event.data.object
     end
 
     def call
       option = resolve_option
-      subscription = resolve_subscription
+      attempt = checkout_attempt
 
-      subscription.with_lock do
-        subscription.reload
+      attempt.with_lock do
+        subscription = attempt.account.subscription
+        raise_association_error("missing_local_subscription") unless subscription
+
+        subscription.lock!
+        validate_attempt!(attempt, option)
         validate_association!(subscription)
-        subscription.update!(synchronized_attributes(option))
-      end
+        raise StripeWebhookStaleEvent if stale_event?(subscription)
 
-      subscription
+        subscription.update!(synchronized_attributes(option))
+        attempt.update!(status: "completed") unless attempt.status == "completed"
+        subscription
+      end
     end
 
     private
 
-    attr_reader :stripe_subscription
+    attr_reader :event, :stripe_subscription
 
     def resolve_option
       price_ids = subscription_items.filter_map { |item| stripe_identifier(item.price).presence }.uniq
@@ -49,15 +57,19 @@ module Billing
       option
     end
 
-    def resolve_subscription
-      subscriptions = subscriptions_for(:external_subscription_id, external_subscription_id)
-      return subscriptions.first if subscriptions.one?
-      raise_association_error("subscription_account_mismatch") if subscriptions.many?
+    def checkout_attempt
+      StripeCheckoutAttemptReference.find!(attempt_reference)
+    rescue StripeCheckoutAttemptReference::InvalidReferenceError
+      code = attempt_reference.present? ? "invalid_checkout_attempt_reference" : "missing_checkout_attempt_reference"
+      raise_association_error(code)
+    end
 
-      subscriptions = subscriptions_for(:external_customer_id, customer_id)
-      return subscriptions.first if subscriptions.one?
-
-      raise_association_error("customer_account_mismatch")
+    def validate_attempt!(attempt, option)
+      unless WEBHOOK_ELIGIBLE_ATTEMPT_STATUSES.include?(attempt.status)
+        raise_association_error("checkout_attempt_not_active")
+      end
+      raise_association_error("customer_mismatch") unless attempt.stripe_customer_id == customer_id
+      raise_association_error("option_mismatch") unless attempt.option_key == option.key
     end
 
     def validate_association!(subscription)
@@ -93,8 +105,27 @@ module Billing
         current_period_ends_at: current_period_end,
         cancel_at_period_end: stripe_subscription.cancel_at_period_end == true,
         canceled_at: timestamp(stripe_subscription.canceled_at),
-        last_synced_at: Time.current
+        last_synced_at: Time.current,
+        stripe_last_event_created_at: event_created_at,
+        stripe_last_event_id: event_id
       }
+    end
+
+    def stale_event?(subscription)
+      stored_order = subscription.stripe_event_order
+      stored_order && (event_order <=> stored_order) <= 0
+    end
+
+    def event_order
+      [ event_created_at.to_f, event_id ]
+    end
+
+    def event_created_at
+      @event_created_at ||= timestamp(event.created) || raise_association_error("missing_event_created")
+    end
+
+    def event_id
+      @event_id ||= event.id.to_s.presence || raise_association_error("missing_event_id")
     end
 
     def local_status
@@ -120,6 +151,10 @@ module Billing
       metadata[StripeCheckoutSessionCreator::ACCOUNT_REFERENCE_KEY].to_s
     end
 
+    def attempt_reference
+      metadata[StripeCheckoutSessionCreator::ATTEMPT_REFERENCE_KEY].to_s
+    end
+
     def option_key
       metadata[StripeCheckoutSessionCreator::OPTION_KEY].to_s
     end
@@ -140,12 +175,6 @@ module Billing
       Subscription.where(provider: Subscription::STRIPE_PROVIDER, column => identifier)
         .where.not(account_id: account_id)
         .exists?
-    end
-
-    def subscriptions_for(column, identifier)
-      return Subscription.none if identifier.blank?
-
-      Subscription.where(provider: Subscription::STRIPE_PROVIDER, column => identifier).limit(2).to_a
     end
 
     def timestamp(value)

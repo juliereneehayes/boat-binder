@@ -107,7 +107,11 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
   test "signed Checkout and subscription events synchronize the correct trialing subscription" do
     account = create_account(name: "Webhook Checkout Owner")
     account_reference = Billing::StripeAccountReference.generate(account)
-    account.subscription.update!(provider: "stripe", external_customer_id: "cus_checkout_sync")
+    attempt = create_checkout_attempt(
+      account: account,
+      customer_id: "cus_checkout_sync",
+      session_id: "cs_checkout_sync"
+    )
     original_status = account.subscription.status
     trial_end = 7.days.from_now.change(usec: 0)
     period_end = 1.month.from_now.change(usec: 0)
@@ -116,6 +120,7 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
       event_id: "evt_checkout_completed",
       event_type: "checkout.session.completed",
       data_object: checkout_session_data(
+        attempt: attempt,
         account_reference: account_reference,
         customer_id: "cus_checkout_sync",
         subscription_id: "sub_checkout_sync"
@@ -135,6 +140,7 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
       event_id: "evt_subscription_created",
       event_type: "customer.subscription.created",
       data_object: subscription_data(
+        attempt: attempt,
         account_reference: account_reference,
         customer_id: "cus_checkout_sync",
         subscription_id: "sub_checkout_sync",
@@ -161,12 +167,13 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
   test "subscription lifecycle event can arrive before Checkout completion" do
     account = create_account(name: "Early Subscription Event Owner")
     account_reference = Billing::StripeAccountReference.generate(account)
-    account.subscription.update!(provider: "stripe", external_customer_id: "cus_subscription_first")
+    attempt = create_checkout_attempt(account: account, customer_id: "cus_subscription_first")
 
     post_signed_event(
       event_id: "evt_subscription_first",
       event_type: "customer.subscription.created",
       data_object: subscription_data(
+        attempt: attempt,
         account_reference: account_reference,
         customer_id: "cus_subscription_first",
         subscription_id: "sub_subscription_first",
@@ -184,11 +191,12 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
 
   test "duplicate processed subscription event is acknowledged without synchronizing twice" do
     account = create_account(name: "Duplicate Subscription Event Owner")
-    account.subscription.update!(provider: "stripe", external_customer_id: "cus_subscription_duplicate")
+    attempt = create_checkout_attempt(account: account, customer_id: "cus_subscription_duplicate")
     payload = stripe_event_payload(
       event_id: "evt_subscription_duplicate",
       event_type: "customer.subscription.created",
       data_object: subscription_data(
+        attempt: attempt,
         account_reference: Billing::StripeAccountReference.generate(account),
         customer_id: "cus_subscription_duplicate",
         subscription_id: "sub_subscription_duplicate",
@@ -213,10 +221,148 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
     assert_equal first_synced_at, account.subscription.reload.last_synced_at
   end
 
+  test "newer lifecycle event followed by an older event does not revert subscription state" do
+    account = create_account(name: "Out Of Order Newer First")
+    attempt = create_checkout_attempt(account: account, customer_id: "cus_newer_first")
+    account_reference = Billing::StripeAccountReference.generate(account)
+    newer_trial_end = 8.days.from_now.change(usec: 0)
+    newer_period_end = 2.months.from_now.change(usec: 0)
+    newer_canceled_at = 1.hour.ago.change(usec: 0)
+
+    post_signed_event(
+      event_id: "evt_newer_first",
+      event_type: "customer.subscription.updated",
+      event_created: 200,
+      data_object: subscription_data(
+        attempt: attempt,
+        account_reference: account_reference,
+        customer_id: "cus_newer_first",
+        subscription_id: "sub_newer_first",
+        status: "past_due",
+        trial_end: newer_trial_end,
+        period_end: newer_period_end,
+        cancel_at_period_end: true,
+        canceled_at: newer_canceled_at
+      )
+    )
+    assert_response :success
+    newer_state = subscription_state(account.subscription.reload)
+
+    log_output = capture_rails_logs do
+      post_signed_event(
+        event_id: "evt_older_second",
+        event_type: "customer.subscription.created",
+        event_created: 100,
+        data_object: subscription_data(
+          attempt: attempt.reload,
+          account_reference: account_reference,
+          customer_id: "cus_newer_first",
+          subscription_id: "sub_newer_first",
+          status: "trialing",
+          trial_end: 5.days.from_now,
+          period_end: 1.month.from_now,
+          cancel_at_period_end: false,
+          canceled_at: nil
+        )
+      )
+    end
+
+    assert_response :success
+    assert_equal newer_state, subscription_state(account.subscription.reload)
+    assert_equal "ignored", BillingWebhookEvent.find_by!(external_event_id: "evt_older_second").status
+    assert_includes log_output, "reason=stale_lifecycle_event"
+  end
+
+  test "older lifecycle event followed by a newer event reaches the newer final state" do
+    account = create_account(name: "Out Of Order Older First")
+    attempt = create_checkout_attempt(account: account, customer_id: "cus_older_first")
+    account_reference = Billing::StripeAccountReference.generate(account)
+
+    post_signed_event(
+      event_id: "evt_older_first",
+      event_type: "customer.subscription.created",
+      event_created: 100,
+      data_object: subscription_data(
+        attempt: attempt,
+        account_reference: account_reference,
+        customer_id: "cus_older_first",
+        subscription_id: "sub_older_first",
+        status: "trialing"
+      )
+    )
+    assert_response :success
+
+    post_signed_event(
+      event_id: "evt_newer_second",
+      event_type: "customer.subscription.updated",
+      event_created: 200,
+      data_object: subscription_data(
+        attempt: attempt.reload,
+        account_reference: account_reference,
+        customer_id: "cus_older_first",
+        subscription_id: "sub_older_first",
+        status: "active",
+        trial_end: nil,
+        period_end: 3.months.from_now
+      )
+    )
+
+    assert_response :success
+    subscription = account.subscription.reload
+    assert_equal "active", subscription.status
+    assert_nil subscription.trial_ends_at
+    assert_equal 200, subscription.stripe_last_event_created_at.to_i
+    assert_equal "evt_newer_second", subscription.stripe_last_event_id
+    assert_equal "processed", BillingWebhookEvent.find_by!(external_event_id: "evt_newer_second").status
+  end
+
+  test "equal Stripe event timestamps use event id as a deterministic tie breaker" do
+    account = create_account(name: "Equal Event Ordering")
+    attempt = create_checkout_attempt(account: account, customer_id: "cus_equal_order")
+    account_reference = Billing::StripeAccountReference.generate(account)
+
+    post_signed_event(
+      event_id: "evt_equal_b",
+      event_type: "customer.subscription.updated",
+      event_created: 300,
+      data_object: subscription_data(
+        attempt: attempt,
+        account_reference: account_reference,
+        customer_id: "cus_equal_order",
+        subscription_id: "sub_equal_order",
+        status: "active"
+      )
+    )
+    assert_response :success
+    applied_state = subscription_state(account.subscription.reload)
+
+    post_signed_event(
+      event_id: "evt_equal_a",
+      event_type: "customer.subscription.updated",
+      event_created: 300,
+      data_object: subscription_data(
+        attempt: attempt.reload,
+        account_reference: account_reference,
+        customer_id: "cus_equal_order",
+        subscription_id: "sub_equal_order",
+        status: "past_due",
+        cancel_at_period_end: true
+      )
+    )
+
+    assert_response :success
+    assert_equal applied_state, subscription_state(account.subscription.reload)
+    assert_equal "ignored", BillingWebhookEvent.find_by!(external_event_id: "evt_equal_a").status
+  end
+
   test "mismatched Checkout association is ignored without mutating either account" do
     intended_account = create_account(name: "Intended Checkout Account")
     other_account = create_account(name: "Existing Stripe Customer Account")
-    other_account.subscription.update!(provider: "stripe", external_customer_id: "cus_other_account")
+    attempt = create_checkout_attempt(
+      account: other_account,
+      customer_id: "cus_other_account",
+      session_id: "cs_checkout_mismatch"
+    )
     intended_original = subscription_state(intended_account.subscription)
     other_original = subscription_state(other_account.subscription)
 
@@ -224,6 +370,7 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
       event_id: "evt_checkout_mismatch",
       event_type: "checkout.session.completed",
       data_object: checkout_session_data(
+        attempt: attempt,
         account_reference: Billing::StripeAccountReference.generate(intended_account),
         customer_id: "cus_other_account",
         subscription_id: "sub_mismatch"
@@ -239,7 +386,11 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
 
   test "Checkout completion with an invalid signed account reference is ignored without mutation" do
     account = create_account(name: "Invalid Checkout Reference Account")
-    account.subscription.update!(provider: "stripe", external_customer_id: "cus_invalid_checkout_reference")
+    attempt = create_checkout_attempt(
+      account: account,
+      customer_id: "cus_invalid_checkout_reference",
+      session_id: "cs_invalid_checkout_reference"
+    )
     original_attributes = subscription_state(account.subscription)
 
     log_output = capture_rails_logs do
@@ -247,6 +398,7 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
         event_id: "evt_invalid_checkout_reference",
         event_type: "checkout.session.completed",
         data_object: checkout_session_data(
+          attempt: attempt,
           account_reference: "tampered-account-reference",
           customer_id: "cus_invalid_checkout_reference",
           subscription_id: "sub_invalid_checkout_reference"
@@ -264,7 +416,11 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
   test "Checkout completion with another account signed reference is ignored without mutation" do
     account = create_account(name: "Checkout Reference Target")
     other_account = create_account(name: "Checkout Reference Other")
-    account.subscription.update!(provider: "stripe", external_customer_id: "cus_wrong_checkout_reference")
+    attempt = create_checkout_attempt(
+      account: account,
+      customer_id: "cus_wrong_checkout_reference",
+      session_id: "cs_wrong_checkout_reference"
+    )
     original_attributes = subscription_state(account.subscription)
 
     log_output = capture_rails_logs do
@@ -272,6 +428,7 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
         event_id: "evt_wrong_checkout_reference",
         event_type: "checkout.session.completed",
         data_object: checkout_session_data(
+          attempt: attempt,
           account_reference: Billing::StripeAccountReference.generate(other_account),
           customer_id: "cus_wrong_checkout_reference",
           subscription_id: "sub_wrong_checkout_reference"
@@ -288,7 +445,7 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
 
   test "subscription event with an invalid signed account reference is ignored without mutation" do
     account = create_account(name: "Invalid Subscription Reference Account")
-    account.subscription.update!(provider: "stripe", external_customer_id: "cus_invalid_subscription_reference")
+    attempt = create_checkout_attempt(account: account, customer_id: "cus_invalid_subscription_reference")
     original_attributes = subscription_state(account.subscription)
 
     log_output = capture_rails_logs do
@@ -296,6 +453,7 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
         event_id: "evt_invalid_subscription_reference",
         event_type: "customer.subscription.created",
         data_object: subscription_data(
+          attempt: attempt,
           account_reference: "tampered-account-reference",
           customer_id: "cus_invalid_subscription_reference",
           subscription_id: "sub_invalid_subscription_reference",
@@ -314,7 +472,7 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
   test "subscription event with another account signed reference is ignored without mutation" do
     account = create_account(name: "Subscription Reference Target")
     other_account = create_account(name: "Subscription Reference Other")
-    account.subscription.update!(provider: "stripe", external_customer_id: "cus_wrong_subscription_reference")
+    attempt = create_checkout_attempt(account: account, customer_id: "cus_wrong_subscription_reference")
     original_attributes = subscription_state(account.subscription)
 
     log_output = capture_rails_logs do
@@ -322,6 +480,7 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
         event_id: "evt_wrong_subscription_reference",
         event_type: "customer.subscription.updated",
         data_object: subscription_data(
+          attempt: attempt,
           account_reference: Billing::StripeAccountReference.generate(other_account),
           customer_id: "cus_wrong_subscription_reference",
           subscription_id: "sub_wrong_subscription_reference",
@@ -339,12 +498,14 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
 
   test "subscription metadata and configured price mismatch is ignored" do
     account = create_account(name: "Mismatched Price Account")
+    attempt = create_checkout_attempt(account: account, customer_id: "cus_price_mismatch")
     original_attributes = subscription_state(account.subscription)
 
     post_signed_event(
       event_id: "evt_price_mismatch",
       event_type: "customer.subscription.created",
       data_object: subscription_data(
+        attempt: attempt,
         account_reference: Billing::StripeAccountReference.generate(account),
         customer_id: "cus_price_mismatch",
         subscription_id: "sub_price_mismatch",
@@ -734,22 +895,26 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
 
   private
 
-  def post_signed_event(event_id:, event_type: "customer.subscription.updated", livemode: false, api_version: "2026-07-01", data_object: nil)
+  def post_signed_event(event_id:, event_type: "customer.subscription.updated", livemode: false,
+    api_version: "2026-07-01", data_object: nil, event_created: Time.current.to_i)
     payload = stripe_event_payload(
       event_id: event_id,
       event_type: event_type,
       livemode: livemode,
       api_version: api_version,
-      data_object: data_object
+      data_object: data_object,
+      event_created: event_created
     )
     post webhooks_stripe_path, params: payload, headers: stripe_signature_headers(payload)
   end
 
-  def stripe_event_payload(event_id:, event_type: "customer.subscription.updated", livemode: false, api_version: "2026-07-01", data_object: nil)
+  def stripe_event_payload(event_id:, event_type: "customer.subscription.updated", livemode: false,
+    api_version: "2026-07-01", data_object: nil, event_created: Time.current.to_i)
     JSON.generate(
       id: event_id,
       object: "event",
       type: event_type,
+      created: event_created,
       livemode: livemode,
       api_version: api_version,
       data: {
@@ -770,9 +935,10 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
     }
   end
 
-  def checkout_session_data(account_reference:, customer_id:, subscription_id:, option_key: "self_managed_monthly")
+  def checkout_session_data(attempt:, account_reference:, customer_id:, subscription_id:,
+    option_key: "self_managed_monthly")
     {
-      id: "cs_test",
+      id: attempt.stripe_checkout_session_id,
       object: "checkout.session",
       mode: "subscription",
       customer: customer_id,
@@ -780,24 +946,29 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
       client_reference_id: account_reference,
       metadata: {
         Billing::StripeCheckoutSessionCreator::ACCOUNT_REFERENCE_KEY => account_reference,
+        Billing::StripeCheckoutSessionCreator::ATTEMPT_REFERENCE_KEY =>
+          Billing::StripeCheckoutAttemptReference.generate(attempt),
         Billing::StripeCheckoutSessionCreator::OPTION_KEY => option_key
       }
     }
   end
 
-  def subscription_data(account_reference:, customer_id:, subscription_id:, status:,
+  def subscription_data(attempt:, account_reference:, customer_id:, subscription_id:, status:,
     option_key: "self_managed_monthly", price_id: "price_webhook_monthly",
-    trial_end: 7.days.from_now, period_end: 1.month.from_now)
+    trial_end: 7.days.from_now, period_end: 1.month.from_now,
+    cancel_at_period_end: false, canceled_at: nil)
     {
       id: subscription_id,
       object: "subscription",
       customer: customer_id,
       status: status,
       trial_end: trial_end&.to_i,
-      cancel_at_period_end: false,
-      canceled_at: nil,
+      cancel_at_period_end: cancel_at_period_end,
+      canceled_at: canceled_at&.to_i,
       metadata: {
         Billing::StripeCheckoutSessionCreator::ACCOUNT_REFERENCE_KEY => account_reference,
+        Billing::StripeCheckoutSessionCreator::ATTEMPT_REFERENCE_KEY =>
+          Billing::StripeCheckoutAttemptReference.generate(attempt),
         Billing::StripeCheckoutSessionCreator::OPTION_KEY => option_key
       },
       items: {
@@ -811,6 +982,18 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
     }
   end
 
+  def create_checkout_attempt(account:, customer_id:, session_id: SecureRandom.uuid,
+    option_key: "self_managed_monthly", status: "open")
+    BillingCheckoutAttempt.create!(
+      account: account,
+      option_key: option_key,
+      stripe_customer_id: customer_id,
+      stripe_checkout_session_id: session_id,
+      idempotency_key: SecureRandom.uuid,
+      status: status
+    )
+  end
+
   def subscription_state(subscription)
     subscription.attributes.slice(
       "plan",
@@ -822,7 +1005,9 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
       "current_period_ends_at",
       "cancel_at_period_end",
       "canceled_at",
-      "last_synced_at"
+      "last_synced_at",
+      "stripe_last_event_created_at",
+      "stripe_last_event_id"
     )
   end
 

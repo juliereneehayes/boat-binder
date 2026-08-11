@@ -1,5 +1,7 @@
 module Billing
   class StripeCheckoutCompletionSynchronizer
+    WEBHOOK_ELIGIBLE_ATTEMPT_STATUSES = %w[open submitted completed].freeze
+
     def self.call(checkout_session)
       new(checkout_session).call
     end
@@ -10,20 +12,25 @@ module Billing
 
     def call
       validate_checkout_session!
-      subscription = subscription_for_customer
+      attempt = checkout_attempt
 
-      subscription.with_lock do
-        subscription.reload
-        validate_account_reference!(subscription.account_id)
+      attempt.with_lock do
+        subscription = attempt.account.subscription
+        raise_association_error("missing_local_subscription") unless subscription
+
+        subscription.lock!
+        validate_attempt!(attempt)
+        validate_account_reference!(attempt.account_id)
         validate_identifiers!(subscription)
         subscription.update!(
           provider: Subscription::STRIPE_PROVIDER,
           external_customer_id: customer_id,
           external_subscription_id: external_subscription_id
         )
-      end
+        attempt.update!(status: "completed")
 
-      subscription
+        subscription
+      end
     end
 
     private
@@ -32,6 +39,7 @@ module Billing
 
     def validate_checkout_session!
       raise_association_error("invalid_checkout_mode") unless checkout_session.mode == "subscription"
+      raise_association_error("missing_checkout_session") if checkout_session_id.blank?
       raise_association_error("missing_customer") if customer_id.blank?
       raise_association_error("missing_subscription") if external_subscription_id.blank?
       raise_association_error("invalid_client_reference") unless checkout_session.client_reference_id == account_reference
@@ -40,14 +48,20 @@ module Billing
       raise_association_error("invalid_option") unless option&.enabled?
     end
 
-    def subscription_for_customer
-      subscriptions = Subscription
-        .where(provider: Subscription::STRIPE_PROVIDER, external_customer_id: customer_id)
-        .limit(2)
-        .to_a
-      return subscriptions.first if subscriptions.one?
+    def checkout_attempt
+      StripeCheckoutAttemptReference.find!(attempt_reference)
+    rescue StripeCheckoutAttemptReference::InvalidReferenceError
+      code = attempt_reference.present? ? "invalid_checkout_attempt_reference" : "missing_checkout_attempt_reference"
+      raise_association_error(code)
+    end
 
-      raise_association_error("customer_account_mismatch")
+    def validate_attempt!(attempt)
+      unless WEBHOOK_ELIGIBLE_ATTEMPT_STATUSES.include?(attempt.status)
+        raise_association_error("checkout_attempt_not_active")
+      end
+      raise_association_error("checkout_session_mismatch") unless attempt.stripe_checkout_session_id == checkout_session_id
+      raise_association_error("customer_mismatch") unless attempt.stripe_customer_id == customer_id
+      raise_association_error("option_mismatch") unless attempt.option_key == option_key
     end
 
     def validate_account_reference!(account_id)
@@ -87,8 +101,16 @@ module Billing
       metadata[StripeCheckoutSessionCreator::ACCOUNT_REFERENCE_KEY].to_s
     end
 
+    def attempt_reference
+      metadata[StripeCheckoutSessionCreator::ATTEMPT_REFERENCE_KEY].to_s
+    end
+
     def option_key
       metadata[StripeCheckoutSessionCreator::OPTION_KEY].to_s
+    end
+
+    def checkout_session_id
+      checkout_session.id.to_s
     end
 
     def customer_id

@@ -177,6 +177,44 @@ class BillingCheckoutTest < ActionDispatch::IntegrationTest
     end
   end
 
+  test "creating Checkout and then visiting cancel leaves the local Subscription unchanged" do
+    previous_secret_key = Rails.configuration.x.stripe.secret_key
+    Rails.configuration.x.stripe.secret_key = "sk_test_create_then_cancel"
+    original_attributes = subscription_state(@account.subscription)
+    checkout_session = Stripe::Checkout::Session.construct_from(
+      id: "cs_create_then_cancel",
+      status: "open",
+      url: "https://checkout.stripe.com/c/pay/cs_create_then_cancel"
+    )
+    sign_in_as @owner
+
+    with_singleton_method(
+      Stripe::Customer,
+      :create,
+      ->(*) { Stripe::Customer.construct_from(id: "cus_create_then_cancel") }
+    ) do
+      with_singleton_method(Stripe::Checkout::Session, :create, ->(*) { checkout_session }) do
+        post billing_checkout_path, params: { option_key: "self_managed_monthly" }
+      end
+    end
+
+    assert_redirected_to checkout_session.url
+    assert_equal original_attributes, subscription_state(@account.subscription.reload)
+    attempt = @account.billing_checkout_attempts.active.find_by!(
+      stripe_checkout_session_id: "cs_create_then_cancel"
+    )
+    assert_equal "open", attempt.status
+
+    get billing_checkout_cancel_path
+
+    assert_response :success
+    assert_includes response.body, "No changes made"
+    assert_equal original_attributes, subscription_state(@account.subscription.reload)
+    assert_equal "open", attempt.reload.status
+  ensure
+    Rails.configuration.x.stripe.secret_key = previous_secret_key
+  end
+
   private
 
   def assert_no_checkout_service_call(&block)
@@ -210,7 +248,9 @@ class BillingCheckoutTest < ActionDispatch::IntegrationTest
       "external_subscription_id",
       "trial_ends_at",
       "current_period_ends_at",
-      "last_synced_at"
+      "last_synced_at",
+      "stripe_last_event_created_at",
+      "stripe_last_event_id"
     )
   end
 end

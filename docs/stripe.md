@@ -34,27 +34,45 @@ billing option at `/billing/checkout`. Boat Binder resolves the account from the
 membership and resolves the Stripe Price ID from the server-side catalog. Client-supplied Account,
 Price, Customer, or Subscription identifiers are not used.
 
-`Billing::StripeCheckoutSessionCreator` creates or reuses the local Account's Stripe Customer and
-creates a Stripe-hosted Checkout Session in `subscription` mode. It applies the catalog's trial
-duration, always collects a payment method for post-trial billing, and sends server-generated success
-and cancellation URLs. Customer creation uses a stable idempotency key. The success and cancellation
-pages are display-only and never change local subscription state.
+`Billing::StripeCheckoutSessionCreator` creates or reuses a Stripe Customer and records only pending
+correlation state in `BillingCheckoutAttempt`. A pending attempt contains the authorized Account,
+stable option key, Stripe Customer and Checkout Session identifiers, an opaque idempotency key, and a
+small lifecycle status. It does not contain payment data or raw Stripe payloads. Starting Checkout
+does not mutate the Account's authoritative `Subscription`.
 
-Checkout metadata contains a purpose-specific signed Account reference and stable Boat Binder option
-key. Webhook synchronization does not trust metadata alone: it resolves the persisted local
-Subscription through the Stripe Customer or Subscription identifier, rejects cross-account
-mismatches, and verifies the event's Price against the catalog.
+The database permits only one active (`creating`, `open`, or `submitted`) attempt per Account. Account
+locking protects the reservation flow, while a per-attempt Stripe idempotency key protects Session
+creation retries. A repeated request for the same option retrieves and reuses the open Session. A
+request for another option expires the old open Stripe Session before marking its attempt `replaced`
+and reserving a new one. Stripe-reported expired Sessions are marked `expired` and no longer block a
+new attempt. Browser success and cancellation pages are display-only; canceling the page leaves both
+the open attempt and the authoritative local Subscription unchanged, so the same Session can still be
+resumed until Stripe expires it or a different option replaces it.
+
+Checkout metadata contains purpose-specific signed Account and Checkout-attempt references plus the
+stable Boat Binder option key. Webhook synchronization requires those signed references and also
+cross-checks the Stripe Customer, Subscription, Session, Price, and local Account associations. The
+signed references are additional correlation defenses, not replacements for identifier checks.
 
 Verified events actively processed in this phase:
 
-- `checkout.session.completed` associates the Stripe Subscription identifier with the Account's
-  already-persisted Stripe Customer association. It does not infer or grant `trialing` status.
+- `checkout.session.completed` is the first point at which Stripe identifiers are written to the
+  authoritative local `Subscription`. It verifies the pending attempt, then associates its Stripe
+  Customer and Subscription identifiers. It does not infer or grant `trialing` status.
 - `customer.subscription.created`
 - `customer.subscription.updated`
 
 Subscription lifecycle events map Stripe's signed status and timestamps into the existing local
 `Subscription`. The Price in the event determines the stable Boat Binder plan. No follow-up Stripe
 request is made to decide application access.
+
+Stripe does not guarantee webhook delivery order. Each applied lifecycle event records Stripe's
+`event.created` timestamp and event ID on the local Subscription. The synchronizer compares that pair
+while holding the Subscription lock. Newer timestamps win; when timestamps are equal, the
+lexicographically greater event ID wins as a deterministic tie-break. A stale verified event is
+recorded as successfully ignored and cannot revert status, period/trial dates, cancellation fields, or
+other synchronized lifecycle state. Webhook receipt creation and duplicate-event idempotency remain
+separate protections.
 
 Still deferred and recorded as ignored:
 
@@ -117,9 +135,14 @@ Use Stripe sandbox keys and test-mode Price IDs only.
    timestamp.
 8. Refresh the success page and confirm it performs no billing mutation.
 9. Repeat with annual and verify the annual test Price is used.
-10. Cancel a fresh Checkout Session and confirm the local subscription remains unchanged.
-11. Redeliver a processed event and confirm the receipt and local synchronization remain idempotent.
-12. Attempt an unknown option, extra Price/Customer/Account parameters, a second eligible Account,
+10. Cancel a fresh Checkout page and confirm the local subscription remains unchanged. Retry the same
+    option and confirm Boat Binder reuses the open Session rather than creating a second one.
+11. Choose the other billing option and confirm the previous open Session is expired before the new
+    Session is created.
+12. Redeliver a processed event and confirm the receipt and local synchronization remain idempotent.
+13. Deliver an older lifecycle event after a newer one and confirm it is acknowledged without
+    reverting the local Subscription.
+14. Attempt an unknown option, extra Price/Customer/Account parameters, a second eligible Account,
     and mismatched signed event metadata; confirm no cross-account mutation occurs.
 
 Do not use production customer data or live-mode Stripe keys for these checks. This PR does not deploy
