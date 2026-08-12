@@ -19,6 +19,12 @@ Use test-mode Price IDs in development and staging. Configure live-mode IDs sepa
 Catalog loading and lookup read local configuration only and never call Stripe. Checkout uses these
 trusted options; the browser submits only an option key and never a Stripe Price ID.
 
+An option's `enabled` value controls whether it is available for a new Checkout. A known disabled
+option remains valid for reconciliation of an already-issued Checkout Session or existing Stripe
+subscription. Price mappings referenced by outstanding Stripe lifecycle events must therefore remain
+configured and recognizable even after an option is no longer offered for new purchase. Unknown
+option keys and Price IDs continue to fail closed.
+
 Webhook endpoint:
 
 ```text

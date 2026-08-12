@@ -164,6 +164,162 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
     assert subscription.last_synced_at.present?
   end
 
+  test "disabled known option still synchronizes an already-issued Checkout Session" do
+    account = create_account(name: "Disabled Checkout Option Owner")
+    account_reference = Billing::StripeAccountReference.generate(account)
+    assert Billing::SubscriptionPlanCatalog.new.fetch("self_managed_monthly").enabled?
+    attempt = create_checkout_attempt(
+      account: account,
+      customer_id: "cus_disabled_checkout",
+      session_id: "cs_disabled_checkout"
+    )
+    original_status = account.subscription.status
+
+    with_plan_catalog(option_catalog(enabled: false)) do
+      post_signed_event(
+        event_id: "evt_disabled_checkout",
+        event_type: "checkout.session.completed",
+        data_object: checkout_session_data(
+          attempt: attempt,
+          account_reference: account_reference,
+          customer_id: "cus_disabled_checkout",
+          subscription_id: "sub_disabled_checkout"
+        )
+      )
+    end
+
+    assert_response :success
+    assert_equal "processed", BillingWebhookEvent.find_by!(external_event_id: "evt_disabled_checkout").status
+    subscription = account.subscription.reload
+    assert_equal "stripe", subscription.provider
+    assert_equal "cus_disabled_checkout", subscription.external_customer_id
+    assert_equal "sub_disabled_checkout", subscription.external_subscription_id
+    assert_equal original_status, subscription.status
+    assert_equal "completed", attempt.reload.status
+  end
+
+  test "unknown Checkout option is ignored without mutating subscription state" do
+    account = create_account(name: "Unknown Checkout Option Owner")
+    attempt = create_checkout_attempt(
+      account: account,
+      customer_id: "cus_unknown_checkout_option",
+      session_id: "cs_unknown_checkout_option"
+    )
+    original_attributes = subscription_state(account.subscription)
+
+    log_output = capture_rails_logs do
+      post_signed_event(
+        event_id: "evt_unknown_checkout_option",
+        event_type: "checkout.session.completed",
+        data_object: checkout_session_data(
+          attempt: attempt,
+          account_reference: Billing::StripeAccountReference.generate(account),
+          customer_id: "cus_unknown_checkout_option",
+          subscription_id: "sub_unknown_checkout_option",
+          option_key: "unknown_option"
+        )
+      )
+    end
+
+    assert_response :success
+    assert_equal "ignored", BillingWebhookEvent.find_by!(external_event_id: "evt_unknown_checkout_option").status
+    assert_includes log_output, "association_code=invalid_option"
+    assert_equal original_attributes, subscription_state(account.subscription.reload)
+    assert_equal "open", attempt.reload.status
+  end
+
+  test "disabled known Price still synchronizes an existing Stripe subscription" do
+    account = create_account(name: "Disabled Subscription Price Owner")
+    account_reference = Billing::StripeAccountReference.generate(account)
+    assert Billing::SubscriptionPlanCatalog.new.fetch("self_managed_monthly").enabled?
+    attempt = create_checkout_attempt(account: account, customer_id: "cus_disabled_price")
+
+    with_plan_catalog(option_catalog(enabled: false)) do
+      post_signed_event(
+        event_id: "evt_disabled_price",
+        event_type: "customer.subscription.created",
+        data_object: subscription_data(
+          attempt: attempt,
+          account_reference: account_reference,
+          customer_id: "cus_disabled_price",
+          subscription_id: "sub_disabled_price",
+          status: "trialing"
+        )
+      )
+    end
+
+    assert_response :success
+    assert_equal "processed", BillingWebhookEvent.find_by!(external_event_id: "evt_disabled_price").status
+    subscription = account.subscription.reload
+    assert_equal "self_managed", subscription.plan
+    assert_equal "trialing", subscription.status
+    assert_equal "stripe", subscription.provider
+    assert_equal "cus_disabled_price", subscription.external_customer_id
+    assert_equal "sub_disabled_price", subscription.external_subscription_id
+    assert_equal "completed", attempt.reload.status
+  end
+
+  test "unknown Stripe Price is ignored without mutating subscription state" do
+    account = create_account(name: "Unknown Subscription Price Owner")
+    attempt = create_checkout_attempt(account: account, customer_id: "cus_unknown_price")
+    original_attributes = subscription_state(account.subscription)
+
+    log_output = capture_rails_logs do
+      post_signed_event(
+        event_id: "evt_unknown_price",
+        event_type: "customer.subscription.created",
+        data_object: subscription_data(
+          attempt: attempt,
+          account_reference: Billing::StripeAccountReference.generate(account),
+          customer_id: "cus_unknown_price",
+          subscription_id: "sub_unknown_price",
+          status: "trialing",
+          price_id: "price_unknown"
+        )
+      )
+    end
+
+    assert_response :success
+    assert_equal "ignored", BillingWebhookEvent.find_by!(external_event_id: "evt_unknown_price").status
+    assert_includes log_output, "association_code=unknown_price"
+    assert_equal original_attributes, subscription_state(account.subscription.reload)
+    assert_equal "open", attempt.reload.status
+  end
+
+  test "disabled option does not bypass Checkout cross-account protections" do
+    account = create_account(name: "Disabled Option Target Account")
+    other_account = create_account(name: "Disabled Option Other Account")
+    attempt = create_checkout_attempt(
+      account: account,
+      customer_id: "cus_disabled_cross_account",
+      session_id: "cs_disabled_cross_account"
+    )
+    original_attributes = subscription_state(account.subscription)
+    other_original_attributes = subscription_state(other_account.subscription)
+
+    log_output = capture_rails_logs do
+      with_plan_catalog(option_catalog(enabled: false)) do
+        post_signed_event(
+          event_id: "evt_disabled_cross_account",
+          event_type: "checkout.session.completed",
+          data_object: checkout_session_data(
+            attempt: attempt,
+            account_reference: Billing::StripeAccountReference.generate(other_account),
+            customer_id: "cus_disabled_cross_account",
+            subscription_id: "sub_disabled_cross_account"
+          )
+        )
+      end
+    end
+
+    assert_response :success
+    assert_equal "ignored", BillingWebhookEvent.find_by!(external_event_id: "evt_disabled_cross_account").status
+    assert_includes log_output, "association_code=account_mismatch"
+    assert_equal original_attributes, subscription_state(account.subscription.reload)
+    assert_equal other_original_attributes, subscription_state(other_account.subscription.reload)
+    assert_equal "open", attempt.reload.status
+  end
+
   test "subscription lifecycle event can arrive before Checkout completion" do
     account = create_account(name: "Early Subscription Event Owner")
     account_reference = Billing::StripeAccountReference.generate(account)
@@ -894,6 +1050,28 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
   end
 
   private
+
+  def option_catalog(enabled:)
+    definitions = Billing::SubscriptionPlanCatalog::DEFAULT_DEFINITIONS.map(&:deep_dup)
+    definitions.find { |definition| definition.fetch(:key) == "self_managed_monthly" }[:enabled] = enabled
+
+    Billing::SubscriptionPlanCatalog.new(
+      price_ids: {
+        "self_managed_monthly" => "price_webhook_monthly",
+        "self_managed_annual" => "price_webhook_annual"
+      },
+      definitions: definitions
+    )
+  end
+
+  def with_plan_catalog(catalog)
+    original_method = Billing::SubscriptionPlanCatalog.method(:new)
+    Billing::SubscriptionPlanCatalog.define_singleton_method(:new, ->(*) { catalog })
+
+    yield
+  ensure
+    Billing::SubscriptionPlanCatalog.define_singleton_method(:new, original_method)
+  end
 
   def post_signed_event(event_id:, event_type: "customer.subscription.updated", livemode: false,
     api_version: "2026-07-01", data_object: nil, event_created: Time.current.to_i)

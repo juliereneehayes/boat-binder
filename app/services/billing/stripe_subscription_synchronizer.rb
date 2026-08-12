@@ -49,7 +49,7 @@ module Billing
       raise_association_error("invalid_price_count") unless price_ids.one?
 
       option = SubscriptionPlanCatalog.new.find_by_stripe_price_id(price_ids.first)
-      raise_association_error("unknown_price") unless option&.enabled?
+      raise_association_error("unknown_price") unless option
       if option_key.present? && option.key != option_key
         raise_association_error("option_price_mismatch")
       end

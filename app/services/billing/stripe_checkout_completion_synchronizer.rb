@@ -45,7 +45,7 @@ module Billing
       raise_association_error("invalid_client_reference") unless checkout_session.client_reference_id == account_reference
 
       option = SubscriptionPlanCatalog.new.find(option_key)
-      raise_association_error("invalid_option") unless option&.enabled?
+      raise_association_error("invalid_option") unless option
     end
 
     def checkout_attempt
