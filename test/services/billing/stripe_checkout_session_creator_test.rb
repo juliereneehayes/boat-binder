@@ -115,6 +115,68 @@ module Billing
       assert_equal 1, @account.billing_checkout_attempts.count
     end
 
+    test "a same-option request activates its existing creating attempt" do
+      attempt = create_attempt(
+        customer_id: "cus_creating_monthly",
+        session_id: nil,
+        option_key: "self_managed_monthly",
+        status: "creating"
+      )
+      checkout_price_ids = []
+
+      with_stripe_methods(
+        customer_create: ->(*) { flunk("the creating attempt Customer should be reused") },
+        session_create: ->(params, _options) {
+          checkout_price_ids << params.dig(:line_items, 0, :price)
+          CHECKOUT_SESSION.call(id: "cs_creating_monthly")
+        }
+      ) do
+        assert_equal "cs_creating_monthly", create_checkout(option_key: "self_managed_monthly").id
+      end
+
+      assert_equal [ MONTHLY_PRICE_ID ], checkout_price_ids
+      assert_equal "open", attempt.reload.status
+      assert_equal "self_managed_monthly", attempt.option_key
+    end
+
+    test "a monthly creating attempt cannot satisfy an annual request" do
+      attempt = create_attempt(
+        customer_id: "cus_monthly_blocks_annual",
+        session_id: nil,
+        option_key: "self_managed_monthly",
+        status: "creating"
+      )
+
+      assert_no_stripe_calls do
+        assert_raises(StripeCheckoutSessionCreator::InvalidOptionError) do
+          create_checkout(option_key: "self_managed_annual")
+        end
+      end
+
+      assert_equal "creating", attempt.reload.status
+      assert_equal "self_managed_monthly", attempt.option_key
+      assert_nil attempt.stripe_checkout_session_id
+    end
+
+    test "an annual creating attempt cannot satisfy a monthly request" do
+      attempt = create_attempt(
+        customer_id: "cus_annual_blocks_monthly",
+        session_id: nil,
+        option_key: "self_managed_annual",
+        status: "creating"
+      )
+
+      assert_no_stripe_calls do
+        assert_raises(StripeCheckoutSessionCreator::InvalidOptionError) do
+          create_checkout(option_key: "self_managed_monthly")
+        end
+      end
+
+      assert_equal "creating", attempt.reload.status
+      assert_equal "self_managed_annual", attempt.option_key
+      assert_nil attempt.stripe_checkout_session_id
+    end
+
     test "changing options expires the open Session before creating its replacement" do
       created_session_ids = %w[cs_monthly_old cs_annual_new]
       expired_session_ids = []
@@ -300,6 +362,10 @@ module Billing
           create_checkout(option_key: "self_managed_monthly")
         end
 
+        assert_raises(StripeCheckoutSessionCreator::InvalidOptionError) do
+          create_checkout(option_key: "self_managed_annual")
+        end
+
         assert_equal "cs_ambiguous_retry", create_checkout(option_key: "self_managed_monthly").id
       end
 
@@ -307,6 +373,7 @@ module Billing
       assert_equal 1, idempotency_keys.uniq.length
       assert_equal 1, @account.billing_checkout_attempts.count
       assert_equal "open", @account.billing_checkout_attempts.first.status
+      assert_equal "self_managed_monthly", @account.billing_checkout_attempts.first.option_key
     end
 
     test "a Customer associated with another account is rejected" do

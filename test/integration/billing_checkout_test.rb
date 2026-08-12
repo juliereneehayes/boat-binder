@@ -26,7 +26,8 @@ class BillingCheckoutTest < ActionDispatch::IntegrationTest
     assert_includes response.body, @account.name
     assert_includes response.body, "$14/month"
     assert_includes response.body, "$154/year"
-    assert_includes response.body, "7-day trial"
+    assert_includes response.body, "Both options include a free trial."
+    assert_equal 2, response.body.scan("7-day trial").length
     assert_select "form[action=?][method=post]", billing_checkout_path, count: 2
     assert_select "input[name=option_key][value=self_managed_monthly]", count: 1
     assert_select "input[name=option_key][value=self_managed_annual]", count: 1
@@ -35,6 +36,28 @@ class BillingCheckoutTest < ActionDispatch::IntegrationTest
 
     get root_path
     assert_includes response.body, "View Self Managed plans"
+  end
+
+  test "Checkout trial messaging follows the plan catalog" do
+    definitions = Billing::SubscriptionPlanCatalog::DEFAULT_DEFINITIONS.map(&:deep_dup)
+    definitions.each { |definition| definition[:trial_days] = 11 }
+    catalog = Billing::SubscriptionPlanCatalog.new(
+      price_ids: {
+        "self_managed_monthly" => "price_checkout_monthly",
+        "self_managed_annual" => "price_checkout_annual"
+      },
+      definitions: definitions
+    )
+    sign_in_as @owner
+
+    with_singleton_method(Billing::SubscriptionPlanCatalog, :new, ->(*) { catalog }) do
+      get billing_checkout_path
+    end
+
+    assert_response :success
+    assert_includes response.body, "Both options include a free trial."
+    assert_equal 2, response.body.scan("11-day trial").length
+    assert_not_includes response.body, "7-day trial"
   end
 
   test "Checkout creation resolves the account and URLs server side" do

@@ -16,7 +16,7 @@ module Billing
       :signed_reference,
       keyword_init: true
     )
-    Outcome = Struct.new(:session, :attempt_id, :error, :expire_session_id, keyword_init: true)
+    Outcome = Struct.new(:session, :option_key, :attempt_id, :error, :expire_session_id, keyword_init: true)
 
     class CheckoutError < StandardError; end
     class InvalidAccountError < CheckoutError; end
@@ -48,7 +48,7 @@ module Billing
         attempt_id ||= reserve_attempt(option, customer_id)
         outcome = advance_attempt(attempt_id, option, customer_id)
         raise outcome.error if outcome.error
-        return outcome.session if outcome.session
+        return verified_session(outcome, option) if outcome.session
 
         attempt_id = outcome.attempt_id
       end
@@ -157,6 +157,8 @@ module Billing
 
       case snapshot.status
       when "creating"
+        return option_mismatch_outcome unless snapshot.option_key == option.key
+
         activate_creating_attempt(snapshot)
       when "open", "replacing"
         inspect_checkout_session(snapshot, option, customer_id)
@@ -195,7 +197,7 @@ module Billing
       return reject_incomplete_session(snapshot, session) unless session.id.present? && valid_checkout_url?(session.url)
 
       commit_result = commit_created_session(snapshot, session)
-      return Outcome.new(session: session) if commit_result == :committed
+      return Outcome.new(session: session, option_key: snapshot.option_key) if commit_result == :committed
       if commit_result == :authoritative
         return Outcome.new(error: InvalidAccountError.new("Account already has a Stripe subscription"))
       end
@@ -290,7 +292,7 @@ module Billing
       case session.status
       when "open"
         if attempt.option_key == option.key && valid_checkout_url?(session.url)
-          Outcome.new(session: session)
+          Outcome.new(session: session, option_key: attempt.option_key)
         else
           attempt.update!(status: "replacing")
           Outcome.new(expire_session_id: session.id)
@@ -403,6 +405,16 @@ module Billing
       return if attempt.stripe_customer_id == customer_id
 
       raise InvalidAccountError, "Active Checkout Customer association is invalid"
+    end
+
+    def verified_session(outcome, option)
+      return outcome.session if outcome.option_key == option.key
+
+      raise InvalidOptionError, "Active Checkout attempt uses another billing option"
+    end
+
+    def option_mismatch_outcome
+      Outcome.new(error: InvalidOptionError.new("Active Checkout attempt uses another billing option"))
     end
 
     def attempt_matches_snapshot?(attempt, snapshot)

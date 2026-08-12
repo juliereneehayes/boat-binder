@@ -146,6 +146,51 @@ module Billing
       assert_equal 0, @account.billing_checkout_attempts.active.count
     end
 
+    test "racing monthly and annual requests cannot return the wrong Price" do
+      session_started = Queue.new
+      release_session = Queue.new
+      requested_prices = Queue.new
+      checkout_session_factory = method(:checkout_session)
+
+      with_stripe_methods(
+        customer_create: ->(*) { Stripe::Customer.construct_from(id: "cus_option_race") },
+        session_create: ->(params, _options) {
+          requested_prices << params.dig(:line_items, 0, :price)
+          session_started << true
+          release_session.pop
+          checkout_session_factory.call(id: "cs_option_race")
+        }
+      ) do
+        monthly_thread, monthly_result = run_in_thread do
+          create_checkout(option_key: "self_managed_monthly")
+        end
+        Timeout.timeout(5) { session_started.pop }
+
+        annual_thread, annual_result = run_in_thread do
+          create_checkout(option_key: "self_managed_annual")
+        end
+        assert annual_thread.join(5), "annual request waited on the monthly Stripe call"
+        annual_error = assert_thread_failed(annual_result)
+        assert_instance_of StripeCheckoutSessionCreator::InvalidOptionError, annual_error
+
+        release_session << true
+        assert monthly_thread.join(5), "monthly Checkout did not finish"
+        monthly_session = assert_thread_succeeded(monthly_result)
+        assert_equal "cs_option_race", monthly_session.id
+      ensure
+        release_session << true if monthly_thread&.alive?
+        monthly_thread&.join(1)
+        annual_thread&.join(1)
+      end
+
+      assert_equal MONTHLY_PRICE_ID, requested_prices.pop
+      assert requested_prices.empty?, "the annual request must not create a Stripe Session"
+      attempt = @account.billing_checkout_attempts.one? ? @account.billing_checkout_attempts.first : nil
+      assert attempt
+      assert_equal "self_managed_monthly", attempt.option_key
+      assert_equal "open", attempt.status
+    end
+
     private
 
     def create_attempt(customer_id:, session_id:)
@@ -159,10 +204,10 @@ module Billing
       )
     end
 
-    def create_checkout
+    def create_checkout(option_key: "self_managed_monthly")
       StripeCheckoutSessionCreator.call(
         account: Account.find(@account.id),
-        option_key: "self_managed_monthly",
+        option_key: option_key,
         success_url: "https://app.example.test/billing/checkout/success",
         cancel_url: "https://app.example.test/billing/checkout/cancel"
       )
