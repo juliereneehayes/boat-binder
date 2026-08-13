@@ -292,6 +292,40 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
     assert_equal "open", attempt.reload.status
   end
 
+  test "subscription event missing option metadata is ignored before canonical retrieval" do
+    account = create_account(name: "Missing Event Option Metadata")
+    attempt = create_checkout_attempt(account: account, customer_id: "cus_missing_event_option")
+    original_attributes = subscription_state(account.subscription)
+    event_data = subscription_data(
+      attempt: attempt,
+      account_reference: Billing::StripeAccountReference.generate(account),
+      customer_id: "cus_missing_event_option",
+      subscription_id: "sub_missing_event_option",
+      status: "trialing"
+    )
+    event_data[:metadata].delete(Billing::StripeCheckoutSessionCreator::OPTION_KEY)
+    retrieve_count = 0
+
+    log_output = capture_rails_logs do
+      with_stripe_subscription_retrieve(->(*) { retrieve_count += 1 }) do
+        post_signed_event(
+          event_id: "evt_missing_event_option",
+          event_type: "customer.subscription.created",
+          data_object: event_data,
+          canonical_subscription: nil
+        )
+      end
+    end
+
+    assert_response :success
+    receipt = BillingWebhookEvent.find_by!(external_event_id: "evt_missing_event_option")
+    assert_equal "ignored", receipt.status
+    assert_includes log_output, "association_code=missing_option_key"
+    assert_equal 0, retrieve_count
+    assert_equal original_attributes, subscription_state(account.subscription.reload)
+    assert_equal "open", attempt.reload.status
+  end
+
   test "disabled option does not bypass Checkout cross-account protections" do
     account = create_account(name: "Disabled Option Target Account")
     other_account = create_account(name: "Disabled Option Other Account")
@@ -682,6 +716,68 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
     assert_response :success
     receipt = BillingWebhookEvent.find_by!(external_event_id: "evt_canonical_price_mismatch")
     assert_equal "ignored", receipt.status
+    assert_equal original_attributes, subscription_state(account.subscription.reload)
+    assert_equal "open", attempt.reload.status
+  end
+
+  test "canonical Subscription missing option metadata is ignored without mutation" do
+    account = create_account(name: "Canonical Missing Option Metadata")
+    attempt = create_checkout_attempt(account: account, customer_id: "cus_canonical_missing_option")
+    original_attributes = subscription_state(account.subscription)
+    event_data = subscription_data(
+      attempt: attempt,
+      account_reference: Billing::StripeAccountReference.generate(account),
+      customer_id: "cus_canonical_missing_option",
+      subscription_id: "sub_canonical_missing_option",
+      status: "trialing"
+    )
+    canonical_data = event_data.deep_dup
+    canonical_data[:metadata].delete(Billing::StripeCheckoutSessionCreator::OPTION_KEY)
+
+    log_output = capture_rails_logs do
+      post_signed_event(
+        event_id: "evt_canonical_missing_option",
+        event_type: "customer.subscription.created",
+        data_object: event_data,
+        canonical_subscription: canonical_data
+      )
+    end
+
+    assert_response :success
+    receipt = BillingWebhookEvent.find_by!(external_event_id: "evt_canonical_missing_option")
+    assert_equal "ignored", receipt.status
+    assert_includes log_output, "association_code=missing_option_key"
+    assert_equal original_attributes, subscription_state(account.subscription.reload)
+    assert_equal "open", attempt.reload.status
+  end
+
+  test "canonical Subscription option metadata mismatch is ignored without mutation" do
+    account = create_account(name: "Canonical Option Metadata Mismatch")
+    attempt = create_checkout_attempt(account: account, customer_id: "cus_canonical_option_mismatch")
+    original_attributes = subscription_state(account.subscription)
+    event_data = subscription_data(
+      attempt: attempt,
+      account_reference: Billing::StripeAccountReference.generate(account),
+      customer_id: "cus_canonical_option_mismatch",
+      subscription_id: "sub_canonical_option_mismatch",
+      status: "trialing"
+    )
+    canonical_data = event_data.deep_dup
+    canonical_data[:metadata][Billing::StripeCheckoutSessionCreator::OPTION_KEY] = "self_managed_annual"
+
+    log_output = capture_rails_logs do
+      post_signed_event(
+        event_id: "evt_canonical_option_mismatch",
+        event_type: "customer.subscription.created",
+        data_object: event_data,
+        canonical_subscription: canonical_data
+      )
+    end
+
+    assert_response :success
+    receipt = BillingWebhookEvent.find_by!(external_event_id: "evt_canonical_option_mismatch")
+    assert_equal "ignored", receipt.status
+    assert_includes log_output, "association_code=option_price_mismatch"
     assert_equal original_attributes, subscription_state(account.subscription.reload)
     assert_equal "open", attempt.reload.status
   end

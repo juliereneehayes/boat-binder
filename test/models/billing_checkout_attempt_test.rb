@@ -72,6 +72,15 @@ class BillingCheckoutAttemptTest < ActiveSupport::TestCase
     end
   end
 
+  test "Stripe Customer lookup uses a direct non-unique index" do
+    indexes = ActiveRecord::Base.connection.indexes(:billing_checkout_attempts)
+    customer_indexes = indexes.select { |index| index.columns.include?("stripe_customer_id") }
+
+    assert_equal 1, customer_indexes.length
+    assert_equal [ "stripe_customer_id" ], customer_indexes.first.columns
+    assert_not customer_indexes.first.unique
+  end
+
   test "completed attempts cannot regress to an active state" do
     attempt = create_attempt(status: "completed")
 

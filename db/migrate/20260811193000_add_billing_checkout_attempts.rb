@@ -18,7 +18,7 @@ class AddBillingCheckoutAttempts < ActiveRecord::Migration[8.1]
       :stripe_checkout_session_id,
       unique: true,
       where: "stripe_checkout_session_id IS NOT NULL"
-    add_index :billing_checkout_attempts, %i[account_id stripe_customer_id]
+    add_index :billing_checkout_attempts, :stripe_customer_id
     add_index :billing_checkout_attempts,
       :account_id,
       unique: true,

@@ -132,11 +132,11 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_11_193000) do
     t.string "stripe_checkout_session_id"
     t.string "stripe_customer_id", null: false
     t.datetime "updated_at", null: false
-    t.index ["account_id", "stripe_customer_id"], name: "idx_on_account_id_stripe_customer_id_fc6fa5253d"
     t.index ["account_id"], name: "idx_billing_checkout_attempts_one_active_per_account", unique: true, where: "((status)::text = ANY ((ARRAY['creating'::character varying, 'open'::character varying, 'replacing'::character varying, 'submitted'::character varying])::text[]))"
     t.index ["account_id"], name: "index_billing_checkout_attempts_on_account_id"
     t.index ["idempotency_key"], name: "index_billing_checkout_attempts_on_idempotency_key", unique: true
     t.index ["stripe_checkout_session_id"], name: "index_billing_checkout_attempts_on_stripe_checkout_session_id", unique: true, where: "(stripe_checkout_session_id IS NOT NULL)"
+    t.index ["stripe_customer_id"], name: "index_billing_checkout_attempts_on_stripe_customer_id"
     t.check_constraint "status::text = ANY (ARRAY['creating'::character varying, 'open'::character varying, 'replacing'::character varying, 'submitted'::character varying, 'completed'::character varying, 'canceled'::character varying, 'expired'::character varying, 'replaced'::character varying]::text[])", name: "chk_billing_checkout_attempts_status"
   end
 

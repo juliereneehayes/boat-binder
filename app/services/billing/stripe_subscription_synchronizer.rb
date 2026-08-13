@@ -82,9 +82,8 @@ module Billing
       option = SubscriptionPlanCatalog.new.find_by_stripe_price_id(price_ids.first)
       raise_association_error("unknown_price") unless option
       remote_option_key = option_key(remote_subscription)
-      if remote_option_key.present? && option.key != remote_option_key
-        raise_association_error("option_price_mismatch")
-      end
+      raise_association_error("missing_option_key") if remote_option_key.blank?
+      raise_association_error("option_price_mismatch") unless option.key == remote_option_key
 
       option
     end
