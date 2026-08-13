@@ -1391,7 +1391,15 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
     return request.call if canonical_subscription.nil?
 
     canonical_data = canonical_subscription.equal?(EVENT_DATA_AS_CANONICAL) ? data_object : canonical_subscription
-    with_stripe_subscription_retrieve(->(*) { stripe_subscription(canonical_data) }, &request)
+    expected_subscription_id = data_object[:id] || data_object["id"]
+    with_stripe_subscription_retrieve(
+      ->(subscription_id, options) {
+        assert_equal expected_subscription_id, subscription_id
+        assert_equal Rails.configuration.x.stripe.secret_key, options.fetch(:api_key)
+        stripe_subscription(canonical_data)
+      },
+      &request
+    )
   end
 
   def subscription_lifecycle_event?(event_type)
