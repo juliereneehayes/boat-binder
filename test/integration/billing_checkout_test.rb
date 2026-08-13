@@ -28,6 +28,7 @@ class BillingCheckoutTest < ActionDispatch::IntegrationTest
     assert_includes response.body, "$154/year"
     assert_equal 2, response.body.scan("7-day trial").length
     assert_select "form[action=?][method=post]", billing_checkout_path, count: 2
+    assert_select "form[action=?][method=post][data-turbo=false]", billing_checkout_path, count: 2
     assert_select "input[name=option_key][value=self_managed_monthly]", count: 1
     assert_select "input[name=option_key][value=self_managed_annual]", count: 1
     assert_not_includes response.body, "price_checkout_monthly"
