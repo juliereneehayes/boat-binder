@@ -9,6 +9,7 @@ module Billing
     SUPPORTED_PLAN_KEYS = [ SELF_MANAGED_PLAN_KEY ].freeze
     SUPPORTED_INTERVALS = %w[month year].freeze
     SUPPORTED_CURRENCIES = %w[usd].freeze
+    MAX_TRIAL_DAYS = 730
 
     PRICE_ID_ENV_KEYS = {
       SELF_MANAGED_MONTHLY_KEY => "STRIPE_SELF_MANAGED_MONTHLY_PRICE_ID",
@@ -32,6 +33,10 @@ module Billing
     ) do
       def enabled?
         enabled == true
+      end
+
+      def trial?
+        trial_days.positive?
       end
 
       def display_price
@@ -213,7 +218,9 @@ module Billing
       errors << "#{option.key} currency is not supported" unless SUPPORTED_CURRENCIES.include?(option.currency)
       errors << "#{option.key} amount must be a positive integer" unless positive_integer?(option.amount_cents)
       errors << "#{option.key} interval count must be a positive integer" unless positive_integer?(option.interval_count)
-      errors << "#{option.key} trial days must be a non-negative integer" unless non_negative_integer?(option.trial_days)
+      unless valid_trial_days?(option.trial_days)
+        errors << "#{option.key} trial days must be an integer between 0 and #{MAX_TRIAL_DAYS}"
+      end
       errors << "#{option.key} enabled must be true or false" unless [ true, false ].include?(option.enabled)
       errors
     end
@@ -244,8 +251,8 @@ module Billing
       value.is_a?(Integer) && value.positive?
     end
 
-    def non_negative_integer?(value)
-      value.is_a?(Integer) && value >= 0
+    def valid_trial_days?(value)
+      value.is_a?(Integer) && value.between?(0, MAX_TRIAL_DAYS)
     end
 
     def price_id_env_key(option_key)

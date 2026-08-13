@@ -9,6 +9,9 @@
       </div>
 
       <div class="flex flex-wrap gap-2 md:justify-end">
+        <% if owner_user? && can_manage_records? %>
+          <%= link_to "View Self Managed plans", billing_checkout_path, class: primary_button_class("bg-[#7DAAB3] text-[#0B1F35] hover:bg-[#B9D5DA]") %>
+        <% end %>
         <% if can_manage_records? %>
           <%= link_to "Add Vessel", new_vessel_path, class: primary_button_class("bg-[#7DAAB3] text-[#0B1F35] hover:bg-[#B9D5DA]") if internal_user? %>
           <%= link_to "Add Owner", new_owner_path, class: secondary_button_class("border-white/20 bg-white/10 text-white hover:bg-white/20 hover:text-white") if internal_user? %>

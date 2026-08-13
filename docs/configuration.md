@@ -63,6 +63,9 @@ environments that may use encrypted credentials in the future. Subscription Pric
 from the two environment variables above. Do not commit real keys or live Price IDs. The app can boot
 without Stripe secrets or Price IDs for development/test workflows that do not invoke Stripe; webhook
 verification and plan-catalog validation fail safely when their required configuration is used.
+Checkout requires the secret API key and both Price IDs. The webhook endpoint requires its signing
+secret independently. Use test-mode values in development and staging; live-mode Checkout setup is
+not configured by this repository change.
 
 ## Build Week Demo
 

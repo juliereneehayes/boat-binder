@@ -2,14 +2,24 @@ require "test_helper"
 
 class StripeWebhookTest < ActionDispatch::IntegrationTest
   WEBHOOK_SECRET = "whsec_test_secret"
+  EVENT_DATA_AS_CANONICAL = Object.new.freeze
 
   setup do
+    @previous_secret_key = Rails.configuration.x.stripe.secret_key
     @previous_webhook_secret = Rails.configuration.x.stripe.webhook_secret
+    @previous_monthly_price_id = Rails.configuration.x.stripe.self_managed_monthly_price_id
+    @previous_annual_price_id = Rails.configuration.x.stripe.self_managed_annual_price_id
+    Rails.configuration.x.stripe.secret_key = "sk_test_webhook_canonical"
     Rails.configuration.x.stripe.webhook_secret = WEBHOOK_SECRET
+    Rails.configuration.x.stripe.self_managed_monthly_price_id = "price_webhook_monthly"
+    Rails.configuration.x.stripe.self_managed_annual_price_id = "price_webhook_annual"
   end
 
   teardown do
+    Rails.configuration.x.stripe.secret_key = @previous_secret_key
     Rails.configuration.x.stripe.webhook_secret = @previous_webhook_secret
+    Rails.configuration.x.stripe.self_managed_monthly_price_id = @previous_monthly_price_id
+    Rails.configuration.x.stripe.self_managed_annual_price_id = @previous_annual_price_id
   end
 
   test "test environment initializes without real Stripe credentials" do
@@ -59,8 +69,10 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
     user = create_user(email: "stripe-normal-request@example.test", role: "admin")
     sign_in_as(user)
 
-    with_stripe_webhook_verification_failure do
-      get root_path
+    with_stripe_subscription_retrieve(->(*) { flunk("normal requests must not retrieve Stripe subscriptions") }) do
+      with_stripe_webhook_verification_failure do
+        get root_path
+      end
     end
 
     assert_response :success
@@ -71,16 +83,17 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
     assert_equal [ "create" ], csrf_skip_actions(Webhooks::StripeController)
     assert_not csrf_skipped_for_action?(SessionsController, :create)
     assert_not csrf_skipped_for_action?(VesselsController, :create)
+    assert_not csrf_skipped_for_action?(Billing::CheckoutsController, :create)
   end
 
-  test "valid signed subscription event is accepted and recorded as ignored" do
+  test "valid signed deferred subscription event is accepted and recorded as ignored" do
     dispatched_event_ids = []
 
     assert_difference -> { BillingWebhookEvent.count }, 1 do
       with_processor_call_spy(dispatched_event_ids) do
         post_signed_event(
-          event_id: "evt_subscription_updated",
-          event_type: "customer.subscription.updated",
+          event_id: "evt_subscription_deleted",
+          event_type: "customer.subscription.deleted",
           livemode: true,
           api_version: "2026-07-01"
         )
@@ -88,13 +101,976 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
     end
 
     assert_response :success
-    assert_equal [ "evt_subscription_updated" ], dispatched_event_ids
-    receipt = BillingWebhookEvent.find_by!(provider: "stripe", external_event_id: "evt_subscription_updated")
-    assert_equal "customer.subscription.updated", receipt.event_type
+    assert_equal [ "evt_subscription_deleted" ], dispatched_event_ids
+    receipt = BillingWebhookEvent.find_by!(provider: "stripe", external_event_id: "evt_subscription_deleted")
+    assert_equal "customer.subscription.deleted", receipt.event_type
     assert receipt.livemode?
     assert_equal "2026-07-01", receipt.api_version
     assert_equal "ignored", receipt.status
     assert receipt.processed_at.present?
+  end
+
+  test "signed Checkout and subscription events synchronize the correct trialing subscription" do
+    account = create_account(name: "Webhook Checkout Owner")
+    account_reference = Billing::StripeAccountReference.generate(account)
+    attempt = create_checkout_attempt(
+      account: account,
+      customer_id: "cus_checkout_sync",
+      session_id: "cs_checkout_sync"
+    )
+    original_status = account.subscription.status
+    trial_end = 7.days.from_now.change(usec: 0)
+    period_end = 1.month.from_now.change(usec: 0)
+
+    post_signed_event(
+      event_id: "evt_checkout_completed",
+      event_type: "checkout.session.completed",
+      data_object: checkout_session_data(
+        attempt: attempt,
+        account_reference: account_reference,
+        customer_id: "cus_checkout_sync",
+        subscription_id: "sub_checkout_sync"
+      )
+    )
+
+    assert_response :success
+    checkout_receipt = BillingWebhookEvent.find_by!(external_event_id: "evt_checkout_completed")
+    assert_equal "processed", checkout_receipt.status
+    subscription = account.subscription.reload
+    assert_equal "stripe", subscription.provider
+    assert_equal "cus_checkout_sync", subscription.external_customer_id
+    assert_equal "sub_checkout_sync", subscription.external_subscription_id
+    assert_equal original_status, subscription.status
+
+    post_signed_event(
+      event_id: "evt_subscription_created",
+      event_type: "customer.subscription.created",
+      data_object: subscription_data(
+        attempt: attempt,
+        account_reference: account_reference,
+        customer_id: "cus_checkout_sync",
+        subscription_id: "sub_checkout_sync",
+        status: "trialing",
+        trial_end: trial_end,
+        period_end: period_end
+      )
+    )
+
+    assert_response :success
+    lifecycle_receipt = BillingWebhookEvent.find_by!(external_event_id: "evt_subscription_created")
+    assert_equal "processed", lifecycle_receipt.status
+    subscription.reload
+    assert_equal "self_managed", subscription.plan
+    assert_equal "trialing", subscription.status
+    assert_equal "stripe", subscription.provider
+    assert_equal "cus_checkout_sync", subscription.external_customer_id
+    assert_equal "sub_checkout_sync", subscription.external_subscription_id
+    assert_equal trial_end.to_i, subscription.trial_ends_at.to_i
+    assert_equal period_end.to_i, subscription.current_period_ends_at.to_i
+    assert subscription.last_synced_at.present?
+  end
+
+  test "disabled known option still synchronizes an already-issued Checkout Session" do
+    account = create_account(name: "Disabled Checkout Option Owner")
+    account_reference = Billing::StripeAccountReference.generate(account)
+    assert Billing::SubscriptionPlanCatalog.new.fetch("self_managed_monthly").enabled?
+    attempt = create_checkout_attempt(
+      account: account,
+      customer_id: "cus_disabled_checkout",
+      session_id: "cs_disabled_checkout"
+    )
+    original_status = account.subscription.status
+
+    with_plan_catalog(option_catalog(enabled: false)) do
+      post_signed_event(
+        event_id: "evt_disabled_checkout",
+        event_type: "checkout.session.completed",
+        data_object: checkout_session_data(
+          attempt: attempt,
+          account_reference: account_reference,
+          customer_id: "cus_disabled_checkout",
+          subscription_id: "sub_disabled_checkout"
+        )
+      )
+    end
+
+    assert_response :success
+    assert_equal "processed", BillingWebhookEvent.find_by!(external_event_id: "evt_disabled_checkout").status
+    subscription = account.subscription.reload
+    assert_equal "stripe", subscription.provider
+    assert_equal "cus_disabled_checkout", subscription.external_customer_id
+    assert_equal "sub_disabled_checkout", subscription.external_subscription_id
+    assert_equal original_status, subscription.status
+    assert_equal "completed", attempt.reload.status
+  end
+
+  test "unknown Checkout option is ignored without mutating subscription state" do
+    account = create_account(name: "Unknown Checkout Option Owner")
+    attempt = create_checkout_attempt(
+      account: account,
+      customer_id: "cus_unknown_checkout_option",
+      session_id: "cs_unknown_checkout_option"
+    )
+    original_attributes = subscription_state(account.subscription)
+
+    log_output = capture_rails_logs do
+      post_signed_event(
+        event_id: "evt_unknown_checkout_option",
+        event_type: "checkout.session.completed",
+        data_object: checkout_session_data(
+          attempt: attempt,
+          account_reference: Billing::StripeAccountReference.generate(account),
+          customer_id: "cus_unknown_checkout_option",
+          subscription_id: "sub_unknown_checkout_option",
+          option_key: "unknown_option"
+        )
+      )
+    end
+
+    assert_response :success
+    assert_equal "ignored", BillingWebhookEvent.find_by!(external_event_id: "evt_unknown_checkout_option").status
+    assert_includes log_output, "association_code=invalid_option"
+    assert_equal original_attributes, subscription_state(account.subscription.reload)
+    assert_equal "open", attempt.reload.status
+  end
+
+  test "disabled known Price still synchronizes an existing Stripe subscription" do
+    account = create_account(name: "Disabled Subscription Price Owner")
+    account_reference = Billing::StripeAccountReference.generate(account)
+    assert Billing::SubscriptionPlanCatalog.new.fetch("self_managed_monthly").enabled?
+    attempt = create_checkout_attempt(account: account, customer_id: "cus_disabled_price")
+
+    with_plan_catalog(option_catalog(enabled: false)) do
+      post_signed_event(
+        event_id: "evt_disabled_price",
+        event_type: "customer.subscription.created",
+        data_object: subscription_data(
+          attempt: attempt,
+          account_reference: account_reference,
+          customer_id: "cus_disabled_price",
+          subscription_id: "sub_disabled_price",
+          status: "trialing"
+        )
+      )
+    end
+
+    assert_response :success
+    assert_equal "processed", BillingWebhookEvent.find_by!(external_event_id: "evt_disabled_price").status
+    subscription = account.subscription.reload
+    assert_equal "self_managed", subscription.plan
+    assert_equal "trialing", subscription.status
+    assert_equal "stripe", subscription.provider
+    assert_equal "cus_disabled_price", subscription.external_customer_id
+    assert_equal "sub_disabled_price", subscription.external_subscription_id
+    assert_equal "completed", attempt.reload.status
+  end
+
+  test "unknown Stripe Price is ignored without mutating subscription state" do
+    account = create_account(name: "Unknown Subscription Price Owner")
+    attempt = create_checkout_attempt(account: account, customer_id: "cus_unknown_price")
+    original_attributes = subscription_state(account.subscription)
+
+    log_output = capture_rails_logs do
+      post_signed_event(
+        event_id: "evt_unknown_price",
+        event_type: "customer.subscription.created",
+        data_object: subscription_data(
+          attempt: attempt,
+          account_reference: Billing::StripeAccountReference.generate(account),
+          customer_id: "cus_unknown_price",
+          subscription_id: "sub_unknown_price",
+          status: "trialing",
+          price_id: "price_unknown"
+        )
+      )
+    end
+
+    assert_response :success
+    assert_equal "ignored", BillingWebhookEvent.find_by!(external_event_id: "evt_unknown_price").status
+    assert_includes log_output, "association_code=unknown_price"
+    assert_equal original_attributes, subscription_state(account.subscription.reload)
+    assert_equal "open", attempt.reload.status
+  end
+
+  test "subscription event missing option metadata is ignored before canonical retrieval" do
+    account = create_account(name: "Missing Event Option Metadata")
+    attempt = create_checkout_attempt(account: account, customer_id: "cus_missing_event_option")
+    original_attributes = subscription_state(account.subscription)
+    event_data = subscription_data(
+      attempt: attempt,
+      account_reference: Billing::StripeAccountReference.generate(account),
+      customer_id: "cus_missing_event_option",
+      subscription_id: "sub_missing_event_option",
+      status: "trialing"
+    )
+    event_data[:metadata].delete(Billing::StripeCheckoutSessionCreator::OPTION_KEY)
+    retrieve_count = 0
+
+    log_output = capture_rails_logs do
+      with_stripe_subscription_retrieve(->(*) { retrieve_count += 1 }) do
+        post_signed_event(
+          event_id: "evt_missing_event_option",
+          event_type: "customer.subscription.created",
+          data_object: event_data,
+          canonical_subscription: nil
+        )
+      end
+    end
+
+    assert_response :success
+    receipt = BillingWebhookEvent.find_by!(external_event_id: "evt_missing_event_option")
+    assert_equal "ignored", receipt.status
+    assert_includes log_output, "association_code=missing_option_key"
+    assert_equal 0, retrieve_count
+    assert_equal original_attributes, subscription_state(account.subscription.reload)
+    assert_equal "open", attempt.reload.status
+  end
+
+  test "disabled option does not bypass Checkout cross-account protections" do
+    account = create_account(name: "Disabled Option Target Account")
+    other_account = create_account(name: "Disabled Option Other Account")
+    attempt = create_checkout_attempt(
+      account: account,
+      customer_id: "cus_disabled_cross_account",
+      session_id: "cs_disabled_cross_account"
+    )
+    original_attributes = subscription_state(account.subscription)
+    other_original_attributes = subscription_state(other_account.subscription)
+
+    log_output = capture_rails_logs do
+      with_plan_catalog(option_catalog(enabled: false)) do
+        post_signed_event(
+          event_id: "evt_disabled_cross_account",
+          event_type: "checkout.session.completed",
+          data_object: checkout_session_data(
+            attempt: attempt,
+            account_reference: Billing::StripeAccountReference.generate(other_account),
+            customer_id: "cus_disabled_cross_account",
+            subscription_id: "sub_disabled_cross_account"
+          )
+        )
+      end
+    end
+
+    assert_response :success
+    assert_equal "ignored", BillingWebhookEvent.find_by!(external_event_id: "evt_disabled_cross_account").status
+    assert_includes log_output, "association_code=account_mismatch"
+    assert_equal original_attributes, subscription_state(account.subscription.reload)
+    assert_equal other_original_attributes, subscription_state(other_account.subscription.reload)
+    assert_equal "open", attempt.reload.status
+  end
+
+  test "subscription lifecycle event can arrive before Checkout completion" do
+    account = create_account(name: "Early Subscription Event Owner")
+    account_reference = Billing::StripeAccountReference.generate(account)
+    attempt = create_checkout_attempt(account: account, customer_id: "cus_subscription_first")
+
+    post_signed_event(
+      event_id: "evt_subscription_first",
+      event_type: "customer.subscription.created",
+      data_object: subscription_data(
+        attempt: attempt,
+        account_reference: account_reference,
+        customer_id: "cus_subscription_first",
+        subscription_id: "sub_subscription_first",
+        status: "trialing"
+      )
+    )
+
+    assert_response :success
+    subscription = account.subscription.reload
+    assert_equal "self_managed", subscription.plan
+    assert_equal "trialing", subscription.status
+    assert_equal "cus_subscription_first", subscription.external_customer_id
+    assert_equal "sub_subscription_first", subscription.external_subscription_id
+  end
+
+  test "duplicate processed subscription event is acknowledged without retrieving twice" do
+    account = create_account(name: "Duplicate Subscription Event Owner")
+    attempt = create_checkout_attempt(account: account, customer_id: "cus_subscription_duplicate")
+    data_object = subscription_data(
+      attempt: attempt,
+      account_reference: Billing::StripeAccountReference.generate(account),
+      customer_id: "cus_subscription_duplicate",
+      subscription_id: "sub_subscription_duplicate",
+      status: "trialing"
+    )
+    payload = stripe_event_payload(
+      event_id: "evt_subscription_duplicate",
+      event_type: "customer.subscription.created",
+      data_object: data_object
+    )
+    headers = stripe_signature_headers(payload)
+
+    retrieve_count = 0
+    with_stripe_subscription_retrieve(->(*) {
+      retrieve_count += 1
+      stripe_subscription(data_object)
+    }) do
+      assert_difference -> { BillingWebhookEvent.count }, 1 do
+        post webhooks_stripe_path, params: payload, headers: headers
+      end
+      assert_response :success
+      first_synced_at = account.subscription.reload.last_synced_at
+
+      travel 1.second do
+        assert_no_difference -> { BillingWebhookEvent.count } do
+          post webhooks_stripe_path, params: payload, headers: headers
+        end
+      end
+
+      assert_response :success
+      assert_equal first_synced_at, account.subscription.reload.last_synced_at
+    end
+
+    assert_equal 1, retrieve_count
+  end
+
+  test "same-second lifecycle events converge on canonical state despite conflicting event id order" do
+    account = create_account(name: "Same Second Canonical State")
+    attempt = create_checkout_attempt(account: account, customer_id: "cus_same_second")
+    account_reference = Billing::StripeAccountReference.generate(account)
+    canonical_data = subscription_data(
+      attempt: attempt,
+      account_reference: account_reference,
+      customer_id: "cus_same_second",
+      subscription_id: "sub_same_second",
+      status: "active",
+      trial_end: nil,
+      period_end: 3.months.from_now
+    )
+    snapshots = [
+      [ "evt_z_older", "trialing", true ],
+      [ "evt_a_newer", "past_due", false ]
+    ]
+
+    snapshots.each do |event_id, event_status, cancel_at_period_end|
+      post_signed_event(
+        event_id: event_id,
+        event_type: "customer.subscription.updated",
+        event_created: 300,
+        data_object: subscription_data(
+          attempt: attempt.reload,
+          account_reference: account_reference,
+          customer_id: "cus_same_second",
+          subscription_id: "sub_same_second",
+          status: event_status,
+          cancel_at_period_end: cancel_at_period_end
+        ),
+        canonical_subscription: canonical_data
+      )
+
+      assert_response :success
+      assert_equal "processed", BillingWebhookEvent.find_by!(external_event_id: event_id).status
+      assert_equal "active", account.subscription.reload.status
+      assert_not account.subscription.cancel_at_period_end?
+    end
+  end
+
+  test "older and newer event delivery orders converge on the same canonical state" do
+    [ %i[older newer], %i[newer older] ].each do |delivery_order|
+      account = create_account(name: "Canonical Order #{delivery_order.join('-')}")
+      customer_id = "cus_order_#{delivery_order.join('_')}"
+      subscription_id = "sub_order_#{delivery_order.join('_')}"
+      attempt = create_checkout_attempt(account: account, customer_id: customer_id)
+      account_reference = Billing::StripeAccountReference.generate(account)
+      canonical_data = subscription_data(
+        attempt: attempt,
+        account_reference: account_reference,
+        customer_id: customer_id,
+        subscription_id: subscription_id,
+        status: "active",
+        trial_end: nil,
+        period_end: 3.months.from_now
+      )
+      events = {
+        older: [ "evt_z_#{customer_id}_older", 100, "trialing" ],
+        newer: [ "evt_a_#{customer_id}_newer", 200, "active" ]
+      }
+
+      delivery_order.each do |position|
+        event_id, event_created, event_status = events.fetch(position)
+        post_signed_event(
+          event_id: event_id,
+          event_type: "customer.subscription.updated",
+          event_created: event_created,
+          data_object: subscription_data(
+            attempt: attempt.reload,
+            account_reference: account_reference,
+            customer_id: customer_id,
+            subscription_id: subscription_id,
+            status: event_status
+          ),
+          canonical_subscription: canonical_data
+        )
+        assert_response :success
+      end
+
+      subscription = account.subscription.reload
+      assert_equal "active", subscription.status
+      assert_nil subscription.trial_ends_at
+      processed_receipts = delivery_order.count do |position|
+        BillingWebhookEvent.find_by!(external_event_id: events.fetch(position).first).processed?
+      end
+      assert_equal 2, processed_receipts
+    end
+  end
+
+  test "canonical Subscription retrieval occurs before the webhook receipt transaction" do
+    account = create_account(name: "Canonical Retrieval Transaction Boundary")
+    attempt = create_checkout_attempt(account: account, customer_id: "cus_retrieval_transaction")
+    event_data = subscription_data(
+      attempt: attempt,
+      account_reference: Billing::StripeAccountReference.generate(account),
+      customer_id: "cus_retrieval_transaction",
+      subscription_id: "sub_retrieval_transaction",
+      status: "trialing"
+    )
+    baseline_transactions = ActiveRecord::Base.connection.open_transactions
+    retrieval_transactions = []
+
+    with_stripe_subscription_retrieve(->(*) {
+      retrieval_transactions << ActiveRecord::Base.connection.open_transactions
+      stripe_subscription(event_data)
+    }) do
+      post_signed_event(
+        event_id: "evt_retrieval_transaction",
+        event_type: "customer.subscription.created",
+        data_object: event_data,
+        canonical_subscription: nil
+      )
+    end
+
+    assert_response :success
+    assert_equal [ baseline_transactions ], retrieval_transactions
+    assert_equal "processed", BillingWebhookEvent.find_by!(external_event_id: "evt_retrieval_transaction").status
+  end
+
+  test "Stripe subscription retrieval failure leaves the webhook retryable" do
+    account = create_account(name: "Canonical Retrieval Failure")
+    attempt = create_checkout_attempt(account: account, customer_id: "cus_retrieval_failure")
+    original_attributes = subscription_state(account.subscription)
+    event_data = subscription_data(
+      attempt: attempt,
+      account_reference: Billing::StripeAccountReference.generate(account),
+      customer_id: "cus_retrieval_failure",
+      subscription_id: "sub_retrieval_failure",
+      status: "trialing"
+    )
+
+    with_stripe_subscription_retrieve(->(*) {
+      raise Stripe::APIConnectionError, "private transport failure"
+    }) do
+      post_signed_event(
+        event_id: "evt_retrieval_failure",
+        event_type: "customer.subscription.created",
+        data_object: event_data,
+        canonical_subscription: nil
+      )
+    end
+
+    assert_response :internal_server_error
+    receipt = BillingWebhookEvent.find_by!(external_event_id: "evt_retrieval_failure")
+    assert_equal "failed", receipt.status
+    assert_equal "APIConnectionError", receipt.error_code
+    assert receipt.failed_at.present?
+    assert_nil receipt.processed_at
+    assert_equal original_attributes, subscription_state(account.subscription.reload)
+    assert_equal "open", attempt.reload.status
+    assert_not_includes response.body, "private transport failure"
+
+    post_signed_event(
+      event_id: "evt_retrieval_failure",
+      event_type: "customer.subscription.created",
+      data_object: event_data
+    )
+
+    assert_response :success
+    assert_equal "processed", receipt.reload.status
+    assert_equal "trialing", account.subscription.reload.status
+    assert_equal "completed", attempt.reload.status
+  end
+
+  test "account reconciliation lock timeout remains a retryable webhook failure" do
+    account = create_account(name: "Reconciliation Lock Timeout")
+    attempt = create_checkout_attempt(account: account, customer_id: "cus_lock_timeout")
+    event_data = subscription_data(
+      attempt: attempt,
+      account_reference: Billing::StripeAccountReference.generate(account),
+      customer_id: "cus_lock_timeout",
+      subscription_id: "sub_lock_timeout",
+      status: "trialing"
+    )
+    original_call = Billing::StripeAccountReconciliationLock.method(:call)
+    calls = 0
+
+    Billing::StripeAccountReconciliationLock.define_singleton_method(:call) do |account_id:, **options, &block|
+      calls += 1
+      raise Billing::StripeAccountReconciliationLock::LockTimeoutError,
+        "Stripe account reconciliation is already in progress" if calls == 1
+
+      original_call.call(account_id:, **options, &block)
+    end
+
+    post_signed_event(
+      event_id: "evt_lock_timeout",
+      event_type: "customer.subscription.created",
+      data_object: event_data
+    )
+
+    assert_response :internal_server_error
+    receipt = BillingWebhookEvent.find_by!(external_event_id: "evt_lock_timeout")
+    assert_equal "failed", receipt.status
+    assert_equal "LockTimeoutError", receipt.error_code
+    assert_equal "open", attempt.reload.status
+
+    post_signed_event(
+      event_id: "evt_lock_timeout",
+      event_type: "customer.subscription.created",
+      data_object: event_data
+    )
+
+    assert_response :success
+    assert_equal "processed", receipt.reload.status
+    assert_equal "trialing", account.subscription.reload.status
+    assert_equal "completed", attempt.reload.status
+  ensure
+    Billing::StripeAccountReconciliationLock.define_singleton_method(:call, original_call) if original_call
+  end
+
+  test "canonical Subscription Customer mismatch is ignored without mutation" do
+    account = create_account(name: "Canonical Customer Mismatch")
+    attempt = create_checkout_attempt(account: account, customer_id: "cus_event_customer")
+    original_attributes = subscription_state(account.subscription)
+    event_data = subscription_data(
+      attempt: attempt,
+      account_reference: Billing::StripeAccountReference.generate(account),
+      customer_id: "cus_event_customer",
+      subscription_id: "sub_customer_mismatch",
+      status: "trialing"
+    )
+    canonical_data = event_data.deep_dup.merge(customer: "cus_other_customer")
+
+    post_signed_event(
+      event_id: "evt_canonical_customer_mismatch",
+      event_type: "customer.subscription.created",
+      data_object: event_data,
+      canonical_subscription: canonical_data
+    )
+
+    assert_response :success
+    receipt = BillingWebhookEvent.find_by!(external_event_id: "evt_canonical_customer_mismatch")
+    assert_equal "ignored", receipt.status
+    assert_equal original_attributes, subscription_state(account.subscription.reload)
+    assert_equal "open", attempt.reload.status
+  end
+
+  test "canonical Subscription ID mismatch is ignored without mutation" do
+    account = create_account(name: "Canonical Subscription Mismatch")
+    attempt = create_checkout_attempt(account: account, customer_id: "cus_subscription_mismatch")
+    original_attributes = subscription_state(account.subscription)
+    event_data = subscription_data(
+      attempt: attempt,
+      account_reference: Billing::StripeAccountReference.generate(account),
+      customer_id: "cus_subscription_mismatch",
+      subscription_id: "sub_expected",
+      status: "trialing"
+    )
+    canonical_data = event_data.deep_dup.merge(id: "sub_unexpected")
+
+    post_signed_event(
+      event_id: "evt_canonical_subscription_mismatch",
+      event_type: "customer.subscription.created",
+      data_object: event_data,
+      canonical_subscription: canonical_data
+    )
+
+    assert_response :success
+    receipt = BillingWebhookEvent.find_by!(external_event_id: "evt_canonical_subscription_mismatch")
+    assert_equal "ignored", receipt.status
+    assert_equal original_attributes, subscription_state(account.subscription.reload)
+    assert_equal "open", attempt.reload.status
+  end
+
+  test "canonical Subscription Price mismatch is ignored without mutation" do
+    account = create_account(name: "Canonical Price Mismatch")
+    attempt = create_checkout_attempt(account: account, customer_id: "cus_canonical_price_mismatch")
+    original_attributes = subscription_state(account.subscription)
+    event_data = subscription_data(
+      attempt: attempt,
+      account_reference: Billing::StripeAccountReference.generate(account),
+      customer_id: "cus_canonical_price_mismatch",
+      subscription_id: "sub_canonical_price_mismatch",
+      status: "trialing"
+    )
+    canonical_data = event_data.deep_dup
+    canonical_data[:items][:data].first[:price][:id] = "price_webhook_annual"
+
+    post_signed_event(
+      event_id: "evt_canonical_price_mismatch",
+      event_type: "customer.subscription.created",
+      data_object: event_data,
+      canonical_subscription: canonical_data
+    )
+
+    assert_response :success
+    receipt = BillingWebhookEvent.find_by!(external_event_id: "evt_canonical_price_mismatch")
+    assert_equal "ignored", receipt.status
+    assert_equal original_attributes, subscription_state(account.subscription.reload)
+    assert_equal "open", attempt.reload.status
+  end
+
+  test "canonical Subscription missing option metadata is ignored without mutation" do
+    account = create_account(name: "Canonical Missing Option Metadata")
+    attempt = create_checkout_attempt(account: account, customer_id: "cus_canonical_missing_option")
+    original_attributes = subscription_state(account.subscription)
+    event_data = subscription_data(
+      attempt: attempt,
+      account_reference: Billing::StripeAccountReference.generate(account),
+      customer_id: "cus_canonical_missing_option",
+      subscription_id: "sub_canonical_missing_option",
+      status: "trialing"
+    )
+    canonical_data = event_data.deep_dup
+    canonical_data[:metadata].delete(Billing::StripeCheckoutSessionCreator::OPTION_KEY)
+
+    log_output = capture_rails_logs do
+      post_signed_event(
+        event_id: "evt_canonical_missing_option",
+        event_type: "customer.subscription.created",
+        data_object: event_data,
+        canonical_subscription: canonical_data
+      )
+    end
+
+    assert_response :success
+    receipt = BillingWebhookEvent.find_by!(external_event_id: "evt_canonical_missing_option")
+    assert_equal "ignored", receipt.status
+    assert_includes log_output, "association_code=missing_option_key"
+    assert_equal original_attributes, subscription_state(account.subscription.reload)
+    assert_equal "open", attempt.reload.status
+  end
+
+  test "canonical Subscription option metadata mismatch is ignored without mutation" do
+    account = create_account(name: "Canonical Option Metadata Mismatch")
+    attempt = create_checkout_attempt(account: account, customer_id: "cus_canonical_option_mismatch")
+    original_attributes = subscription_state(account.subscription)
+    event_data = subscription_data(
+      attempt: attempt,
+      account_reference: Billing::StripeAccountReference.generate(account),
+      customer_id: "cus_canonical_option_mismatch",
+      subscription_id: "sub_canonical_option_mismatch",
+      status: "trialing"
+    )
+    canonical_data = event_data.deep_dup
+    canonical_data[:metadata][Billing::StripeCheckoutSessionCreator::OPTION_KEY] = "self_managed_annual"
+
+    log_output = capture_rails_logs do
+      post_signed_event(
+        event_id: "evt_canonical_option_mismatch",
+        event_type: "customer.subscription.created",
+        data_object: event_data,
+        canonical_subscription: canonical_data
+      )
+    end
+
+    assert_response :success
+    receipt = BillingWebhookEvent.find_by!(external_event_id: "evt_canonical_option_mismatch")
+    assert_equal "ignored", receipt.status
+    assert_includes log_output, "association_code=option_price_mismatch"
+    assert_equal original_attributes, subscription_state(account.subscription.reload)
+    assert_equal "open", attempt.reload.status
+  end
+
+  test "canonical signed Checkout attempt mismatch is ignored without mutation" do
+    account = create_account(name: "Canonical Attempt Mismatch")
+    attempt = create_checkout_attempt(account: account, customer_id: "cus_canonical_attempt")
+    other_attempt = create_checkout_attempt(
+      account: account,
+      customer_id: "cus_other_attempt",
+      status: "canceled"
+    )
+    original_attributes = subscription_state(account.subscription)
+    event_data = subscription_data(
+      attempt: attempt,
+      account_reference: Billing::StripeAccountReference.generate(account),
+      customer_id: "cus_canonical_attempt",
+      subscription_id: "sub_canonical_attempt",
+      status: "trialing"
+    )
+    canonical_data = event_data.deep_dup
+    canonical_data[:metadata][Billing::StripeCheckoutSessionCreator::ATTEMPT_REFERENCE_KEY] =
+      Billing::StripeCheckoutAttemptReference.generate(other_attempt)
+
+    post_signed_event(
+      event_id: "evt_canonical_attempt_mismatch",
+      event_type: "customer.subscription.created",
+      data_object: event_data,
+      canonical_subscription: canonical_data
+    )
+
+    assert_response :success
+    receipt = BillingWebhookEvent.find_by!(external_event_id: "evt_canonical_attempt_mismatch")
+    assert_equal "ignored", receipt.status
+    assert_equal original_attributes, subscription_state(account.subscription.reload)
+    assert_equal "open", attempt.reload.status
+  end
+
+  test "canonical signed Account reference mismatch is ignored without mutation" do
+    account = create_account(name: "Canonical Account Reference Target")
+    other_account = create_account(name: "Canonical Account Reference Other")
+    attempt = create_checkout_attempt(account: account, customer_id: "cus_canonical_account_reference")
+    original_attributes = subscription_state(account.subscription)
+    event_data = subscription_data(
+      attempt: attempt,
+      account_reference: Billing::StripeAccountReference.generate(account),
+      customer_id: "cus_canonical_account_reference",
+      subscription_id: "sub_canonical_account_reference",
+      status: "trialing"
+    )
+    canonical_data = event_data.deep_dup
+    canonical_data[:metadata][Billing::StripeCheckoutSessionCreator::ACCOUNT_REFERENCE_KEY] =
+      Billing::StripeAccountReference.generate(other_account)
+
+    post_signed_event(
+      event_id: "evt_canonical_account_reference_mismatch",
+      event_type: "customer.subscription.created",
+      data_object: event_data,
+      canonical_subscription: canonical_data
+    )
+
+    assert_response :success
+    receipt = BillingWebhookEvent.find_by!(external_event_id: "evt_canonical_account_reference_mismatch")
+    assert_equal "ignored", receipt.status
+    assert_equal original_attributes, subscription_state(account.subscription.reload)
+    assert_equal "open", attempt.reload.status
+  end
+
+  test "cross-account Stripe Customer reuse is rejected before canonical retrieval" do
+    account = create_account(name: "Canonical Cross Account Target")
+    other_account = create_account(name: "Canonical Cross Account Existing")
+    other_account.subscription.update!(
+      provider: "stripe",
+      external_customer_id: "cus_cross_account_canonical"
+    )
+    attempt = create_checkout_attempt(account: account, customer_id: "cus_cross_account_canonical")
+    original_attributes = subscription_state(account.subscription)
+    event_data = subscription_data(
+      attempt: attempt,
+      account_reference: Billing::StripeAccountReference.generate(account),
+      customer_id: "cus_cross_account_canonical",
+      subscription_id: "sub_cross_account_canonical",
+      status: "trialing"
+    )
+    retrieve_count = 0
+
+    with_stripe_subscription_retrieve(->(*) { retrieve_count += 1 }) do
+      post_signed_event(
+        event_id: "evt_cross_account_canonical",
+        event_type: "customer.subscription.created",
+        data_object: event_data,
+        canonical_subscription: nil
+      )
+    end
+
+    assert_response :success
+    receipt = BillingWebhookEvent.find_by!(external_event_id: "evt_cross_account_canonical")
+    assert_equal "ignored", receipt.status
+    assert_equal 0, retrieve_count
+    assert_equal original_attributes, subscription_state(account.subscription.reload)
+    assert_equal "open", attempt.reload.status
+  end
+
+  test "deferred and Checkout completion events do not retrieve a Stripe Subscription" do
+    account = create_account(name: "No Lifecycle Retrieval")
+    attempt = create_checkout_attempt(
+      account: account,
+      customer_id: "cus_no_lifecycle_retrieval",
+      session_id: "cs_no_lifecycle_retrieval"
+    )
+
+    with_stripe_subscription_retrieve(->(*) { flunk("Subscription retrieval was unexpected") }) do
+      post_signed_event(
+        event_id: "evt_no_retrieval_checkout",
+        event_type: "checkout.session.completed",
+        data_object: checkout_session_data(
+          attempt: attempt,
+          account_reference: Billing::StripeAccountReference.generate(account),
+          customer_id: "cus_no_lifecycle_retrieval",
+          subscription_id: "sub_no_lifecycle_retrieval"
+        )
+      )
+      assert_response :success
+
+      post_signed_event(event_id: "evt_no_retrieval_deferred", event_type: "invoice.paid")
+      assert_response :success
+    end
+  end
+
+  test "mismatched Checkout association is ignored without mutating either account" do
+    intended_account = create_account(name: "Intended Checkout Account")
+    other_account = create_account(name: "Existing Stripe Customer Account")
+    attempt = create_checkout_attempt(
+      account: other_account,
+      customer_id: "cus_other_account",
+      session_id: "cs_checkout_mismatch"
+    )
+    intended_original = subscription_state(intended_account.subscription)
+    other_original = subscription_state(other_account.subscription)
+
+    post_signed_event(
+      event_id: "evt_checkout_mismatch",
+      event_type: "checkout.session.completed",
+      data_object: checkout_session_data(
+        attempt: attempt,
+        account_reference: Billing::StripeAccountReference.generate(intended_account),
+        customer_id: "cus_other_account",
+        subscription_id: "sub_mismatch"
+      )
+    )
+
+    assert_response :success
+    receipt = BillingWebhookEvent.find_by!(external_event_id: "evt_checkout_mismatch")
+    assert_equal "ignored", receipt.status
+    assert_equal intended_original, subscription_state(intended_account.subscription.reload)
+    assert_equal other_original, subscription_state(other_account.subscription.reload)
+  end
+
+  test "Checkout completion with an invalid signed account reference is ignored without mutation" do
+    account = create_account(name: "Invalid Checkout Reference Account")
+    attempt = create_checkout_attempt(
+      account: account,
+      customer_id: "cus_invalid_checkout_reference",
+      session_id: "cs_invalid_checkout_reference"
+    )
+    original_attributes = subscription_state(account.subscription)
+
+    log_output = capture_rails_logs do
+      post_signed_event(
+        event_id: "evt_invalid_checkout_reference",
+        event_type: "checkout.session.completed",
+        data_object: checkout_session_data(
+          attempt: attempt,
+          account_reference: "tampered-account-reference",
+          customer_id: "cus_invalid_checkout_reference",
+          subscription_id: "sub_invalid_checkout_reference"
+        )
+      )
+    end
+
+    assert_response :success
+    receipt = BillingWebhookEvent.find_by!(external_event_id: "evt_invalid_checkout_reference")
+    assert_equal "ignored", receipt.status
+    assert_includes log_output, "association_code=invalid_account_reference"
+    assert_equal original_attributes, subscription_state(account.subscription.reload)
+  end
+
+  test "Checkout completion with another account signed reference is ignored without mutation" do
+    account = create_account(name: "Checkout Reference Target")
+    other_account = create_account(name: "Checkout Reference Other")
+    attempt = create_checkout_attempt(
+      account: account,
+      customer_id: "cus_wrong_checkout_reference",
+      session_id: "cs_wrong_checkout_reference"
+    )
+    original_attributes = subscription_state(account.subscription)
+
+    log_output = capture_rails_logs do
+      post_signed_event(
+        event_id: "evt_wrong_checkout_reference",
+        event_type: "checkout.session.completed",
+        data_object: checkout_session_data(
+          attempt: attempt,
+          account_reference: Billing::StripeAccountReference.generate(other_account),
+          customer_id: "cus_wrong_checkout_reference",
+          subscription_id: "sub_wrong_checkout_reference"
+        )
+      )
+    end
+
+    assert_response :success
+    receipt = BillingWebhookEvent.find_by!(external_event_id: "evt_wrong_checkout_reference")
+    assert_equal "ignored", receipt.status
+    assert_includes log_output, "association_code=account_mismatch"
+    assert_equal original_attributes, subscription_state(account.subscription.reload)
+  end
+
+  test "subscription event with an invalid signed account reference is ignored without mutation" do
+    account = create_account(name: "Invalid Subscription Reference Account")
+    attempt = create_checkout_attempt(account: account, customer_id: "cus_invalid_subscription_reference")
+    original_attributes = subscription_state(account.subscription)
+
+    log_output = capture_rails_logs do
+      post_signed_event(
+        event_id: "evt_invalid_subscription_reference",
+        event_type: "customer.subscription.created",
+        data_object: subscription_data(
+          attempt: attempt,
+          account_reference: "tampered-account-reference",
+          customer_id: "cus_invalid_subscription_reference",
+          subscription_id: "sub_invalid_subscription_reference",
+          status: "trialing"
+        )
+      )
+    end
+
+    assert_response :success
+    receipt = BillingWebhookEvent.find_by!(external_event_id: "evt_invalid_subscription_reference")
+    assert_equal "ignored", receipt.status
+    assert_includes log_output, "association_code=invalid_account_reference"
+    assert_equal original_attributes, subscription_state(account.subscription.reload)
+  end
+
+  test "subscription event with another account signed reference is ignored without mutation" do
+    account = create_account(name: "Subscription Reference Target")
+    other_account = create_account(name: "Subscription Reference Other")
+    attempt = create_checkout_attempt(account: account, customer_id: "cus_wrong_subscription_reference")
+    original_attributes = subscription_state(account.subscription)
+
+    log_output = capture_rails_logs do
+      post_signed_event(
+        event_id: "evt_wrong_subscription_reference",
+        event_type: "customer.subscription.updated",
+        data_object: subscription_data(
+          attempt: attempt,
+          account_reference: Billing::StripeAccountReference.generate(other_account),
+          customer_id: "cus_wrong_subscription_reference",
+          subscription_id: "sub_wrong_subscription_reference",
+          status: "active"
+        )
+      )
+    end
+
+    assert_response :success
+    receipt = BillingWebhookEvent.find_by!(external_event_id: "evt_wrong_subscription_reference")
+    assert_equal "ignored", receipt.status
+    assert_includes log_output, "association_code=account_mismatch"
+    assert_equal original_attributes, subscription_state(account.subscription.reload)
+  end
+
+  test "subscription metadata and configured price mismatch is ignored" do
+    account = create_account(name: "Mismatched Price Account")
+    attempt = create_checkout_attempt(account: account, customer_id: "cus_price_mismatch")
+    original_attributes = subscription_state(account.subscription)
+
+    post_signed_event(
+      event_id: "evt_price_mismatch",
+      event_type: "customer.subscription.created",
+      data_object: subscription_data(
+        attempt: attempt,
+        account_reference: Billing::StripeAccountReference.generate(account),
+        customer_id: "cus_price_mismatch",
+        subscription_id: "sub_price_mismatch",
+        status: "trialing",
+        option_key: "self_managed_monthly",
+        price_id: "price_webhook_annual"
+      )
+    )
+
+    assert_response :success
+    receipt = BillingWebhookEvent.find_by!(external_event_id: "evt_price_mismatch")
+    assert_equal "ignored", receipt.status
+    assert_equal original_attributes, subscription_state(account.subscription.reload)
   end
 
   test "valid unknown event is safely recorded and ignored" do
@@ -125,9 +1101,12 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
       "customer_shipping" => "private shipping",
       "customer_success_manager" => "ordinary CSM",
       "customer_tax_ids" => [ "txi_sensitive" ],
+      "customer_id" => "cus_parameter_sensitive",
       "charge" => "ch_sensitive",
       "discharge_notes" => "ordinary discharge notes",
       "payment_intent" => "pi_sensitive",
+      "price_id" => "price_parameter_sensitive",
+      "subscription_id" => "sub_parameter_sensitive",
       "customer_email" => "owner@example.test",
       "prospective_customer" => "ordinary prospect"
     )
@@ -149,9 +1128,12 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
     assert_equal "[FILTERED]", filtered["customer_shipping"]
     assert_equal "ordinary CSM", filtered["customer_success_manager"]
     assert_equal "[FILTERED]", filtered["customer_tax_ids"]
+    assert_equal "[FILTERED]", filtered["customer_id"]
     assert_equal "[FILTERED]", filtered["charge"]
     assert_equal "ordinary discharge notes", filtered["discharge_notes"]
     assert_equal "[FILTERED]", filtered["payment_intent"]
+    assert_equal "[FILTERED]", filtered["price_id"]
+    assert_equal "[FILTERED]", filtered["subscription_id"]
     assert_equal "[FILTERED]", filtered["customer_email"]
     assert_equal "ordinary prospect", filtered["prospective_customer"]
   end
@@ -465,21 +1447,83 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
 
   private
 
-  def post_signed_event(event_id:, event_type: "customer.subscription.updated", livemode: false, api_version: "2026-07-01")
+  def option_catalog(enabled:)
+    definitions = Billing::SubscriptionPlanCatalog::DEFAULT_DEFINITIONS.map(&:deep_dup)
+    definitions.find { |definition| definition.fetch(:key) == "self_managed_monthly" }[:enabled] = enabled
+
+    Billing::SubscriptionPlanCatalog.new(
+      price_ids: {
+        "self_managed_monthly" => "price_webhook_monthly",
+        "self_managed_annual" => "price_webhook_annual"
+      },
+      definitions: definitions
+    )
+  end
+
+  def with_plan_catalog(catalog)
+    original_method = Billing::SubscriptionPlanCatalog.method(:new)
+    Billing::SubscriptionPlanCatalog.define_singleton_method(:new, ->(*) { catalog })
+
+    yield
+  ensure
+    Billing::SubscriptionPlanCatalog.define_singleton_method(:new, original_method)
+  end
+
+  def post_signed_event(event_id:, event_type: "customer.subscription.updated", livemode: false,
+    api_version: "2026-07-01", data_object: nil, event_created: Time.current.to_i,
+    canonical_subscription: EVENT_DATA_AS_CANONICAL)
     payload = stripe_event_payload(
       event_id: event_id,
       event_type: event_type,
       livemode: livemode,
-      api_version: api_version
+      api_version: api_version,
+      data_object: data_object,
+      event_created: event_created
     )
-    post webhooks_stripe_path, params: payload, headers: stripe_signature_headers(payload)
+    request = -> { post webhooks_stripe_path, params: payload, headers: stripe_signature_headers(payload) }
+    unless subscription_lifecycle_event?(event_type) && data_object
+      return request.call
+    end
+    return request.call if canonical_subscription.nil?
+
+    canonical_data = canonical_subscription.equal?(EVENT_DATA_AS_CANONICAL) ? data_object : canonical_subscription
+    expected_subscription_id = data_object[:id] || data_object["id"]
+    with_stripe_subscription_retrieve(
+      ->(subscription_id, options) {
+        assert_equal expected_subscription_id, subscription_id
+        assert_equal Rails.configuration.x.stripe.secret_key, options.fetch(:api_key)
+        stripe_subscription(canonical_data)
+      },
+      &request
+    )
   end
 
-  def stripe_event_payload(event_id:, event_type: "customer.subscription.updated", livemode: false, api_version: "2026-07-01", data_object: nil)
+  def subscription_lifecycle_event?(event_type)
+    %w[customer.subscription.created customer.subscription.updated].include?(event_type)
+  end
+
+  def stripe_subscription(data)
+    Stripe::Subscription.construct_from(data)
+  end
+
+  def with_stripe_subscription_retrieve(replacement)
+    original_method = Stripe::Subscription.method(:retrieve)
+    Stripe::Subscription.define_singleton_method(:retrieve) do |*args, **kwargs|
+      replacement.call(*args, **kwargs)
+    end
+
+    yield
+  ensure
+    Stripe::Subscription.define_singleton_method(:retrieve, original_method)
+  end
+
+  def stripe_event_payload(event_id:, event_type: "customer.subscription.updated", livemode: false,
+    api_version: "2026-07-01", data_object: nil, event_created: Time.current.to_i)
     JSON.generate(
       id: event_id,
       object: "event",
       type: event_type,
+      created: event_created,
       livemode: livemode,
       api_version: api_version,
       data: {
@@ -498,6 +1542,80 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
       "CONTENT_TYPE" => "application/json",
       "Stripe-Signature" => Stripe::Webhook::Signature.generate_header(timestamp, signature)
     }
+  end
+
+  def checkout_session_data(attempt:, account_reference:, customer_id:, subscription_id:,
+    option_key: "self_managed_monthly")
+    {
+      id: attempt.stripe_checkout_session_id,
+      object: "checkout.session",
+      mode: "subscription",
+      customer: customer_id,
+      subscription: subscription_id,
+      client_reference_id: account_reference,
+      metadata: {
+        Billing::StripeCheckoutSessionCreator::ACCOUNT_REFERENCE_KEY => account_reference,
+        Billing::StripeCheckoutSessionCreator::ATTEMPT_REFERENCE_KEY =>
+          Billing::StripeCheckoutAttemptReference.generate(attempt),
+        Billing::StripeCheckoutSessionCreator::OPTION_KEY => option_key
+      }
+    }
+  end
+
+  def subscription_data(attempt:, account_reference:, customer_id:, subscription_id:, status:,
+    option_key: "self_managed_monthly", price_id: "price_webhook_monthly",
+    trial_end: 7.days.from_now, period_end: 1.month.from_now,
+    cancel_at_period_end: false, canceled_at: nil)
+    {
+      id: subscription_id,
+      object: "subscription",
+      customer: customer_id,
+      status: status,
+      trial_end: trial_end&.to_i,
+      cancel_at_period_end: cancel_at_period_end,
+      canceled_at: canceled_at&.to_i,
+      metadata: {
+        Billing::StripeCheckoutSessionCreator::ACCOUNT_REFERENCE_KEY => account_reference,
+        Billing::StripeCheckoutSessionCreator::ATTEMPT_REFERENCE_KEY =>
+          Billing::StripeCheckoutAttemptReference.generate(attempt),
+        Billing::StripeCheckoutSessionCreator::OPTION_KEY => option_key
+      },
+      items: {
+        data: [
+          {
+            price: { id: price_id },
+            current_period_end: period_end&.to_i
+          }
+        ]
+      }
+    }
+  end
+
+  def create_checkout_attempt(account:, customer_id:, session_id: SecureRandom.uuid,
+    option_key: "self_managed_monthly", status: "open")
+    BillingCheckoutAttempt.create!(
+      account: account,
+      option_key: option_key,
+      stripe_customer_id: customer_id,
+      stripe_checkout_session_id: session_id,
+      idempotency_key: SecureRandom.uuid,
+      status: status
+    )
+  end
+
+  def subscription_state(subscription)
+    subscription.attributes.slice(
+      "plan",
+      "status",
+      "provider",
+      "external_customer_id",
+      "external_subscription_id",
+      "trial_ends_at",
+      "current_period_ends_at",
+      "cancel_at_period_end",
+      "canceled_at",
+      "last_synced_at"
+    )
   end
 
   def parameter_filter

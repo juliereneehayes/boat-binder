@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_08_10_090000) do
+ActiveRecord::Schema[8.1].define(version: 2026_08_11_193000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -121,6 +121,23 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_10_090000) do
     t.check_constraint "asset_type::text = ANY (ARRAY['vessel'::character varying, 'home'::character varying, 'pet'::character varying, 'audit'::character varying, 'other'::character varying]::text[])", name: "chk_assets_asset_type"
     t.check_constraint "length IS NULL OR length > 0::numeric", name: "chk_assets_length_positive"
     t.check_constraint "year IS NULL OR year > 1900 AND year <= 2100", name: "chk_assets_year_reasonable"
+  end
+
+  create_table "billing_checkout_attempts", force: :cascade do |t|
+    t.bigint "account_id", null: false
+    t.datetime "created_at", null: false
+    t.string "idempotency_key", null: false
+    t.string "option_key", null: false
+    t.string "status", default: "creating", null: false
+    t.string "stripe_checkout_session_id"
+    t.string "stripe_customer_id", null: false
+    t.datetime "updated_at", null: false
+    t.index ["account_id"], name: "idx_billing_checkout_attempts_one_active_per_account", unique: true, where: "((status)::text = ANY ((ARRAY['creating'::character varying, 'open'::character varying, 'replacing'::character varying, 'submitted'::character varying])::text[]))"
+    t.index ["account_id"], name: "index_billing_checkout_attempts_on_account_id"
+    t.index ["idempotency_key"], name: "index_billing_checkout_attempts_on_idempotency_key", unique: true
+    t.index ["stripe_checkout_session_id"], name: "index_billing_checkout_attempts_on_stripe_checkout_session_id", unique: true, where: "(stripe_checkout_session_id IS NOT NULL)"
+    t.index ["stripe_customer_id"], name: "index_billing_checkout_attempts_on_stripe_customer_id"
+    t.check_constraint "status::text = ANY (ARRAY['creating'::character varying, 'open'::character varying, 'replacing'::character varying, 'submitted'::character varying, 'completed'::character varying, 'canceled'::character varying, 'expired'::character varying, 'replaced'::character varying]::text[])", name: "chk_billing_checkout_attempts_status"
   end
 
   create_table "billing_webhook_events", force: :cascade do |t|
@@ -446,6 +463,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_10_090000) do
   add_foreign_key "asset_batteries", "assets"
   add_foreign_key "asset_engines", "assets"
   add_foreign_key "assets", "accounts"
+  add_foreign_key "billing_checkout_attempts", "accounts"
   add_foreign_key "binder_notes", "accounts"
   add_foreign_key "binder_notes", "assets"
   add_foreign_key "contacts", "accounts"
