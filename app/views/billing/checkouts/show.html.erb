@@ -37,6 +37,7 @@
           <%= button_to "Start #{option.interval == "year" ? "annual" : "monthly"} Checkout",
             billing_checkout_path,
             params: { option_key: option.key },
+            form: { data: { turbo: false } },
             class: primary_button_class("mt-7 w-full") %>
         </article>
       <% end %>
