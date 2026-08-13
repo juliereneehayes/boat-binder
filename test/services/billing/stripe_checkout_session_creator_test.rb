@@ -549,9 +549,7 @@ module Billing
         "current_period_ends_at",
         "cancel_at_period_end",
         "canceled_at",
-        "last_synced_at",
-        "stripe_last_event_created_at",
-        "stripe_last_event_id"
+        "last_synced_at"
       )
     end
 

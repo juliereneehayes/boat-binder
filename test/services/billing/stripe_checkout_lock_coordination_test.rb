@@ -108,8 +108,10 @@ module Billing
 
     test "subscription lifecycle synchronization shares the Account lock protocol" do
       attempt = create_attempt(customer_id: "cus_lock_lifecycle", session_id: "cs_lock_lifecycle")
+      event = subscription_event(attempt)
       retrieve_started = Queue.new
       release_retrieve = Queue.new
+      subscription_network_transaction_state = Queue.new
       checkout_session_factory = method(:checkout_session)
 
       with_stripe_methods(
@@ -119,13 +121,17 @@ module Billing
           retrieve_started << true
           release_retrieve.pop
           checkout_session_factory.call(id: attempt.stripe_checkout_session_id)
+        },
+        subscription_retrieve: ->(*) {
+          subscription_network_transaction_state << ActiveRecord::Base.connection.transaction_open?
+          event.data.object
         }
       ) do
         creator_thread, creator_result = run_in_thread { create_checkout }
         Timeout.timeout(5) { retrieve_started.pop }
 
         webhook_thread, webhook_result = run_in_thread do
-          StripeSubscriptionSynchronizer.call(subscription_event(attempt))
+          StripeSubscriptionSynchronizer.call(event)
         end
         assert webhook_thread.join(5), "subscription webhook deadlocked behind Checkout"
         assert_thread_succeeded(webhook_result)
@@ -144,6 +150,48 @@ module Billing
       assert_equal "sub_lock_lifecycle", @account.subscription.reload.external_subscription_id
       assert_equal "trialing", @account.subscription.status
       assert_equal 0, @account.billing_checkout_attempts.active.count
+      assert_equal false, subscription_network_transaction_state.pop
+    end
+
+    test "lifecycle synchronization revalidates local association after Stripe retrieval" do
+      attempt = create_attempt(customer_id: "cus_revalidate_lifecycle", session_id: "cs_revalidate_lifecycle")
+      event = subscription_event(attempt, subscription_id: "sub_revalidate_lifecycle")
+      retrieval_started = Queue.new
+      release_retrieval = Queue.new
+
+      with_stripe_methods(
+        customer_create: ->(*) { raise "Stripe Customer creation was unexpected" },
+        session_create: ->(*) { raise "Stripe Session creation was unexpected" },
+        subscription_retrieve: ->(*) {
+          retrieval_started << true
+          release_retrieval.pop
+          event.data.object
+        }
+      ) do
+        webhook_thread, webhook_result = run_in_thread do
+          StripeSubscriptionSynchronizer.call(event)
+        end
+        Timeout.timeout(5) { retrieval_started.pop }
+
+        @account.subscription.update!(
+          provider: "stripe",
+          external_customer_id: "cus_revalidate_lifecycle",
+          external_subscription_id: "sub_newer_local_association"
+        )
+        release_retrieval << true
+
+        assert webhook_thread.join(5), "lifecycle synchronization did not resume"
+        error = assert_thread_failed(webhook_result)
+        assert_instance_of StripeWebhookAssociationError, error
+        assert_equal "subscription_mismatch", error.code
+      ensure
+        release_retrieval << true if webhook_thread&.alive?
+        webhook_thread&.join(1)
+      end
+
+      subscription = @account.subscription.reload
+      assert_equal "sub_newer_local_association", subscription.external_subscription_id
+      assert_equal "open", attempt.reload.status
     end
 
     test "racing monthly and annual requests cannot return the wrong Price" do
@@ -239,7 +287,7 @@ module Billing
       )
     end
 
-    def subscription_event(attempt)
+    def subscription_event(attempt, subscription_id: "sub_lock_lifecycle")
       account_reference = StripeAccountReference.generate(@account)
 
       Stripe::Event.construct_from(
@@ -248,7 +296,7 @@ module Billing
         created: Time.current.to_i,
         data: {
           object: {
-            id: "sub_lock_lifecycle",
+            id: subscription_id,
             customer: attempt.stripe_customer_id,
             status: "trialing",
             trial_end: 7.days.from_now.to_i,
@@ -298,14 +346,18 @@ module Billing
       value
     end
 
-    def with_stripe_methods(customer_create:, session_create:, session_retrieve: nil, session_expire: nil)
+    def with_stripe_methods(customer_create:, session_create:, session_retrieve: nil, session_expire: nil,
+      subscription_retrieve: nil)
       session_retrieve ||= ->(*) { raise "Stripe Session retrieve was unexpected" }
       session_expire ||= ->(*) { raise "Stripe Session expiration was unexpected" }
+      subscription_retrieve ||= ->(*) { raise "Stripe Subscription retrieve was unexpected" }
 
       with_singleton_method(Stripe::Customer, :create, customer_create) do
         with_singleton_method(Stripe::Checkout::Session, :create, session_create) do
           with_singleton_method(Stripe::Checkout::Session, :retrieve, session_retrieve) do
-            with_singleton_method(Stripe::Checkout::Session, :expire, session_expire) { yield }
+            with_singleton_method(Stripe::Checkout::Session, :expire, session_expire) do
+              with_singleton_method(Stripe::Subscription, :retrieve, subscription_retrieve) { yield }
+            end
           end
         end
       end
@@ -313,7 +365,9 @@ module Billing
 
     def with_singleton_method(receiver, method_name, replacement)
       original_method = receiver.method(method_name)
-      receiver.define_singleton_method(method_name, replacement)
+      receiver.define_singleton_method(method_name) do |*args, **kwargs|
+        replacement.call(*args, **kwargs)
+      end
       yield
     ensure
       receiver.define_singleton_method(method_name, original_method)

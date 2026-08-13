@@ -432,8 +432,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_11_193000) do
     t.string "plan", default: "legacy", null: false
     t.string "provider", default: "local", null: false
     t.string "status", default: "active", null: false
-    t.datetime "stripe_last_event_created_at"
-    t.string "stripe_last_event_id"
     t.datetime "trial_ends_at"
     t.datetime "updated_at", null: false
     t.index ["account_id"], name: "index_subscriptions_on_account_id", unique: true

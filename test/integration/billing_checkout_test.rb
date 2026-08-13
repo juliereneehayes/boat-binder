@@ -293,9 +293,7 @@ class BillingCheckoutTest < ActionDispatch::IntegrationTest
       "external_subscription_id",
       "trial_ends_at",
       "current_period_ends_at",
-      "last_synced_at",
-      "stripe_last_event_created_at",
-      "stripe_last_event_id"
+      "last_synced_at"
     )
   end
 end

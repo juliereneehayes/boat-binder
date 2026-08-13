@@ -78,17 +78,26 @@ Verified events actively processed in this phase:
 
 The authoritative local `Subscription` first changes only when one of these verified events passes
 all signed-reference and identifier checks; no webhook delivery order is assumed. Subscription
-lifecycle events map Stripe's signed status and timestamps into the existing local `Subscription`.
-The Price in the event determines the stable Boat Binder plan. No follow-up Stripe request is made to
-decide application access.
+lifecycle handlers first validate the signed event against the current local Account, Subscription,
+and Checkout attempt. They then release database locks, retrieve the current Subscription from Stripe,
+and reacquire the Account -> Subscription -> Checkout attempt lock order. The freshly locked local
+state and the canonical Stripe object are both revalidated before Stripe's current status, Price, and
+timestamps are committed locally.
 
-Stripe does not guarantee webhook delivery order. Each applied lifecycle event records Stripe's
-`event.created` timestamp and event ID on the local Subscription. The synchronizer compares that pair
-while holding the Subscription lock. Newer timestamps win; when timestamps are equal, the
-lexicographically greater event ID wins as a deterministic tie-break. A stale verified event is
-recorded as successfully ignored and cannot revert status, period/trial dates, cancellation fields, or
-other synchronized lifecycle state. Webhook receipt creation and duplicate-event idempotency remain
-separate protections.
+Stripe does not guarantee webhook delivery order, `Event.created` has second-level resolution, and
+Stripe does not document Event IDs as chronological ordering keys. Boat Binder therefore does not
+infer lifecycle chronology from event timestamps or Event ID ordering. Every distinct verified
+subscription lifecycle event reconciles from Stripe's current Subscription state; duplicate event IDs
+remain idempotent through `BillingWebhookEvent`. A Stripe API failure remains a failed, retryable
+receipt and does not become a successfully ignored association error. No normal application request
+uses this retrieval path or queries Stripe to determine access.
+
+This follows Stripe's guidance to [retrieve current objects when webhook ordering
+matters](https://docs.stripe.com/webhooks#event-ordering), the documented integer Unix timestamp for
+[`Event.created`](https://docs.stripe.com/api/events/object#event_object-created), and the official
+[`Subscription.retrieve`](https://docs.stripe.com/api/subscriptions/retrieve) API. Canonical retrieval
+runs before the webhook receipt transaction; receipt serialization and the final Account ->
+Subscription -> Checkout attempt lock/revalidation happen afterward.
 
 Still deferred and recorded as ignored:
 
@@ -156,8 +165,8 @@ Use Stripe sandbox keys and test-mode Price IDs only.
 11. Choose the other billing option and confirm the previous open Session is expired before the new
     Session is created.
 12. Redeliver a processed event and confirm the receipt and local synchronization remain idempotent.
-13. Deliver an older lifecycle event after a newer one and confirm it is acknowledged without
-    reverting the local Subscription.
+13. Deliver lifecycle events out of order and confirm each reconciliation converges on the current
+    Stripe Subscription state without reverting the local Subscription.
 14. Attempt an unknown option, extra Price/Customer/Account parameters, a second eligible Account,
     and mismatched signed event metadata; confirm no cross-account mutation occurs.
 

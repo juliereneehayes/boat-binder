@@ -17,12 +17,6 @@ class Subscription < ApplicationRecord
   scope :access_allowed, -> { where(status: ACCESS_ALLOWED_STATUSES) }
   scope :managed_externally, -> { where.not(provider: LOCAL_PROVIDER) }
 
-  def stripe_event_order
-    return unless stripe_last_event_created_at && stripe_last_event_id.present?
-
-    [ stripe_last_event_created_at.to_f, stripe_last_event_id ]
-  end
-
   def self.default_local_attributes
     {
       plan: "legacy",

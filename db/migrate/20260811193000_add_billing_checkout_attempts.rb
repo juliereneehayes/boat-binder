@@ -1,4 +1,4 @@
-class AddCheckoutAttemptsAndSubscriptionEventOrdering < ActiveRecord::Migration[8.1]
+class AddBillingCheckoutAttempts < ActiveRecord::Migration[8.1]
   ACTIVE_ATTEMPT_STATUSES = %w[creating open replacing submitted].freeze
   ATTEMPT_STATUSES = (ACTIVE_ATTEMPT_STATUSES + %w[completed canceled expired replaced]).freeze
 
@@ -27,9 +27,6 @@ class AddCheckoutAttemptsAndSubscriptionEventOrdering < ActiveRecord::Migration[
     add_check_constraint :billing_checkout_attempts,
       "status IN (#{quoted_values(ATTEMPT_STATUSES)})",
       name: "chk_billing_checkout_attempts_status"
-
-    add_column :subscriptions, :stripe_last_event_created_at, :datetime
-    add_column :subscriptions, :stripe_last_event_id, :string
   end
 
   private

@@ -1,11 +1,13 @@
 module Billing
   class StripeWebhookProcessor
     STRIPE_PROVIDER = BillingWebhookEvent::STRIPE_PROVIDER
-    PROCESSED_EVENT_TYPES = %w[
-      checkout.session.completed
+    SUBSCRIPTION_LIFECYCLE_EVENT_TYPES = %w[
       customer.subscription.created
       customer.subscription.updated
     ].freeze
+    PROCESSED_EVENT_TYPES = %w[
+      checkout.session.completed
+    ].concat(SUBSCRIPTION_LIFECYCLE_EVENT_TYPES).freeze
     DEFERRED_EVENT_TYPES = %w[
       customer.subscription.deleted
       invoice.paid
@@ -55,6 +57,11 @@ module Billing
     end
 
     def process_or_acknowledge(billing_webhook_event)
+      @billing_webhook_event = billing_webhook_event
+      return success_result(billing_webhook_event, duplicate: true) if billing_webhook_event.completed?
+
+      prepare_supported_event!
+
       billing_webhook_event.with_lock do
         @billing_webhook_event = billing_webhook_event
         return success_result(billing_webhook_event, duplicate: true) if billing_webhook_event.completed?
@@ -62,6 +69,8 @@ module Billing
         process_event!(billing_webhook_event)
         success_result(billing_webhook_event)
       end
+    rescue StripeWebhookAssociationError => error
+      acknowledge_invalid_association(billing_webhook_event, error)
     end
 
     def process_event!(billing_webhook_event)
@@ -72,18 +81,7 @@ module Billing
       end
     rescue StripeWebhookAssociationError => error
       billing_webhook_event.mark_ignored!
-
-      Rails.logger.info(
-        "Stripe webhook ignored reason=invalid_association association_code=#{error.code} event_id=#{event_id} " \
-        "event_type=#{event_type} livemode=#{livemode}"
-      )
-    rescue StripeWebhookStaleEvent
-      billing_webhook_event.mark_ignored!
-
-      Rails.logger.info(
-        "Stripe webhook ignored reason=stale_lifecycle_event event_id=#{event_id} " \
-        "event_type=#{event_type} livemode=#{livemode}"
-      )
+      log_invalid_association(error)
     end
 
     def process_supported_event!(billing_webhook_event)
@@ -91,7 +89,7 @@ module Billing
       when "checkout.session.completed"
         StripeCheckoutCompletionSynchronizer.call(event.data.object)
       when "customer.subscription.created", "customer.subscription.updated"
-        StripeSubscriptionSynchronizer.call(event)
+        @stripe_subscription_synchronizer.call
       end
 
       billing_webhook_event.mark_processed!
@@ -110,10 +108,37 @@ module Billing
       )
     end
 
+    def prepare_supported_event!
+      return unless SUBSCRIPTION_LIFECYCLE_EVENT_TYPES.include?(event_type)
+
+      @stripe_subscription_synchronizer = StripeSubscriptionSynchronizer.prepare(event)
+    end
+
+    def acknowledge_invalid_association(billing_webhook_event, error)
+      billing_webhook_event.with_lock do
+        return success_result(billing_webhook_event, duplicate: true) if billing_webhook_event.completed?
+
+        billing_webhook_event.mark_ignored!
+        log_invalid_association(error)
+        success_result(billing_webhook_event)
+      end
+    end
+
+    def log_invalid_association(error)
+      Rails.logger.info(
+        "Stripe webhook ignored reason=invalid_association association_code=#{error.code} event_id=#{event_id} " \
+        "event_type=#{event_type} livemode=#{livemode}"
+      )
+    end
+
     def mark_failed(error)
       return unless @billing_webhook_event&.persisted?
 
-      @billing_webhook_event.mark_failed!(error_code: error.class.name.demodulize)
+      @billing_webhook_event.with_lock do
+        return if @billing_webhook_event.completed?
+
+        @billing_webhook_event.mark_failed!(error_code: error.class.name.demodulize)
+      end
     rescue StandardError => update_error
       Rails.logger.error(
         "Stripe webhook failure status update failed provider=stripe event_id=#{event_id.inspect} " \
