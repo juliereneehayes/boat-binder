@@ -203,14 +203,29 @@ module Billing
       end
     end
 
-    test "invalid trial durations are rejected" do
-      bad_definition = definition_for("self_managed_monthly").merge(trial_days: -1)
+    test "trial durations include no trial and Stripe boundary values" do
+      [ 0, 1, SubscriptionPlanCatalog::MAX_TRIAL_DAYS ].each do |trial_days|
+        definition = definition_for("self_managed_monthly").merge(trial_days: trial_days)
+        option = build_catalog(
+          definitions: [ definition, definition_for("self_managed_annual") ]
+        ).fetch("self_managed_monthly")
 
-      error = assert_raises(SubscriptionPlanCatalog::ConfigurationError) do
-        build_catalog(definitions: [ bad_definition, definition_for("self_managed_annual") ])
+        assert_equal trial_days, option.trial_days
+        assert_equal trial_days.positive?, option.trial?
       end
+    end
 
-      assert_includes error.message, "self_managed_monthly trial days must be a non-negative integer"
+    test "invalid trial durations are rejected" do
+      [ -1, SubscriptionPlanCatalog::MAX_TRIAL_DAYS + 1, "7" ].each do |trial_days|
+        bad_definition = definition_for("self_managed_monthly").merge(trial_days: trial_days)
+
+        error = assert_raises(SubscriptionPlanCatalog::ConfigurationError) do
+          build_catalog(definitions: [ bad_definition, definition_for("self_managed_annual") ])
+        end
+
+        assert_includes error.message,
+          "self_managed_monthly trial days must be an integer between 0 and 730"
+      end
     end
 
     test "invalid enabled values are rejected" do

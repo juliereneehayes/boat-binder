@@ -76,6 +76,35 @@ module Billing
       assert_equal original_subscription, subscription_state(@account.subscription.reload)
     end
 
+    test "Checkout without a trial omits trial period days and retains subscription metadata" do
+      definitions = SubscriptionPlanCatalog::DEFAULT_DEFINITIONS.map(&:deep_dup)
+      definitions.find { |definition| definition.fetch(:key) == "self_managed_monthly" }[:trial_days] = 0
+      catalog = SubscriptionPlanCatalog.new(
+        price_ids: {
+          "self_managed_monthly" => MONTHLY_PRICE_ID,
+          "self_managed_annual" => ANNUAL_PRICE_ID
+        },
+        definitions: definitions
+      )
+      checkout_params = nil
+
+      with_stripe_methods(
+        customer_create: ->(*) { Stripe::Customer.construct_from(id: "cus_no_trial") },
+        session_create: ->(params, _options) {
+          checkout_params = params
+          CHECKOUT_SESSION.call(id: "cs_no_trial")
+        }
+      ) do
+        checkout_creator(option_key: "self_managed_monthly", catalog: catalog).call
+      end
+
+      subscription_data = checkout_params.fetch(:subscription_data)
+      assert_not subscription_data.key?(:trial_period_days)
+      assert_equal "self_managed_monthly",
+        subscription_data.dig(:metadata, StripeCheckoutSessionCreator::OPTION_KEY)
+      assert subscription_data.dig(:metadata, StripeCheckoutSessionCreator::ATTEMPT_REFERENCE_KEY).present?
+    end
+
     test "a same-option retry reuses the existing open Checkout Session" do
       customer_calls = 0
       session_create_calls = 0
@@ -491,12 +520,13 @@ module Billing
       checkout_creator(option_key: option_key).call
     end
 
-    def checkout_creator(option_key:)
+    def checkout_creator(option_key:, catalog: nil)
       StripeCheckoutSessionCreator.new(
         account: @account,
         option_key: option_key,
         success_url: success_url,
-        cancel_url: cancel_url
+        cancel_url: cancel_url,
+        catalog: catalog
       )
     end
 

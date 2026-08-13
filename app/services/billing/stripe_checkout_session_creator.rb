@@ -341,6 +341,9 @@ module Billing
     end
 
     def create_checkout_session(option, snapshot)
+      subscription_data = { metadata: stripe_metadata(snapshot) }
+      subscription_data[:trial_period_days] = option.trial_days if option.trial?
+
       Stripe::Checkout::Session.create(
         {
           mode: "subscription",
@@ -348,10 +351,7 @@ module Billing
           client_reference_id: account_reference,
           line_items: [ { price: option.stripe_price_id, quantity: 1 } ],
           payment_method_collection: "always",
-          subscription_data: {
-            trial_period_days: option.trial_days,
-            metadata: stripe_metadata(snapshot)
-          },
+          subscription_data: subscription_data,
           metadata: stripe_metadata(snapshot),
           success_url: success_url,
           cancel_url: cancel_url
