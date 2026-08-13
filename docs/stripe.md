@@ -78,11 +78,26 @@ Verified events actively processed in this phase:
 
 The authoritative local `Subscription` first changes only when one of these verified events passes
 all signed-reference and identifier checks; no webhook delivery order is assumed. Subscription
-lifecycle handlers first validate the signed event against the current local Account, Subscription,
-and Checkout attempt. They then release database locks, retrieve the current Subscription from Stripe,
-and reacquire the Account -> Subscription -> Checkout attempt lock order. The freshly locked local
-state and the canonical Stripe object are both revalidated before Stripe's current status, Price, and
-timestamps are committed locally.
+lifecycle handlers resolve the signed Checkout attempt, then acquire an Account-scoped PostgreSQL
+session advisory lock. While that advisory lock remains held, they validate the signed event under
+the Account -> Subscription -> Checkout attempt row-lock order, release the row locks and transaction,
+retrieve the current Subscription from Stripe, and reacquire the same row-lock order. The freshly
+locked local state and the canonical Stripe object are both revalidated before Stripe's current
+status, Price, and timestamps are committed locally.
+
+Canonical retrieval alone is not sufficient when two distinct lifecycle workers can retrieve
+different snapshots concurrently. The advisory lock serializes the complete retrieve-and-commit
+sequence for one Account across Rails threads, processes, and dynos that share PostgreSQL. Its stable
+64-bit key is derived from the versioned `boat_binder:stripe_account_reconciliation:v1` namespace and
+the local Account ID; no Stripe or customer identifier is used. Different Accounts use different
+keys and reconcile independently. The lock is session-level rather than transaction-level, so Boat
+Binder retains one checked-out database connection while waiting on Stripe but does not hold an open
+database transaction or row lock during that network request.
+
+Lock acquisition uses bounded `pg_try_advisory_lock` polling with a five-second timeout. A timeout,
+Stripe API failure, or unexpected commit failure releases the advisory lock in `ensure`, leaves the
+webhook receipt failed and retryable, and returns a non-2xx response. Same-execution-context nested
+calls reuse the outer lock scope so advisory acquisitions and releases remain balanced.
 
 Stripe does not guarantee webhook delivery order, `Event.created` has second-level resolution, and
 Stripe does not document Event IDs as chronological ordering keys. Boat Binder therefore does not
@@ -96,8 +111,9 @@ This follows Stripe's guidance to [retrieve current objects when webhook orderin
 matters](https://docs.stripe.com/webhooks#event-ordering), the documented integer Unix timestamp for
 [`Event.created`](https://docs.stripe.com/api/events/object#event_object-created), and the official
 [`Subscription.retrieve`](https://docs.stripe.com/api/subscriptions/retrieve) API. Canonical retrieval
-runs before the webhook receipt transaction; receipt serialization and the final Account ->
-Subscription -> Checkout attempt lock/revalidation happen afterward.
+runs before the webhook receipt transaction; the Account advisory lock remains held while receipt
+serialization and the final Account -> Subscription -> Checkout attempt lock/revalidation happen
+afterward.
 
 Still deferred and recorded as ignored:
 

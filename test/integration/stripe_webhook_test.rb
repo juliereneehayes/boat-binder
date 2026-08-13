@@ -544,6 +544,64 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
     assert_equal original_attributes, subscription_state(account.subscription.reload)
     assert_equal "open", attempt.reload.status
     assert_not_includes response.body, "private transport failure"
+
+    post_signed_event(
+      event_id: "evt_retrieval_failure",
+      event_type: "customer.subscription.created",
+      data_object: event_data
+    )
+
+    assert_response :success
+    assert_equal "processed", receipt.reload.status
+    assert_equal "trialing", account.subscription.reload.status
+    assert_equal "completed", attempt.reload.status
+  end
+
+  test "account reconciliation lock timeout remains a retryable webhook failure" do
+    account = create_account(name: "Reconciliation Lock Timeout")
+    attempt = create_checkout_attempt(account: account, customer_id: "cus_lock_timeout")
+    event_data = subscription_data(
+      attempt: attempt,
+      account_reference: Billing::StripeAccountReference.generate(account),
+      customer_id: "cus_lock_timeout",
+      subscription_id: "sub_lock_timeout",
+      status: "trialing"
+    )
+    original_call = Billing::StripeAccountReconciliationLock.method(:call)
+    calls = 0
+
+    Billing::StripeAccountReconciliationLock.define_singleton_method(:call) do |account_id:, **options, &block|
+      calls += 1
+      raise Billing::StripeAccountReconciliationLock::LockTimeoutError,
+        "Stripe account reconciliation is already in progress" if calls == 1
+
+      original_call.call(account_id:, **options, &block)
+    end
+
+    post_signed_event(
+      event_id: "evt_lock_timeout",
+      event_type: "customer.subscription.created",
+      data_object: event_data
+    )
+
+    assert_response :internal_server_error
+    receipt = BillingWebhookEvent.find_by!(external_event_id: "evt_lock_timeout")
+    assert_equal "failed", receipt.status
+    assert_equal "LockTimeoutError", receipt.error_code
+    assert_equal "open", attempt.reload.status
+
+    post_signed_event(
+      event_id: "evt_lock_timeout",
+      event_type: "customer.subscription.created",
+      data_object: event_data
+    )
+
+    assert_response :success
+    assert_equal "processed", receipt.reload.status
+    assert_equal "trialing", account.subscription.reload.status
+    assert_equal "completed", attempt.reload.status
+  ensure
+    Billing::StripeAccountReconciliationLock.define_singleton_method(:call, original_call) if original_call
   end
 
   test "canonical Subscription Customer mismatch is ignored without mutation" do

@@ -194,6 +194,172 @@ module Billing
       assert_equal "open", attempt.reload.status
     end
 
+    test "distinct lifecycle events serialize canonical retrieval and commit for the same Account" do
+      attempt = create_attempt(customer_id: "cus_serial_lifecycle", session_id: "cs_serial_lifecycle")
+      first_event = subscription_event(attempt, event_id: "evt_serial_first", status: "trialing")
+      second_event = subscription_event(attempt, event_id: "evt_serial_second", status: "active")
+      first_retrieval_started = Queue.new
+      second_worker_started = Queue.new
+      second_retrieval_started = Queue.new
+      release_first_retrieval = Queue.new
+      canonical_factory = method(:canonical_subscription)
+
+      with_stripe_methods(
+        customer_create: ->(*) { raise "Stripe Customer creation was unexpected" },
+        session_create: ->(*) { raise "Stripe Session creation was unexpected" },
+        subscription_retrieve: ->(*) {
+          if Thread.current[:canonical_status] == "trialing"
+            first_retrieval_started << true
+            release_first_retrieval.pop
+          else
+            second_retrieval_started << true
+          end
+          canonical_factory.call(attempt, status: Thread.current[:canonical_status])
+        }
+      ) do
+        first_thread, first_result = run_in_thread do
+          Thread.current[:canonical_status] = "trialing"
+          StripeSubscriptionSynchronizer.call(first_event)
+        end
+        Timeout.timeout(5) { first_retrieval_started.pop }
+
+        second_thread, second_result = run_in_thread do
+          Thread.current[:canonical_status] = "active"
+          second_worker_started << true
+          StripeSubscriptionSynchronizer.call(second_event)
+        end
+        Timeout.timeout(5) { second_worker_started.pop }
+        assert_raises(Timeout::Error) { Timeout.timeout(0.2) { second_retrieval_started.pop } }
+
+        release_first_retrieval << true
+        assert first_thread.join(5), "first lifecycle synchronization did not finish"
+        assert_thread_succeeded(first_result)
+        Timeout.timeout(5) { second_retrieval_started.pop }
+        assert second_thread.join(5), "second lifecycle synchronization did not finish"
+        assert_thread_succeeded(second_result)
+      ensure
+        release_first_retrieval << true if first_thread&.alive?
+        first_thread&.join(1)
+        second_thread&.join(1)
+      end
+
+      assert_equal "active", @account.subscription.reload.status
+      assert_equal "completed", attempt.reload.status
+    end
+
+    test "different Accounts retrieve canonical subscriptions concurrently" do
+      other_account = create_account(name: "Checkout Locking Other #{SecureRandom.hex(6)}")
+      first_attempt = create_attempt(customer_id: "cus_parallel_first", session_id: "cs_parallel_first")
+      second_attempt = create_attempt_for(
+        other_account,
+        customer_id: "cus_parallel_second",
+        session_id: "cs_parallel_second"
+      )
+      first_event = subscription_event(
+        first_attempt,
+        event_id: "evt_parallel_first",
+        subscription_id: "sub_parallel_first"
+      )
+      second_event = subscription_event(
+        second_attempt,
+        account: other_account,
+        event_id: "evt_parallel_second",
+        subscription_id: "sub_parallel_second"
+      )
+      retrievals_started = Queue.new
+      release_retrievals = Queue.new
+      canonical_factory = method(:canonical_subscription)
+
+      with_stripe_methods(
+        customer_create: ->(*) { raise "Stripe Customer creation was unexpected" },
+        session_create: ->(*) { raise "Stripe Session creation was unexpected" },
+        subscription_retrieve: ->(*) {
+          retrievals_started << true
+          release_retrievals.pop
+          canonical_factory.call(
+            Thread.current[:attempt],
+            account: Thread.current[:account],
+            subscription_id: Thread.current[:subscription_id],
+            status: "active"
+          )
+        }
+      ) do
+        first_thread, first_result = run_in_thread do
+          Thread.current[:attempt] = first_attempt
+          Thread.current[:account] = @account
+          Thread.current[:subscription_id] = "sub_parallel_first"
+          StripeSubscriptionSynchronizer.call(first_event)
+        end
+        second_thread, second_result = run_in_thread do
+          Thread.current[:attempt] = second_attempt
+          Thread.current[:account] = other_account
+          Thread.current[:subscription_id] = "sub_parallel_second"
+          StripeSubscriptionSynchronizer.call(second_event)
+        end
+
+        2.times { Timeout.timeout(5) { retrievals_started.pop } }
+        2.times { release_retrievals << true }
+        assert first_thread.join(5), "first Account reconciliation did not finish"
+        assert second_thread.join(5), "second Account reconciliation did not finish"
+        assert_thread_succeeded(first_result)
+        assert_thread_succeeded(second_result)
+      ensure
+        2.times { release_retrievals << true }
+        first_thread&.join(1)
+        second_thread&.join(1)
+      end
+
+      assert_equal "active", @account.subscription.reload.status
+      assert_equal "active", other_account.subscription.reload.status
+    ensure
+      other_account&.destroy!
+    end
+
+    test "lifecycle reconciliation lock is released after Stripe retrieval failure" do
+      attempt = create_attempt(customer_id: "cus_failure_release", session_id: "cs_failure_release")
+      event = subscription_event(attempt, event_id: "evt_failure_release")
+      calls = 0
+      canonical_factory = method(:canonical_subscription)
+
+      with_stripe_methods(
+        customer_create: ->(*) { raise "Stripe Customer creation was unexpected" },
+        session_create: ->(*) { raise "Stripe Session creation was unexpected" },
+        subscription_retrieve: ->(*) {
+          calls += 1
+          raise Stripe::APIConnectionError, "controlled connection failure" if calls == 1
+
+          canonical_factory.call(attempt, status: "active")
+        }
+      ) do
+        assert_raises(Stripe::APIConnectionError) { StripeSubscriptionSynchronizer.call(event) }
+        assert_nothing_raised { StripeSubscriptionSynchronizer.call(event) }
+      end
+
+      assert_equal 2, calls
+      assert_equal "active", @account.subscription.reload.status
+    end
+
+    test "lifecycle reconciliation lock is released after commit validation failure" do
+      attempt = create_attempt(customer_id: "cus_validation_release", session_id: "cs_validation_release")
+      event = subscription_event(attempt, event_id: "evt_validation_release")
+      statuses = Queue.new
+      statuses << "not_a_stripe_status"
+      statuses << "active"
+      canonical_factory = method(:canonical_subscription)
+
+      with_stripe_methods(
+        customer_create: ->(*) { raise "Stripe Customer creation was unexpected" },
+        session_create: ->(*) { raise "Stripe Session creation was unexpected" },
+        subscription_retrieve: ->(*) { canonical_factory.call(attempt, status: statuses.pop) }
+      ) do
+        error = assert_raises(StripeWebhookAssociationError) { StripeSubscriptionSynchronizer.call(event) }
+        assert_equal "unsupported_subscription_status", error.code
+        assert_nothing_raised { StripeSubscriptionSynchronizer.call(event) }
+      end
+
+      assert_equal "active", @account.subscription.reload.status
+    end
+
     test "racing monthly and annual requests cannot return the wrong Price" do
       session_started = Queue.new
       release_session = Queue.new
@@ -242,8 +408,12 @@ module Billing
     private
 
     def create_attempt(customer_id:, session_id:)
+      create_attempt_for(@account, customer_id:, session_id:)
+    end
+
+    def create_attempt_for(account, customer_id:, session_id:)
       BillingCheckoutAttempt.create!(
-        account: @account,
+        account: account,
         option_key: "self_managed_monthly",
         stripe_customer_id: customer_id,
         stripe_checkout_session_id: session_id,
@@ -287,18 +457,19 @@ module Billing
       )
     end
 
-    def subscription_event(attempt, subscription_id: "sub_lock_lifecycle")
-      account_reference = StripeAccountReference.generate(@account)
+    def subscription_event(attempt, account: @account, subscription_id: "sub_lock_lifecycle",
+      event_id: "evt_lock_lifecycle", status: "trialing")
+      account_reference = StripeAccountReference.generate(account)
 
       Stripe::Event.construct_from(
-        id: "evt_lock_lifecycle",
+        id: event_id,
         type: "customer.subscription.created",
         created: Time.current.to_i,
         data: {
           object: {
             id: subscription_id,
             customer: attempt.stripe_customer_id,
-            status: "trialing",
+            status: status,
             trial_end: 7.days.from_now.to_i,
             cancel_at_period_end: false,
             canceled_at: nil,
@@ -319,6 +490,15 @@ module Billing
           }
         }
       )
+    end
+
+    def canonical_subscription(attempt, account: @account, subscription_id: "sub_lock_lifecycle", status: "trialing")
+      subscription_event(
+        attempt,
+        account:,
+        subscription_id:,
+        status:
+      ).data.object
     end
 
     def run_in_thread
@@ -365,8 +545,8 @@ module Billing
 
     def with_singleton_method(receiver, method_name, replacement)
       original_method = receiver.method(method_name)
-      receiver.define_singleton_method(method_name) do |*args, **kwargs|
-        replacement.call(*args, **kwargs)
+      receiver.define_singleton_method(method_name) do |*args, **kwargs, &block|
+        replacement.call(*args, **kwargs, &block)
       end
       yield
     ensure

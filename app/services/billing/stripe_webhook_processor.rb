@@ -60,7 +60,7 @@ module Billing
       @billing_webhook_event = billing_webhook_event
       return success_result(billing_webhook_event, duplicate: true) if billing_webhook_event.completed?
 
-      prepare_supported_event!
+      return process_subscription_lifecycle_event(billing_webhook_event) if subscription_lifecycle_event?
 
       billing_webhook_event.with_lock do
         @billing_webhook_event = billing_webhook_event
@@ -88,8 +88,6 @@ module Billing
       case event_type
       when "checkout.session.completed"
         StripeCheckoutCompletionSynchronizer.call(event.data.object)
-      when "customer.subscription.created", "customer.subscription.updated"
-        @stripe_subscription_synchronizer.call
       end
 
       billing_webhook_event.mark_processed!
@@ -108,10 +106,28 @@ module Billing
       )
     end
 
-    def prepare_supported_event!
-      return unless SUBSCRIPTION_LIFECYCLE_EVENT_TYPES.include?(event_type)
+    def process_subscription_lifecycle_event(billing_webhook_event)
+      before_retrieve = lambda do
+        billing_webhook_event.reload
+        success_result(billing_webhook_event, duplicate: true) if billing_webhook_event.completed?
+      end
 
-      @stripe_subscription_synchronizer = StripeSubscriptionSynchronizer.prepare(event)
+      StripeSubscriptionSynchronizer.call(event, before_retrieve:) do |commit|
+        billing_webhook_event.with_lock do
+          return success_result(billing_webhook_event, duplicate: true) if billing_webhook_event.completed?
+
+          commit.call
+          billing_webhook_event.mark_processed!
+          Rails.logger.info(
+            "Stripe webhook processed event_id=#{event_id} event_type=#{event_type} livemode=#{livemode}"
+          )
+          success_result(billing_webhook_event)
+        end
+      end
+    end
+
+    def subscription_lifecycle_event?
+      SUBSCRIPTION_LIFECYCLE_EVENT_TYPES.include?(event_type)
     end
 
     def acknowledge_invalid_association(billing_webhook_event, error)

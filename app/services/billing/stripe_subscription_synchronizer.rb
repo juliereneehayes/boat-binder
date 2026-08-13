@@ -12,35 +12,37 @@ module Billing
       "incomplete_expired" => "expired"
     }.freeze
 
-    def self.call(event)
-      prepare(event).call
-    end
-
-    def self.prepare(event)
-      new(event).prepare
+    def self.call(event, before_retrieve: nil, &commit_wrapper)
+      new(event).call(before_retrieve:, &commit_wrapper)
     end
 
     def initialize(event)
       @event_subscription = event.data.object
     end
 
-    def prepare
+    def call(before_retrieve: nil)
       event_option = resolve_option(event_subscription)
       attempt = checkout_attempt(event_subscription)
-      @account_id = attempt.account_id
-      @attempt_id = attempt.id
 
-      validate_preflight!(attempt.account, attempt.id, event_option)
-      @canonical_subscription = retrieve_canonical_subscription
-      @canonical_option = resolve_option(canonical_subscription)
-      @event_option = event_option
-      self
+      StripeAccountReconciliationLock.call(account_id: attempt.account_id) do
+        early_result = before_retrieve&.call
+        next early_result if early_result
+
+        validate_preflight!(attempt.account, attempt.id, event_option)
+        canonical_subscription = retrieve_canonical_subscription
+        canonical_option = resolve_option(canonical_subscription)
+        commit = -> { commit!(attempt, event_option, canonical_subscription, canonical_option) }
+
+        block_given? ? yield(commit) : commit.call
+      end
     end
 
-    def call
-      prepare unless prepared?
+    private
 
-      StripeAccountStateLock.call(account: Account.find(account_id), attempt_id: attempt_id) do |subscription, locked_attempt|
+    attr_reader :event_subscription
+
+    def commit!(attempt, event_option, canonical_subscription, canonical_option)
+      StripeAccountStateLock.call(account: Account.find(attempt.account_id), attempt_id: attempt.id) do |subscription, locked_attempt|
         validate_locked_records!(subscription, locked_attempt)
         validate_remote_subscription!(event_subscription, event_option, subscription, locked_attempt)
         validate_remote_subscription!(
@@ -55,15 +57,6 @@ module Billing
         locked_attempt.update!(status: "completed") unless locked_attempt.status == "completed"
         subscription
       end
-    end
-
-    private
-
-    attr_reader :account_id, :attempt_id, :canonical_option, :canonical_subscription, :event_option,
-      :event_subscription
-
-    def prepared?
-      canonical_subscription.present?
     end
 
     def validate_preflight!(account, attempt_id, option)
