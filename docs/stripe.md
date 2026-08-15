@@ -123,9 +123,12 @@ Canonical Stripe statuses map locally as follows:
 | `paused` | `suspended` |
 | `incomplete_expired` | `expired` |
 
-An unsupported future Stripe status fails closed. Terminal cancellation retains the local
-Subscription, Stripe identifiers, Account, vessels, documents, and service history. Application
-access consequences remain deferred to the subscription-enforcement phase.
+An unsupported future canonical Stripe status is conservatively synchronized to local `suspended`
+and emits a minimized `unsupported_subscription_status` operational warning. The receipt is processed
+because Boat Binder deliberately reconciles to a non-entitled fallback rather than retaining a prior
+access-eligible state. Terminal cancellation retains the local Subscription, Stripe identifiers,
+Account, vessels, documents, and service history. Application access consequences remain deferred to
+the subscription-enforcement phase.
 
 Canonical retrieval alone is not sufficient when two distinct lifecycle workers can retrieve
 different snapshots concurrently. The advisory lock serializes the complete retrieve-and-commit

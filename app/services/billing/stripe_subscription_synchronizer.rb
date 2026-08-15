@@ -216,7 +216,11 @@ module Billing
 
     def local_status(remote_subscription)
       STATUS_MAP.fetch(remote_subscription.status.to_s) do
-        raise_association_error("unsupported_subscription_status")
+        Rails.logger.warn(
+          "Stripe subscription status fallback reason=unsupported_subscription_status " \
+          "event_id=#{event.id} event_type=#{event.type}"
+        )
+        "suspended"
       end
     end
 

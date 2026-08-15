@@ -213,21 +213,29 @@ class StripeSubscriptionLifecycleTest < ActionDispatch::IntegrationTest
     assert_equal original_state, subscription_state(state.fetch(:subscription).reload)
   end
 
-  test "unsupported canonical status fails closed" do
+  test "unsupported canonical status is processed into a conservative suspended state" do
     state = create_stripe_state("unsupported_status")
     canonical = subscription_data(state:, status: "future_status")
-    original_state = subscription_state(state.fetch(:subscription))
 
-    post_lifecycle_event(
-      event_id: "evt_unsupported_status",
-      event_type: "customer.subscription.updated",
-      data_object: canonical,
-      canonical_subscription: canonical
-    )
+    log_output = capture_rails_logs do
+      post_lifecycle_event(
+        event_id: "evt_unsupported_status",
+        event_type: "customer.subscription.updated",
+        data_object: canonical,
+        canonical_subscription: canonical
+      )
+    end
 
     assert_response :success
-    assert_equal "ignored", receipt("evt_unsupported_status").status
-    assert_equal original_state, subscription_state(state.fetch(:subscription).reload)
+    assert_equal "processed", receipt("evt_unsupported_status").status
+    subscription = state.fetch(:subscription).reload
+    assert_equal "suspended", subscription.status
+    assert_not subscription.access_allowed?
+    assert_equal state.fetch(:account).id, subscription.account_id
+    assert_equal state.fetch(:customer_id), subscription.external_customer_id
+    assert_equal state.fetch(:subscription_id), subscription.external_subscription_id
+    assert_includes log_output, "reason=unsupported_subscription_status"
+    assert_not_includes log_output, "future_status"
   end
 
   test "mode mismatch is ignored before retrieval and cannot mutate either environment" do
@@ -493,6 +501,18 @@ class StripeSubscriptionLifecycleTest < ActionDispatch::IntegrationTest
 
   def receipt(event_id)
     BillingWebhookEvent.find_by!(provider: "stripe", external_event_id: event_id)
+  end
+
+  def capture_rails_logs
+    previous_logger = Rails.logger
+    output = StringIO.new
+    Rails.logger = ActiveSupport::TaggedLogging.new(ActiveSupport::Logger.new(output))
+
+    yield
+
+    output.string
+  ensure
+    Rails.logger = previous_logger
   end
 
   def subscription_state(subscription)
