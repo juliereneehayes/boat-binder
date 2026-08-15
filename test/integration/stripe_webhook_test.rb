@@ -7,10 +7,12 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
   setup do
     @previous_secret_key = Rails.configuration.x.stripe.secret_key
     @previous_webhook_secret = Rails.configuration.x.stripe.webhook_secret
+    @previous_livemode = Rails.configuration.x.stripe.livemode
     @previous_monthly_price_id = Rails.configuration.x.stripe.self_managed_monthly_price_id
     @previous_annual_price_id = Rails.configuration.x.stripe.self_managed_annual_price_id
     Rails.configuration.x.stripe.secret_key = "sk_test_webhook_canonical"
     Rails.configuration.x.stripe.webhook_secret = WEBHOOK_SECRET
+    Rails.configuration.x.stripe.livemode = false
     Rails.configuration.x.stripe.self_managed_monthly_price_id = "price_webhook_monthly"
     Rails.configuration.x.stripe.self_managed_annual_price_id = "price_webhook_annual"
   end
@@ -18,6 +20,7 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
   teardown do
     Rails.configuration.x.stripe.secret_key = @previous_secret_key
     Rails.configuration.x.stripe.webhook_secret = @previous_webhook_secret
+    Rails.configuration.x.stripe.livemode = @previous_livemode
     Rails.configuration.x.stripe.self_managed_monthly_price_id = @previous_monthly_price_id
     Rails.configuration.x.stripe.self_managed_annual_price_id = @previous_annual_price_id
   end
@@ -86,25 +89,24 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
     assert_not csrf_skipped_for_action?(Billing::CheckoutsController, :create)
   end
 
-  test "valid signed deferred subscription event is accepted and recorded as ignored" do
+  test "valid signed deferred invoice event is accepted and recorded as ignored" do
     dispatched_event_ids = []
 
     assert_difference -> { BillingWebhookEvent.count }, 1 do
       with_processor_call_spy(dispatched_event_ids) do
         post_signed_event(
-          event_id: "evt_subscription_deleted",
-          event_type: "customer.subscription.deleted",
-          livemode: true,
+          event_id: "evt_payment_succeeded_deferred",
+          event_type: "invoice.payment_succeeded",
           api_version: "2026-07-01"
         )
       end
     end
 
     assert_response :success
-    assert_equal [ "evt_subscription_deleted" ], dispatched_event_ids
-    receipt = BillingWebhookEvent.find_by!(provider: "stripe", external_event_id: "evt_subscription_deleted")
-    assert_equal "customer.subscription.deleted", receipt.event_type
-    assert receipt.livemode?
+    assert_equal [ "evt_payment_succeeded_deferred" ], dispatched_event_ids
+    receipt = BillingWebhookEvent.find_by!(provider: "stripe", external_event_id: "evt_payment_succeeded_deferred")
+    assert_equal "invoice.payment_succeeded", receipt.event_type
+    assert_not receipt.livemode?
     assert_equal "2026-07-01", receipt.api_version
     assert_equal "ignored", receipt.status
     assert receipt.processed_at.present?
@@ -902,7 +904,7 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
       )
       assert_response :success
 
-      post_signed_event(event_id: "evt_no_retrieval_deferred", event_type: "invoice.paid")
+      post_signed_event(event_id: "evt_no_retrieval_deferred", event_type: "invoice.payment_succeeded")
       assert_response :success
     end
   end
@@ -1160,7 +1162,7 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
     payload = stripe_event_payload(
       event_id: "evt_payment_succeeded",
       event_type: "invoice.payment_succeeded",
-      livemode: true,
+      livemode: false,
       data_object: data_object
     )
     log_output = capture_rails_logs do
@@ -1177,7 +1179,7 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
     assert_includes log_output, "reason=deferred"
     assert_includes log_output, "event_id=evt_payment_succeeded"
     assert_includes log_output, "event_type=invoice.payment_succeeded"
-    assert_includes log_output, "livemode=true"
+    assert_includes log_output, "livemode=false"
     assert_not_includes log_output, "owner@example.test"
     assert_not_includes log_output, "https://invoice.stripe.com"
     assert_not_includes log_output, "https://pay.stripe.com"
@@ -1191,7 +1193,7 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
   end
 
   test "duplicate valid delivery returns success without a second receipt" do
-    payload = stripe_event_payload(event_id: "evt_duplicate", event_type: "invoice.paid")
+    payload = stripe_event_payload(event_id: "evt_duplicate", event_type: "invoice.payment_succeeded")
     headers = stripe_signature_headers(payload)
     process_count = 0
 
@@ -1215,7 +1217,7 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
   end
 
   test "failed event receipt is retried and clears failure metadata after success" do
-    payload = stripe_event_payload(event_id: "evt_retry_after_failure", event_type: "invoice.payment_failed")
+    payload = stripe_event_payload(event_id: "evt_retry_after_failure", event_type: "invoice.payment_succeeded")
     headers = stripe_signature_headers(payload)
 
     assert_difference -> { BillingWebhookEvent.count }, 1 do
@@ -1250,7 +1252,7 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
   end
 
   test "failed event receipt remains retryable after repeated failures" do
-    payload = stripe_event_payload(event_id: "evt_repeated_failure", event_type: "invoice.payment_failed")
+    payload = stripe_event_payload(event_id: "evt_repeated_failure", event_type: "invoice.payment_succeeded")
     headers = stripe_signature_headers(payload)
     failure_count = 0
 
@@ -1336,13 +1338,13 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
     BillingWebhookEvent.create!(
       provider: "stripe",
       external_event_id: "evt_race_failed",
-      event_type: "invoice.payment_failed",
+      event_type: "invoice.payment_succeeded",
       livemode: false,
       status: "failed",
       failed_at: 1.hour.ago,
       error_code: "RuntimeError"
     )
-    payload = stripe_event_payload(event_id: "evt_race_failed", event_type: "invoice.payment_failed")
+    payload = stripe_event_payload(event_id: "evt_race_failed", event_type: "invoice.payment_succeeded")
     process_count = 0
 
     assert_no_difference -> { BillingWebhookEvent.count } do
@@ -1424,7 +1426,7 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
 
   test "dispatcher failure returns retryable error and records sanitized failure" do
     with_processor_failure do
-      post_signed_event(event_id: "evt_dispatch_failure", event_type: "invoice.payment_failed")
+      post_signed_event(event_id: "evt_dispatch_failure", event_type: "invoice.payment_succeeded")
     end
 
     assert_response :internal_server_error
@@ -1435,11 +1437,11 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
     assert_not_includes response.body, "synthetic failure"
   end
 
-  test "webhook events do not change local subscription lifecycle state in this phase" do
+  test "unknown webhook events do not change local subscription lifecycle state" do
     account = create_account(name: "Stripe Foundation Owner")
     original_attributes = account.subscription.attributes.slice("plan", "status", "provider", "external_customer_id", "external_subscription_id")
 
-    post_signed_event(event_id: "evt_no_subscription_sync", event_type: "customer.subscription.deleted")
+    post_signed_event(event_id: "evt_no_subscription_sync", event_type: "customer.created")
     assert_response :success
 
     assert_equal original_attributes, account.subscription.reload.attributes.slice("plan", "status", "provider", "external_customer_id", "external_subscription_id")

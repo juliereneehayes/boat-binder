@@ -3,15 +3,19 @@ module Billing
     STRIPE_PROVIDER = BillingWebhookEvent::STRIPE_PROVIDER
     SUBSCRIPTION_LIFECYCLE_EVENT_TYPES = %w[
       customer.subscription.created
+      customer.subscription.deleted
+      customer.subscription.paused
+      customer.subscription.resumed
       customer.subscription.updated
+    ].freeze
+    INVOICE_LIFECYCLE_EVENT_TYPES = %w[
+      invoice.paid
+      invoice.payment_failed
     ].freeze
     PROCESSED_EVENT_TYPES = %w[
       checkout.session.completed
-    ].concat(SUBSCRIPTION_LIFECYCLE_EVENT_TYPES).freeze
+    ].concat(SUBSCRIPTION_LIFECYCLE_EVENT_TYPES, INVOICE_LIFECYCLE_EVENT_TYPES).freeze
     DEFERRED_EVENT_TYPES = %w[
-      customer.subscription.deleted
-      invoice.paid
-      invoice.payment_failed
       invoice.payment_succeeded
     ].freeze
 
@@ -60,7 +64,8 @@ module Billing
       @billing_webhook_event = billing_webhook_event
       return success_result(billing_webhook_event, duplicate: true) if billing_webhook_event.completed?
 
-      return process_subscription_lifecycle_event(billing_webhook_event) if subscription_lifecycle_event?
+      validate_event_mode!
+      return process_reconciliation_event(billing_webhook_event) if reconciliation_event?
 
       billing_webhook_event.with_lock do
         @billing_webhook_event = billing_webhook_event
@@ -106,13 +111,13 @@ module Billing
       )
     end
 
-    def process_subscription_lifecycle_event(billing_webhook_event)
+    def process_reconciliation_event(billing_webhook_event)
       before_retrieve = lambda do
         billing_webhook_event.reload
         success_result(billing_webhook_event, duplicate: true) if billing_webhook_event.completed?
       end
 
-      StripeSubscriptionSynchronizer.call(event, before_retrieve:) do |commit|
+      StripeSubscriptionSynchronizer.call(event, before_retrieve: before_retrieve) do |commit|
         billing_webhook_event.with_lock do
           return success_result(billing_webhook_event, duplicate: true) if billing_webhook_event.completed?
 
@@ -126,8 +131,14 @@ module Billing
       end
     end
 
-    def subscription_lifecycle_event?
-      SUBSCRIPTION_LIFECYCLE_EVENT_TYPES.include?(event_type)
+    def reconciliation_event?
+      SUBSCRIPTION_LIFECYCLE_EVENT_TYPES.include?(event_type) || INVOICE_LIFECYCLE_EVENT_TYPES.include?(event_type)
+    end
+
+    def validate_event_mode!
+      return if livemode == StripeConfiguration.expected_livemode!
+
+      raise StripeWebhookAssociationError, "livemode_mismatch"
     end
 
     def acknowledge_invalid_association(billing_webhook_event, error)

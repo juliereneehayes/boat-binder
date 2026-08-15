@@ -342,18 +342,20 @@ module Billing
     test "lifecycle reconciliation lock is released after commit validation failure" do
       attempt = create_attempt(customer_id: "cus_validation_release", session_id: "cs_validation_release")
       event = subscription_event(attempt, event_id: "evt_validation_release")
-      statuses = Queue.new
-      statuses << "not_a_stripe_status"
-      statuses << "active"
+      canonical_subscriptions = Queue.new
       canonical_factory = method(:canonical_subscription)
+      invalid_subscription = canonical_factory.call(attempt, status: "active")
+      invalid_subscription.items.data.first.current_period_end = "invalid"
+      canonical_subscriptions << invalid_subscription
+      canonical_subscriptions << canonical_factory.call(attempt, status: "active")
 
       with_stripe_methods(
         customer_create: ->(*) { raise "Stripe Customer creation was unexpected" },
         session_create: ->(*) { raise "Stripe Session creation was unexpected" },
-        subscription_retrieve: ->(*) { canonical_factory.call(attempt, status: statuses.pop) }
+        subscription_retrieve: ->(*) { canonical_subscriptions.pop }
       ) do
         error = assert_raises(StripeWebhookAssociationError) { StripeSubscriptionSynchronizer.call(event) }
-        assert_equal "unsupported_subscription_status", error.code
+        assert_equal "invalid_timestamp", error.code
         assert_nothing_raised { StripeSubscriptionSynchronizer.call(event) }
       end
 

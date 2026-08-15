@@ -54,8 +54,17 @@ Stripe is configured centrally in `config/initializers/stripe.rb` and `Billing::
 - `STRIPE_SECRET_KEY`
 - `STRIPE_PUBLISHABLE_KEY`
 - `STRIPE_WEBHOOK_SECRET`
+- `STRIPE_LIVEMODE`
+- `STRIPE_SELF_MANAGED_MONTHLY_PRICE_ID`
+- `STRIPE_SELF_MANAGED_ANNUAL_PRICE_ID`
 
-The Stripe webhook endpoint is `POST /webhooks/stripe`. It is unauthenticated, skips CSRF only for that webhook action, verifies the raw request body using Stripe's official signature verification, records event metadata in `billing_webhook_events`, and currently treats all events as observational only. Recognized subscription, invoice, and checkout events are recorded with a status of `ignored` and a `deferred` reason to support future processing, while unknown event types are also recorded as ignored. Local `Subscription` records remain the source of truth for access; normal application requests do not call Stripe.
+The Stripe webhook endpoint is `POST /webhooks/stripe`. It is unauthenticated, skips CSRF only for
+that webhook action, verifies the raw request body using Stripe's official signature verification,
+and records minimized event metadata in `billing_webhook_events`. Checkout and subscription lifecycle
+events reconcile verified Stripe state into the local `Subscription`; unknown and intentionally
+deferred events are recorded as ignored. `STRIPE_LIVEMODE` prevents test/live-mode crossover. Local
+`Subscription` records remain the source of truth for access; normal application requests do not call
+Stripe.
 
 Rails signing uses `SECRET_KEY_BASE` from the production Heroku environment. Production intentionally
 does not set `RAILS_MASTER_KEY`, and the repository no longer carries `config/credentials.yml.enc` as
@@ -144,7 +153,8 @@ Create a separate Heroku app, for example `boat-binder-staging`, running the sam
 - staging `APP_HOST`, such as `staging.boat-binder.com` or the Heroku app hostname
 - separate staging `SECRET_KEY_BASE` that is never shared with production
 - separate Stripe test-mode webhook endpoint and signing secret
-- Stripe test-mode Price IDs once billing checkout exists
+- Stripe test-mode Price IDs
+- `STRIPE_LIVEMODE=false`
 - separate `BUILD_WEEK_DEMO_EMAIL` and `BUILD_WEEK_DEMO_PASSWORD`
 
 Running staging with `RAILS_ENV=production` keeps Rails behavior close to production. A separate `staging.rb` environment could be added later if the app needs visible environment banners, different caching, or more permissive diagnostics, but it also increases configuration drift. For Phase 1 staging, a distinct Heroku app with production Rails behavior and separate config vars is the simpler and safer path.
@@ -165,6 +175,7 @@ Keep the current Heroku production app as the live environment:
 - production Mailgun SMTP credentials
 - production `APP_HOST`
 - production Stripe live-mode keys and webhook signing secret when billing goes live
+- production Stripe live-mode Price IDs and `STRIPE_LIVEMODE=true`
 - no demo-data refresh unless intentionally run by an operator
 
 ## Recommended Deployment Flow

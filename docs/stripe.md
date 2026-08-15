@@ -68,22 +68,67 @@ stable Boat Binder option key. Webhook synchronization requires those signed ref
 cross-checks the Stripe Customer, Subscription, Session, Price, and local Account associations. The
 signed references are additional correlation defenses, not replacements for identifier checks.
 
-Verified events actively processed in this phase:
+Verified events actively processed:
 
 - `checkout.session.completed` verifies the pending attempt, then associates its Stripe Customer and
   Subscription identifiers with the authoritative local `Subscription`. It does not infer or grant
   `trialing` status.
 - `customer.subscription.created`
 - `customer.subscription.updated`
+- `customer.subscription.deleted`
+- `customer.subscription.paused`
+- `customer.subscription.resumed`
+- `invoice.paid`
+- `invoice.payment_failed`
 
-The authoritative local `Subscription` first changes only when one of these verified events passes
-all signed-reference and identifier checks; no webhook delivery order is assumed. Subscription
-lifecycle handlers resolve the signed Checkout attempt, then acquire an Account-scoped PostgreSQL
-session advisory lock. While that advisory lock remains held, they validate the signed event under
-the Account -> Subscription -> Checkout attempt row-lock order, release the row locks and transaction,
-retrieve the current Subscription from Stripe, and reacquire the same row-lock order. The freshly
-locked local state and the canonical Stripe object are both revalidated before Stripe's current
-status, Price, and timestamps are committed locally.
+`invoice.payment_succeeded` remains intentionally acknowledged and ignored. Stripe can emit it
+alongside `invoice.paid`; Boat Binder uses `invoice.paid` as its single successful-invoice and
+renewal signal so two independent success paths cannot race or duplicate reconciliation. Unknown
+events are also acknowledged and recorded as ignored.
+
+The authoritative local `Subscription` changes only when a verified event passes all correlation and
+identifier checks; no webhook delivery order is assumed. Subscription lifecycle handlers resolve the
+signed historical Checkout attempt, then acquire an Account-scoped PostgreSQL session advisory lock.
+While that advisory lock remains held, they validate the signed event under the Account ->
+Subscription -> Checkout attempt row-lock order, release the row locks and transaction, retrieve the
+current Subscription from Stripe, and reacquire the same row-lock order. The freshly locked local
+state and canonical Stripe object are both revalidated before Stripe's current status, Price, and
+timestamps are committed locally.
+
+Invoice events use Stripe's current `invoice.parent.subscription_details` shape. Boat Binder requires
+the subscription metadata snapshot's signed Account and Checkout-attempt references and stable option
+key, then cross-checks the invoice Customer and Subscription against the historical attempt and the
+already-associated local Stripe subscription. Canonical Subscription retrieval supplies the current
+status and proves the configured Price and metadata again. A mismatched Customer, Subscription,
+Account, option, Price, or signed reference fails closed without mutation. Invoice payloads are not
+stored as an invoice ledger.
+
+`invoice.paid` therefore updates the existing local Subscription for renewals rather than creating a
+new record. `invoice.payment_failed` does not blindly set `past_due`; it retrieves the canonical
+Subscription and records whatever legitimate Stripe lifecycle state currently applies. The same
+canonical rule governs recovery from `past_due`, scheduled cancellation and reversal, terminal
+deletion, actual paused subscriptions, and resume events. Paused payment collection is distinct from
+an actual Stripe Subscription status of `paused`.
+
+Canonical Stripe statuses map locally as follows:
+
+| Stripe status | Local status |
+| --- | --- |
+| `trialing` | `trialing` |
+| `active` | `active` |
+| `past_due` | `past_due` |
+| `canceled` | `canceled` |
+| `incomplete` | `suspended` |
+| `unpaid` | `suspended` |
+| `paused` | `suspended` |
+| `incomplete_expired` | `expired` |
+
+An unsupported future canonical Stripe status is conservatively synchronized to local `suspended`
+and emits a minimized `unsupported_subscription_status` operational warning. The receipt is processed
+because Boat Binder deliberately reconciles to a non-entitled fallback rather than retaining a prior
+access-eligible state. Terminal cancellation retains the local Subscription, Stripe identifiers,
+Account, vessels, documents, and service history. Application access consequences remain deferred to
+the subscription-enforcement phase.
 
 Canonical retrieval alone is not sufficient when two distinct lifecycle workers can retrieve
 different snapshots concurrently. The advisory lock serializes the complete retrieve-and-commit
@@ -115,19 +160,20 @@ runs before the webhook receipt transaction; the Account advisory lock remains h
 serialization and the final Account -> Subscription -> Checkout attempt lock/revalidation happen
 afterward.
 
-Still deferred and recorded as ignored:
+`STRIPE_LIVEMODE` explicitly separates environments: configure `false` for development/staging test
+keys and `true` for production live keys. A mode-mismatched event is acknowledged as an ignored
+association failure before lifecycle retrieval or mutation. Missing or invalid mode configuration is
+a technical failure, not a business-association failure.
 
-- `customer.subscription.deleted`
-- `invoice.paid`
-- `invoice.payment_failed`
-- `invoice.payment_succeeded`
-- unknown event types
+Receipts marked processed or ignored are idempotently acknowledged on redelivery. A Stripe API,
+database, advisory-lock, or unexpected internal failure marks the receipt failed, returns non-2xx,
+and remains retryable. An invalid business association is safely recorded as ignored with a minimized
+diagnostic code. Logs contain event ID, event type, livemode, and result only; Boat Binder does not
+persist raw webhook bodies or log payment payloads.
 
-Receipts that were already marked `ignored` before these Checkout handlers shipped remain completed
-and are not replayed automatically. Checkout was not available before this implementation, so no
-production Checkout receipts are expected to require migration. A verified event that fails with an
-unexpected internal error remains retryable; an event with an invalid Account/Customer/Subscription
-association is safely recorded as ignored without mutating another Account.
+Receipts completed as ignored before an event type became active are not replayed automatically.
+Fresh lifecycle events reconcile current canonical state; operators should validate Phase 5 with new
+test-mode events rather than attempting to reuse an already-completed Event ID.
 
 ## Local Stripe CLI Testing
 
@@ -157,13 +203,13 @@ association is safely recorded as ignored without mutating another Account.
 
 Use Stripe sandbox keys and test-mode Price IDs only.
 
-1. Configure `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`,
+1. Configure `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`, `STRIPE_LIVEMODE=false`,
    `STRIPE_SELF_MANAGED_MONTHLY_PRICE_ID`, and
    `STRIPE_SELF_MANAGED_ANNUAL_PRICE_ID` on staging.
 2. Configure the staging endpoint as
-   `https://staging.boat-binder.com/webhooks/stripe` for the three actively processed event types
-   listed above. Keep the Stripe CLI signing secret separate from the Dashboard-managed staging
-   endpoint secret.
+   `https://staging.boat-binder.com/webhooks/stripe` for all actively processed event types listed
+   above. Keep the Stripe CLI signing secret separate from the Dashboard-managed staging endpoint
+   secret.
 3. Sign in as a fictional owner with one active `editor` membership and open
    `/billing/checkout`.
 4. Choose monthly, confirm Stripe Checkout displays the configured monthly test Price, and complete
@@ -185,6 +231,11 @@ Use Stripe sandbox keys and test-mode Price IDs only.
     Stripe Subscription state without reverting the local Subscription.
 14. Attempt an unknown option, extra Price/Customer/Account parameters, a second eligible Account,
     and mismatched signed event metadata; confirm no cross-account mutation occurs.
+15. Exercise renewal, payment failure/recovery, scheduled cancellation/reversal, final cancellation,
+    and pause/resume in Stripe test mode. Confirm each event converges on Stripe's current Subscription
+    state and preserves one local Subscription record.
+16. Send or redeliver a live-mode fixture only through an isolated test harness and confirm staging
+    records it as ignored without retrieval or mutation. Never use live customer data for this check.
 
 Do not use production customer data or live-mode Stripe keys for these checks. This PR does not deploy
 or configure staging.
@@ -203,16 +254,18 @@ When this phase is intentionally deployed, select:
 - `customer.subscription.created`
 - `customer.subscription.updated`
 - `customer.subscription.deleted`
+- `customer.subscription.paused`
+- `customer.subscription.resumed`
 - `invoice.paid`
 - `invoice.payment_failed`
 - `invoice.payment_succeeded`
 
-The first three are actively processed. The remaining events are retained for safe deferred receipt.
-Store the Dashboard endpoint signing secret in `STRIPE_WEBHOOK_SECRET`. Verify delivery from Stripe
-Dashboard after deployment before considering production webhook setup complete. Test-mode and
-live-mode deliveries are distinguished by the stored `livemode` flag.
+All listed events except `invoice.payment_succeeded` are actively processed.
+`invoice.payment_succeeded` is retained as an intentionally ignored duplicate success signal. Store
+the Dashboard endpoint signing secret in `STRIPE_WEBHOOK_SECRET`, configure `STRIPE_LIVEMODE=true`,
+and use live Price IDs only in production. Verify delivery from Stripe Dashboard after deployment
+before considering production webhook setup complete. Staging uses its own endpoint secret, test
+keys and Prices, and `STRIPE_LIVEMODE=false`; the two environments must not share Stripe configuration.
 
-Boat Binder recognizes both `invoice.paid` and `invoice.payment_succeeded` as deferred
-successful-invoice events. They remain intentionally ignored until the later billing lifecycle phase.
-Billing Portal, post-Checkout cancellation/reactivation, invoice synchronization, access enforcement,
-public signup, entitlement enforcement, and production live-mode setup remain out of scope.
+Billing Portal, application access enforcement, invoice-history storage/UI, customer payment-failure
+emails, public signup, and entitlement enforcement remain out of scope.

@@ -15,6 +15,13 @@ module Billing
         Rails.configuration.x.stripe.webhook_secret.presence
       end
 
+      def expected_livemode
+        case Rails.configuration.x.stripe.livemode
+        when true, "true" then true
+        when false, "false" then false
+        end
+      end
+
       def self_managed_monthly_price_id
         Rails.configuration.x.stripe.self_managed_monthly_price_id.presence
       end
@@ -29,6 +36,13 @@ module Billing
 
       def secret_key!
         secret_key || raise(MissingConfigurationError, "Stripe API secret is not configured")
+      end
+
+      def expected_livemode!
+        value = expected_livemode
+        return value unless value.nil?
+
+        raise MissingConfigurationError, "Stripe webhook mode is not configured"
       end
     end
   end
