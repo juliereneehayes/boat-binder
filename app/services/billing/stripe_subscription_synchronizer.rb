@@ -16,13 +16,16 @@ module Billing
       new(event).call(before_retrieve:, &commit_wrapper)
     end
 
+    INVOICE_EVENT_TYPES = %w[invoice.paid invoice.payment_failed].freeze
+
     def initialize(event)
-      @event_subscription = event.data.object
+      @event = event
+      @event_object = event.data.object
     end
 
     def call(before_retrieve: nil)
-      event_option = resolve_option(event_subscription)
-      attempt = checkout_attempt(event_subscription)
+      event_option = resolve_event_option
+      attempt = event_checkout_attempt
 
       StripeAccountReconciliationLock.call(account_id: attempt.account_id) do
         early_result = before_retrieve&.call
@@ -39,12 +42,12 @@ module Billing
 
     private
 
-    attr_reader :event_subscription
+    attr_reader :event, :event_object
 
     def commit!(attempt, event_option, canonical_subscription, canonical_option)
       StripeAccountStateLock.call(account: Account.find(attempt.account_id), attempt_id: attempt.id) do |subscription, locked_attempt|
         validate_locked_records!(subscription, locked_attempt)
-        validate_remote_subscription!(event_subscription, event_option, subscription, locked_attempt)
+        validate_event_source!(event_option, subscription, locked_attempt)
         validate_remote_subscription!(
           canonical_subscription,
           canonical_option,
@@ -62,7 +65,7 @@ module Billing
     def validate_preflight!(account, attempt_id, option)
       StripeAccountStateLock.call(account: account, attempt_id: attempt_id) do |subscription, locked_attempt|
         validate_locked_records!(subscription, locked_attempt)
-        validate_remote_subscription!(event_subscription, option, subscription, locked_attempt)
+        validate_event_source!(option, subscription, locked_attempt)
       end
     end
 
@@ -88,12 +91,71 @@ module Billing
       option
     end
 
+    def resolve_event_option
+      return resolve_invoice_option if invoice_event?
+
+      resolve_option(event_object)
+    end
+
+    def resolve_invoice_option
+      remote_option_key = metadata_option_key(invoice_metadata)
+      raise_association_error("missing_option_key") if remote_option_key.blank?
+
+      option = SubscriptionPlanCatalog.new.find(remote_option_key)
+      raise_association_error("unknown_option") unless option
+
+      option
+    end
+
+    def event_checkout_attempt
+      return checkout_attempt_from_metadata(invoice_metadata) if invoice_event?
+
+      checkout_attempt(event_object)
+    end
+
     def checkout_attempt(remote_subscription)
-      reference = attempt_reference(remote_subscription)
+      checkout_attempt_from_metadata(metadata(remote_subscription))
+    end
+
+    def checkout_attempt_from_metadata(source_metadata)
+      reference = metadata_attempt_reference(source_metadata)
       StripeCheckoutAttemptReference.find!(reference)
     rescue StripeCheckoutAttemptReference::InvalidReferenceError
       code = reference.present? ? "invalid_checkout_attempt_reference" : "missing_checkout_attempt_reference"
       raise_association_error(code)
+    end
+
+    def validate_event_source!(option, subscription, attempt)
+      if invoice_event?
+        validate_invoice!(option, subscription, attempt)
+      else
+        validate_remote_subscription!(event_object, option, subscription, attempt)
+      end
+    end
+
+    def validate_invoice!(option, subscription, attempt)
+      remote_subscription_id = invoice_subscription_id
+      remote_customer_id = invoice_customer_id
+      raise_association_error("missing_invoice_subscription") if remote_subscription_id.blank?
+      raise_association_error("missing_invoice_customer") if remote_customer_id.blank?
+      raise_association_error("subscription_not_stripe_backed") unless subscription.provider == Subscription::STRIPE_PROVIDER
+
+      StripeWebhookAccountReferenceValidator.call(
+        reference: metadata_account_reference(invoice_metadata),
+        account_id: subscription.account_id
+      )
+      referenced_attempt = checkout_attempt_from_metadata(invoice_metadata)
+      raise_association_error("checkout_attempt_mismatch") unless referenced_attempt.id == attempt.id
+      raise_association_error("customer_mismatch") unless attempt.stripe_customer_id == remote_customer_id
+      raise_association_error("option_mismatch") unless attempt.option_key == option.key
+      raise_association_error("customer_mismatch") unless subscription.external_customer_id == remote_customer_id
+      raise_association_error("subscription_mismatch") unless subscription.external_subscription_id == remote_subscription_id
+      if identifier_used_by_another_account?(:external_customer_id, remote_customer_id, subscription.account_id)
+        raise_association_error("customer_account_mismatch")
+      end
+      if identifier_used_by_another_account?(:external_subscription_id, remote_subscription_id, subscription.account_id)
+        raise_association_error("subscription_account_mismatch")
+      end
     end
 
     def validate_locked_records!(subscription, attempt)
@@ -180,7 +242,44 @@ module Billing
     end
 
     def option_key(remote_subscription)
-      metadata(remote_subscription)[StripeCheckoutSessionCreator::OPTION_KEY].to_s
+      metadata_option_key(metadata(remote_subscription))
+    end
+
+    def metadata_account_reference(source_metadata)
+      source_metadata[StripeCheckoutSessionCreator::ACCOUNT_REFERENCE_KEY].to_s
+    end
+
+    def metadata_attempt_reference(source_metadata)
+      source_metadata[StripeCheckoutSessionCreator::ATTEMPT_REFERENCE_KEY].to_s
+    end
+
+    def metadata_option_key(source_metadata)
+      source_metadata[StripeCheckoutSessionCreator::OPTION_KEY].to_s
+    end
+
+    def invoice_event?
+      INVOICE_EVENT_TYPES.include?(event.type.to_s)
+    end
+
+    def invoice_subscription_details
+      parent = event_object.parent
+      unless parent&.type.to_s == "subscription_details" && parent.subscription_details
+        raise_association_error("invalid_invoice_parent")
+      end
+
+      parent.subscription_details
+    end
+
+    def invoice_metadata
+      invoice_subscription_details.metadata || {}
+    end
+
+    def invoice_customer_id
+      stripe_identifier(event_object.customer)
+    end
+
+    def invoice_subscription_id
+      stripe_identifier(invoice_subscription_details.subscription)
     end
 
     def customer_id(remote_subscription)
@@ -192,7 +291,7 @@ module Billing
     end
 
     def event_subscription_id
-      subscription_id(event_subscription)
+      invoice_event? ? invoice_subscription_id : subscription_id(event_object)
     end
 
     def stripe_identifier(value)

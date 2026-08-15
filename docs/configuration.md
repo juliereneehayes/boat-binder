@@ -54,6 +54,7 @@ These are required before production transactional email can actually deliver.
 - `STRIPE_SECRET_KEY` - secret API key for Stripe-dependent operations.
 - `STRIPE_PUBLISHABLE_KEY` - publishable key reserved for future client-side billing flows.
 - `STRIPE_WEBHOOK_SECRET` - signing secret for `/webhooks/stripe`.
+- `STRIPE_LIVEMODE` - expected webhook mode (`false` for development/staging, `true` for production).
 - `STRIPE_SELF_MANAGED_MONTHLY_PRICE_ID` - Stripe Price ID for the Self Managed monthly option.
 - `STRIPE_SELF_MANAGED_ANNUAL_PRICE_ID` - Stripe Price ID for the Self Managed annual option.
 
@@ -64,8 +65,9 @@ from the two environment variables above. Do not commit real keys or live Price 
 without Stripe secrets or Price IDs for development/test workflows that do not invoke Stripe; webhook
 verification and plan-catalog validation fail safely when their required configuration is used.
 Checkout requires the secret API key and both Price IDs. The webhook endpoint requires its signing
-secret independently. Use test-mode values in development and staging; live-mode Checkout setup is
-not configured by this repository change.
+secret independently. Production-style environments must configure `STRIPE_LIVEMODE` explicitly;
+mode-mismatched events are recorded as ignored before reconciliation. Use `false` with test-mode
+keys in development/staging and `true` with live-mode keys in production.
 
 ## Build Week Demo
 
