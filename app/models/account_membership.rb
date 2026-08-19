@@ -1,5 +1,6 @@
 class AccountMembership < ApplicationRecord
   ACCESS_LEVELS = %w[read_only editor].freeze
+  DEFAULT_ACCESS_LEVEL = "read_only"
 
   belongs_to :user
   belongs_to :account
