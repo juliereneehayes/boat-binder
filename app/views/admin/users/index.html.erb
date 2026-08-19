@@ -3,7 +3,7 @@
     <div>
       <p class="text-sm font-bold uppercase tracking-normal text-cyan-700">Admin</p>
       <h1 class="mt-1 text-3xl font-black tracking-normal">Users</h1>
-      <p class="mt-2 text-sm text-slate-600">Manage internal users and read-only owner access.</p>
+      <p class="mt-2 text-sm text-slate-600">Manage users and owner account access.</p>
     </div>
     <%= link_to "Add user", new_admin_user_path, class: "inline-flex min-h-12 items-center justify-center rounded-md bg-cyan-700 px-5 py-3 text-base font-bold text-white shadow-sm" %>
   </div>
@@ -40,7 +40,7 @@
             <p class="text-sm font-bold text-slate-700">Account access</p>
             <div class="mt-2 flex flex-wrap gap-2">
               <% user.account_memberships.each do |membership| %>
-                <span class="rounded-md bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700"><%= membership.account.name %> <%= "(inactive)" unless membership.active? %></span>
+                <span class="rounded-md bg-slate-100 px-3 py-2 text-sm font-semibold text-slate-700"><%= membership.account.name %> &mdash; <%= membership.access_level.humanize %> <%= "(inactive)" unless membership.active? %></span>
               <% end %>
             </div>
           </div>

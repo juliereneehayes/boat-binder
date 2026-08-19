@@ -1,7 +1,7 @@
 import { Controller } from "@hotwired/stimulus"
 
 export default class extends Controller {
-  static targets = ["role", "account", "accessLabel", "ownerHelp", "internalHelp"]
+  static targets = ["role", "account", "accessLevel", "accessLabel", "ownerHelp", "internalHelp"]
 
   connect() {
     this.refresh()
@@ -22,6 +22,16 @@ export default class extends Controller {
       label.classList.toggle("bg-slate-50", internal)
       label.classList.toggle("text-slate-500", internal)
       label.classList.toggle("border-slate-300", !internal)
+    })
+
+    this.refreshAccountAccess()
+  }
+
+  refreshAccountAccess() {
+    const internal = this.roleTarget.value === "admin" || this.roleTarget.value === "captain"
+
+    this.accessLevelTargets.forEach((select, index) => {
+      select.disabled = internal || !this.accountTargets[index].checked
     })
   }
 }

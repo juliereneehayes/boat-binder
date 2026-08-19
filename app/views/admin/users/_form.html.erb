@@ -54,18 +54,41 @@
 
   <section class="space-y-4 rounded-md border border-slate-200 bg-white p-4 shadow-sm">
     <h2 class="text-lg font-black">Owner account access</h2>
-    <p class="text-sm leading-6 text-slate-600" data-role-access-target="ownerHelp">Owner users can view records for selected accounts. Owner access is read-only.</p>
+    <div class="space-y-2 text-sm leading-6 text-slate-600" data-role-access-target="ownerHelp">
+      <p>Select each account the owner should be assigned to, then choose that account's access level.</p>
+      <p><strong class="text-slate-800">Read only</strong> &mdash; can view account and vessel records but cannot make owner-permitted changes.</p>
+      <p><strong class="text-slate-800">Editor</strong> &mdash; can make changes already authorized for owner editors.</p>
+    </div>
     <p class="hidden text-sm leading-6 text-slate-600" data-role-access-target="internalHelp">Admin and captain users have access to all vessels automatically.</p>
     <div class="grid gap-2 sm:grid-cols-2">
-      <% active_account_ids = @user.account_memberships.active.pluck(:account_id) %>
+      <% memberships_by_account_id = @user.account_memberships.index_by(&:account_id) %>
+      <% submitted_account_ids = @submitted_account_ids %>
       <% @accounts.each do |account| %>
-        <% owner_checked = active_account_ids.include?(account.id) %>
+        <% membership = memberships_by_account_id[account.id] %>
+        <% owner_checked = submitted_account_ids ? submitted_account_ids.include?(account.id) : membership&.active? %>
+        <% selected_access_level = @submitted_account_access_levels&.fetch(account.id, nil) || membership&.access_level || AccountMembership::DEFAULT_ACCESS_LEVEL %>
+        <% selected_access_level = AccountMembership::DEFAULT_ACCESS_LEVEL unless AccountMembership::ACCESS_LEVELS.include?(selected_access_level) %>
         <% checked = @user.internal? || owner_checked %>
         <% disabled = @user.internal? %>
-        <label class="flex min-h-12 items-center gap-3 rounded-md border px-4 py-3 <%= disabled ? "border-slate-200 bg-slate-50 text-slate-500" : "border-slate-300" %>" data-role-access-target="accessLabel">
-          <%= check_box_tag "user[account_ids][]", account.id, checked, class: "h-5 w-5 rounded border-slate-300 text-cyan-700 disabled:text-slate-300", disabled: disabled, data: { role_access_target: "account", owner_checked: owner_checked } %>
-          <span class="text-sm font-bold text-slate-700"><%= account.name %></span>
-        </label>
+        <% access_level_field_id = "user_account_access_levels_#{account.id}" %>
+        <div class="grid gap-3 rounded-md border px-4 py-3 sm:grid-cols-[minmax(0,1fr)_9rem] sm:items-end <%= disabled ? "border-slate-200 bg-slate-50 text-slate-500" : "border-slate-300" %>" data-role-access-target="accessLabel">
+          <label class="flex min-h-12 items-center gap-3">
+            <%= check_box_tag "user[account_ids][]", account.id, checked, class: "h-5 w-5 shrink-0 rounded border-slate-300 text-cyan-700 disabled:text-slate-300", disabled: disabled, data: { role_access_target: "account", owner_checked: owner_checked, action: "change->role-access#refreshAccountAccess" } %>
+            <span>
+              <span class="block text-xs font-bold uppercase tracking-normal text-slate-500">Account assignment</span>
+              <span class="mt-1 block text-sm font-bold text-slate-700"><%= account.name %></span>
+            </span>
+          </label>
+          <div>
+            <%= label_tag access_level_field_id, "Access level", class: "text-xs font-bold uppercase tracking-normal text-slate-500" %>
+            <%= select_tag "user[account_access_levels][#{account.id}]",
+                options_for_select(AccountMembership::ACCESS_LEVELS.map { |level| [level.humanize, level] }, selected_access_level),
+                id: access_level_field_id,
+                disabled: disabled || !owner_checked,
+                class: "mt-1 min-h-11 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-semibold text-slate-700 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400",
+                data: { role_access_target: "accessLevel" } %>
+          </div>
+        </div>
       <% end %>
     </div>
   </section>

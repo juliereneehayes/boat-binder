@@ -171,7 +171,10 @@ module Admin
       saved = false
 
       User.transaction do
-        if admin_managed_user_valid? && @user.save && sync_account_memberships
+        user_valid = admin_managed_user_valid?
+        account_access_valid = owner_account_access_valid?
+
+        if user_valid && account_access_valid && @user.save && sync_account_memberships
           saved = true
         else
           raise ActiveRecord::Rollback
@@ -195,12 +198,9 @@ module Admin
         return true
       end
 
-      selected_account_ids = Array(params.dig(:user, :account_ids)).compact_blank.map(&:to_i)
-      selected_accounts = account_access_scope.where(id: selected_account_ids)
-
-      selected_accounts.find_each do |account|
-        membership = @user.account_memberships.find_or_initialize_by(account: account)
-        membership.access_level = "read_only"
+      @submitted_account_ids.each do |account_id|
+        membership = @user.account_memberships.find_or_initialize_by(account_id: account_id)
+        membership.access_level = @submitted_account_access_levels.fetch(account_id)
         membership.active = true
         unless membership.save
           @user.errors.add(:base, "Account access could not be updated.")
@@ -209,8 +209,95 @@ module Admin
         end
       end
 
-      @user.account_memberships.where.not(account_id: selected_account_ids).update_all(active: false, updated_at: Time.current)
+      @user.account_memberships.where.not(account_id: @submitted_account_ids)
+        .update_all(active: false, updated_at: Time.current)
       true
+    end
+
+    def owner_account_access_valid?
+      return true unless @user.owner?
+      return @owner_account_access_valid unless @owner_account_access_valid.nil?
+
+      @owner_account_access_valid = true
+      selected_account_ids = parse_selected_account_ids
+      submitted_access_levels = parse_submitted_access_levels
+      referenced_account_ids = (selected_account_ids + submitted_access_levels.keys).uniq
+      available_account_ids = account_access_scope.where(id: referenced_account_ids).pluck(:id)
+
+      if referenced_account_ids.sort != available_account_ids.sort
+        add_account_access_error("includes an unavailable account")
+      end
+
+      @submitted_account_ids = selected_account_ids & available_account_ids
+      existing_access_levels = if @user.persisted?
+        @user.account_memberships.where(account_id: @submitted_account_ids).pluck(:account_id, :access_level).to_h
+      else
+        {}
+      end
+      @submitted_account_access_levels = @submitted_account_ids.index_with do |account_id|
+        submitted_access_levels.fetch(
+          account_id,
+          existing_access_levels.fetch(account_id, AccountMembership::DEFAULT_ACCESS_LEVEL)
+        )
+      end
+
+      @owner_account_access_valid
+    end
+
+    def parse_selected_account_ids
+      values = params.dig(:user, :account_ids)
+      return [] if values.nil?
+
+      unless values.is_a?(Array)
+        add_account_access_error("has an invalid account selection")
+        return []
+      end
+
+      values.compact_blank.filter_map { |value| parse_account_id(value) }.uniq
+    end
+
+    def parse_submitted_access_levels
+      raw_levels = params.dig(:user, :account_access_levels)
+      return {} if raw_levels.nil?
+
+      levels = if raw_levels.is_a?(ActionController::Parameters)
+        raw_levels.to_unsafe_h
+      elsif raw_levels.is_a?(Hash)
+        raw_levels
+      else
+        add_account_access_error("has invalid access-level data")
+        return {}
+      end
+
+      levels.each_with_object({}) do |(raw_account_id, raw_access_level), parsed_levels|
+        account_id = parse_account_id(raw_account_id)
+        next unless account_id
+
+        access_level = raw_access_level.to_s
+        if AccountMembership::ACCESS_LEVELS.include?(access_level)
+          parsed_levels[account_id] = access_level
+        else
+          add_account_access_error("has an invalid access level")
+        end
+      end
+    end
+
+    def parse_account_id(value)
+      account_id = value.to_s
+      unless /\A[1-9]\d*\z/.match?(account_id)
+        add_account_access_error("has an invalid account selection")
+        return
+      end
+
+      Account.type_for_attribute(Account.primary_key).serialize(Integer(account_id, 10))
+    rescue ActiveModel::RangeError
+      add_account_access_error("has an invalid account selection")
+      nil
+    end
+
+    def add_account_access_error(message)
+      @owner_account_access_valid = false
+      @user.errors.add(:base, "Owner account access #{message}.")
     end
 
     def account_access_scope
