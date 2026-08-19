@@ -131,6 +131,33 @@ class AdminOwnerAccessLevelTest < ActionDispatch::IntegrationTest
     assert_includes response.body, "Owner account access has an invalid account selection."
   end
 
+  test "out of range account ids reject user and membership changes transactionally" do
+    owner = owner_with_membership(access_level: "editor")
+    membership = owner.account_memberships.find_by!(account: @account)
+    oversized_account_id = "999999999999999999999999999"
+
+    assert_no_difference -> { AccountMembership.count } do
+      patch admin_user_path(owner), params: {
+        user: owner_update_params(
+          owner,
+          name: "Should Roll Back",
+          account_ids: [ @account.id, oversized_account_id ],
+          account_access_levels: {
+            @account.id.to_s => "read_only",
+            oversized_account_id => "editor"
+          }
+        )
+      }
+    end
+
+    assert_response :unprocessable_entity
+    assert_includes response.body, "Owner account access has an invalid account selection."
+    assert_not_equal "Should Roll Back", owner.reload.name
+    assert_equal [ membership.id ], owner.account_memberships.reload.pluck(:id)
+    assert membership.reload.active?
+    assert_equal "editor", membership.access_level
+  end
+
   test "inactive accounts are rejected without deactivating valid memberships" do
     owner = owner_with_membership(access_level: "editor")
     inactive_account = create_account(name: "Inactive Access Level Account")

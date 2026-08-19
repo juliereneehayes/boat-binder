@@ -289,7 +289,10 @@ module Admin
         return
       end
 
-      Integer(account_id, 10)
+      Account.type_for_attribute(Account.primary_key).serialize(Integer(account_id, 10))
+    rescue ActiveModel::RangeError
+      add_account_access_error("has an invalid account selection")
+      nil
     end
 
     def add_account_access_error(message)
