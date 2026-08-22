@@ -41,6 +41,21 @@ module ActiveSupport
       )
     end
 
+    def qualify_self_managed_subscription(account, status: "active", now: Time.current,
+      cancel_at_period_end: false)
+      account.subscription.update!(
+        provider: Subscription::STRIPE_PROVIDER,
+        plan: "self_managed",
+        status:,
+        external_customer_id: "cus_#{account.id}",
+        external_subscription_id: "sub_#{account.id}",
+        trial_ends_at: now + 7.days,
+        current_period_ends_at: now + 1.month,
+        cancel_at_period_end:,
+        last_synced_at: now - 1.minute
+      )
+    end
+
     def create_asset(account: create_account, asset_type: "vessel", name: "Blue Meridian")
       Asset.create!(
         account: account,

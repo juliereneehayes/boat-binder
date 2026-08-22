@@ -80,7 +80,17 @@ module Authorization
 
   def manageable_account_ids
     @manageable_account_ids ||= if current_user&.owner? && current_user.active?
-      current_user.account_memberships.active.where(access_level: "editor").pluck(:account_id)
+      Account.active
+        .joins(:account_memberships)
+        .where(account_memberships: {
+          user_id: current_user.id,
+          active: true,
+          access_level: "editor"
+        })
+        .includes(:subscription)
+        .filter_map do |account|
+          account.id if Billing::SelfManagedEntitlement.new(account:).qualifying?
+        end
     else
       []
     end
