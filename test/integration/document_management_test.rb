@@ -53,6 +53,7 @@ class DocumentManagementTest < ActionDispatch::IntegrationTest
     attached_document = vessel.documents.create!(account: account, title: "Attached file", document_type: "registration")
     attached_document.file.attach(fixture_file_upload("sample.pdf", "application/pdf"))
     editor_owner = create_user(email: "document-index-editor@example.test", role: "owner")
+    qualify_self_managed_subscription(account)
     create_account_membership(user: editor_owner, account: account, access_level: "editor")
     sign_in_as editor_owner
 
@@ -78,6 +79,7 @@ class DocumentManagementTest < ActionDispatch::IntegrationTest
       notes: "Original notes."
     )
     editor_owner = create_user(email: "document-editor@example.test", role: "owner")
+    qualify_self_managed_subscription(account)
     create_account_membership(user: editor_owner, account: account, access_level: "editor")
     sign_in_as editor_owner
 
@@ -108,6 +110,7 @@ class DocumentManagementTest < ActionDispatch::IntegrationTest
     account = create_account(name: "Elliott Family")
     document = Document.create!(account: account, title: "Registration", document_type: "registration")
     editor_owner = create_user(email: "document-attach-editor@example.test", role: "owner")
+    qualify_self_managed_subscription(account)
     create_account_membership(user: editor_owner, account: account, access_level: "editor")
     sign_in_as editor_owner
 
@@ -131,6 +134,7 @@ class DocumentManagementTest < ActionDispatch::IntegrationTest
     document.file.attach(fixture_file_upload("sample.pdf", "application/pdf"))
     original_blob_id = document.file.blob.id
     editor_owner = create_user(email: "document-replace-editor@example.test", role: "owner")
+    qualify_self_managed_subscription(account)
     create_account_membership(user: editor_owner, account: account, access_level: "editor")
     sign_in_as editor_owner
 
@@ -231,6 +235,7 @@ class DocumentManagementTest < ActionDispatch::IntegrationTest
     other_vessel = create_vessel(account: other_account, name: "Restricted Vessel")
     document = vessel.documents.create!(account: account, title: "Managed document", document_type: "other")
     editor_owner = create_user(email: "document-crafted-editor@example.test", role: "owner")
+    qualify_self_managed_subscription(account)
     create_account_membership(user: editor_owner, account: account, access_level: "editor")
     sign_in_as editor_owner
 
@@ -256,6 +261,7 @@ class DocumentManagementTest < ActionDispatch::IntegrationTest
     document.file.attach(fixture_file_upload("sample.pdf", "application/pdf"))
     original_blob_id = document.file.blob.id
     editor_owner = create_user(email: "document-invalid-editor@example.test", role: "owner")
+    qualify_self_managed_subscription(account)
     create_account_membership(user: editor_owner, account: account, access_level: "editor")
     sign_in_as editor_owner
 
@@ -281,6 +287,7 @@ class DocumentManagementTest < ActionDispatch::IntegrationTest
     document.file.attach(fixture_file_upload("sample.pdf", "application/pdf"))
     original_blob_id = document.file.blob.id
     editor_owner = create_user(email: "document-oversized-editor@example.test", role: "owner")
+    qualify_self_managed_subscription(account)
     create_account_membership(user: editor_owner, account: account, access_level: "editor")
     oversized_file = Tempfile.new([ "oversized-edit", ".pdf" ])
     sign_in_as editor_owner
@@ -525,6 +532,7 @@ class DocumentManagementTest < ActionDispatch::IntegrationTest
     document.file.attach(fixture_file_upload("sample.pdf", "application/pdf"))
     original_blob_id = document.file.blob.id
     editor_owner = create_user(email: "document-attachment-failure@example.test", role: "owner")
+    qualify_self_managed_subscription(account)
     create_account_membership(user: editor_owner, account: account, access_level: "editor")
     log_output = StringIO.new
     sign_in_as editor_owner

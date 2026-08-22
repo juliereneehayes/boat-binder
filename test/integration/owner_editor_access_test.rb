@@ -4,6 +4,7 @@ class OwnerEditorAccessTest < ActionDispatch::IntegrationTest
   setup do
     @account = create_account(name: "Elliott Family")
     @other_account = create_account(name: "Harbor North")
+    qualify_self_managed_subscription(@account)
     @vessel = create_vessel(account: @account, name: "Blue Meridian")
     @other_vessel = create_vessel(account: @other_account, name: "Tide Runner")
 
@@ -15,6 +16,7 @@ class OwnerEditorAccessTest < ActionDispatch::IntegrationTest
   end
 
   test "internal users retain write access" do
+    @account.subscription.update!(Subscription.default_local_attributes)
     captain = create_user(email: "captain-editor-access@example.test", role: "captain")
     sign_in_as captain
 
@@ -330,6 +332,7 @@ class OwnerEditorAccessTest < ActionDispatch::IntegrationTest
   end
 
   test "editor membership for one account does not allow modifying a read only account" do
+    qualify_self_managed_subscription(@other_account)
     create_account_membership(user: @editor_owner, account: @other_account, access_level: "read_only")
     sign_in_as @editor_owner
 
