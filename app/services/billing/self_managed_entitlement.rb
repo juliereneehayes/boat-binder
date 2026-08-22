@@ -59,8 +59,9 @@ module Billing
       return result(:missing_entitlement_end) unless valid_time?(ends_at)
       return result(:entitlement_expired, ends_at) unless ends_at > now
 
-      reason = subscription.cancel_at_period_end? ? :canceling_at_period_end : :active
-      result(reason, ends_at)
+      qualifying_reason =
+        subscription.cancel_at_period_end? ? :canceling_at_period_end : :active
+      result(qualifying_reason, ends_at)
     end
 
     def evaluate_trial(subscription)
