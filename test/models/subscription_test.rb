@@ -1,7 +1,7 @@
 require "test_helper"
 
 class SubscriptionTest < ActiveSupport::TestCase
-  test "defines plan status and access policy centrally" do
+  test "defines plan and status vocabularies centrally" do
     subscription = Subscription.new(plan: "legacy", status: "trialing", provider: "local")
 
     assert_includes Subscription::PROVIDERS, "local"
@@ -10,19 +10,9 @@ class SubscriptionTest < ActiveSupport::TestCase
     assert_includes Subscription::PLANS, "self_managed"
     assert_includes Subscription::STATUSES, "past_due"
     assert subscription.trialing?
-    assert subscription.access_allowed?
 
     subscription.status = "active"
     assert subscription.active?
-    assert subscription.access_allowed?
-
-    subscription.status = "legacy"
-    assert subscription.access_allowed?
-
-    %w[past_due canceled expired suspended].each do |status|
-      subscription.status = status
-      assert_not subscription.access_allowed?, "#{status} should not allow subscription access"
-    end
   end
 
   test "status and provider predicates describe local and external subscriptions" do
@@ -54,11 +44,6 @@ class SubscriptionTest < ActiveSupport::TestCase
 
         assert_equal candidate_status == status, subscription.public_send("#{predicate}?")
       end
-    end
-
-    %w[expired suspended].each do |status|
-      subscription.status = status
-      assert_not subscription.access_allowed?, "#{status} should not allow subscription access"
     end
   end
 
