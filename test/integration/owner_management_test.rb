@@ -186,8 +186,75 @@ class OwnerManagementTest < ActionDispatch::IntegrationTest
     assert_includes response.body, "Legacy"
     assert_includes response.body, "Active"
     assert_includes response.body, "Local"
-    assert_includes response.body, "Access eligible"
+    assert_includes response.body, "No current Self Managed entitlement"
+    assert_not_includes response.body, "Access eligible"
+    assert_not_includes response.body, "Access paused"
     assert_includes response.body, "Not recorded"
+  end
+
+  test "owner page shows current access for qualifying Self Managed subscriptions" do
+    now = Time.zone.local(2026, 8, 20, 12)
+    admin = create_user(email: "admin-qualifying-subscription@example.test", role: "admin")
+    account = create_account(name: "Qualifying Subscription Owner")
+    sign_in_as admin
+
+    travel_to now do
+      qualify_self_managed_subscription(account, status: "active", now:)
+
+      get owner_path(account)
+
+      assert_response :success
+      assert_includes response.body, "Self Managed access current"
+      assert_not_includes response.body, "No current Self Managed entitlement"
+
+      account.subscription.update!(status: "trialing")
+
+      get owner_path(account)
+
+      assert_response :success
+      assert_includes response.body, "Self Managed access current"
+
+      account.subscription.update!(status: "active", cancel_at_period_end: true)
+
+      get owner_path(account)
+
+      assert_response :success
+      assert_includes response.body, "Self Managed access current"
+      assert_includes response.body, "Cancels at period end"
+    end
+  end
+
+  test "owner page shows no current entitlement for an expired Self Managed subscription" do
+    now = Time.zone.local(2026, 8, 20, 12)
+    admin = create_user(email: "admin-expired-subscription@example.test", role: "admin")
+    account = create_account(name: "Expired Subscription Owner")
+    sign_in_as admin
+
+    travel_to now do
+      qualify_self_managed_subscription(account, status: "active", now:)
+      account.subscription.update!(current_period_ends_at: now)
+
+      get owner_path(account)
+
+      assert_response :success
+      assert_includes response.body, "No current Self Managed entitlement"
+      assert_not_includes response.body, "Self Managed access current"
+    end
+  end
+
+  test "owner page shows entitlement badge and explanation when subscription is missing" do
+    admin = create_user(email: "admin-missing-subscription@example.test", role: "admin")
+    account = create_account(name: "Missing Subscription Owner")
+    account.subscription.destroy!
+    sign_in_as admin
+
+    get owner_path(account)
+
+    assert_response :success
+    assert_includes response.body, "No current Self Managed entitlement"
+    assert_includes response.body, "No local subscription record has been created yet."
+    assert_not_includes response.body, "Access eligible"
+    assert_not_includes response.body, "Access paused"
   end
 
   test "owner page renders partially populated external subscription state in account time zone" do
@@ -210,6 +277,7 @@ class OwnerManagementTest < ActionDispatch::IntegrationTest
     assert_includes response.body, "Professional"
     assert_includes response.body, "Trialing"
     assert_includes response.body, "Stripe"
+    assert_includes response.body, "No current Self Managed entitlement"
     assert_includes response.body, "Cancels at period end"
     assert_includes response.body, "Jul 15, 2026 at 4:00 PM EDT"
     assert_includes response.body, "Aug 15, 2026 at 4:00 PM EDT"

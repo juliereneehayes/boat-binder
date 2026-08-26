@@ -194,7 +194,9 @@ class BuildWeekDemoAccountSetupTest < ActiveSupport::TestCase
     assert_equal "legacy", subscription.plan
     assert_equal "active", subscription.status
     assert_equal "local", subscription.provider
-    assert subscription.access_allowed?
+    entitlement = Billing::SelfManagedEntitlement.new(account: account)
+    assert_not entitlement.qualifying?
+    assert_equal :wrong_provider, entitlement.reason
     assert_not subscription.managed_externally?
     assert_nil subscription.external_customer_id
     assert_nil subscription.external_subscription_id

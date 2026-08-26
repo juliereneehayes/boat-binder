@@ -85,9 +85,11 @@
             <h2 class="text-xl font-black">Subscription</h2>
             <p class="mt-2 text-sm leading-6 text-slate-600">Read-only local subscription state. Billing provider actions are intentionally deferred.</p>
           </div>
-          <% if @subscription %>
-            <%= status_chip(@subscription.access_allowed? ? "Access eligible" : "Access paused", tone: @subscription.access_allowed? ? :success : :warning) %>
-          <% end %>
+          <% self_managed_access_current = @self_managed_entitlement.qualifying? %>
+          <%= status_chip(
+            self_managed_access_current ? "Self Managed access current" : "No current Self Managed entitlement",
+            tone: self_managed_access_current ? :success : :warning
+          ) %>
         </div>
 
         <% if @subscription %>
