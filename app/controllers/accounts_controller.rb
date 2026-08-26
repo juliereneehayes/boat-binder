@@ -13,6 +13,10 @@ class AccountsController < ApplicationController
     @contacts = @account.contacts.order(:role, :name)
     @owner_user_memberships = @account.owner_user_memberships
     @subscription = @account.subscription
+    @self_managed_entitlement = Billing::SelfManagedEntitlement.new(
+      account: @account,
+      now: Time.current
+    )
     @vessels = @account.assets.vessels.ordered
     @documents = @account.documents.includes(:asset).order(created_at: :desc).limit(6)
   end

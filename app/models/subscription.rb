@@ -4,7 +4,6 @@ class Subscription < ApplicationRecord
   PROVIDERS = [ LOCAL_PROVIDER, STRIPE_PROVIDER ].freeze
   PLANS = %w[legacy self_managed starter professional].freeze
   STATUSES = %w[legacy trialing active past_due canceled expired suspended].freeze
-  ACCESS_ALLOWED_STATUSES = %w[legacy trialing active].freeze
 
   belongs_to :account
 
@@ -14,7 +13,6 @@ class Subscription < ApplicationRecord
   validates :provider, inclusion: { in: PROVIDERS }
   validates :external_subscription_id, uniqueness: { scope: :provider }, allow_nil: true
 
-  scope :access_allowed, -> { where(status: ACCESS_ALLOWED_STATUSES) }
   scope :managed_externally, -> { where.not(provider: LOCAL_PROVIDER) }
 
   def self.default_local_attributes
@@ -47,10 +45,6 @@ class Subscription < ApplicationRecord
 
   def suspended?
     status == "suspended"
-  end
-
-  def access_allowed?
-    ACCESS_ALLOWED_STATUSES.include?(status)
   end
 
   def managed_externally?

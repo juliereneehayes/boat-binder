@@ -230,7 +230,9 @@ class StripeSubscriptionLifecycleTest < ActionDispatch::IntegrationTest
     assert_equal "processed", receipt("evt_unsupported_status").status
     subscription = state.fetch(:subscription).reload
     assert_equal "suspended", subscription.status
-    assert_not subscription.access_allowed?
+    entitlement = Billing::SelfManagedEntitlement.new(account: state.fetch(:account).reload)
+    assert_not entitlement.qualifying?
+    assert_equal :non_qualifying_status, entitlement.reason
     assert_equal state.fetch(:account).id, subscription.account_id
     assert_equal state.fetch(:customer_id), subscription.external_customer_id
     assert_equal state.fetch(:subscription_id), subscription.external_subscription_id
