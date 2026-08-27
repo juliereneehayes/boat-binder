@@ -579,6 +579,8 @@ module Billing
         "current_period_ends_at",
         "cancel_at_period_end",
         "canceled_at",
+        "entitlement_ended_at",
+        "past_due_observed_at",
         "last_synced_at"
       )
     end

@@ -200,6 +200,8 @@ class BuildWeekDemoAccountSetupTest < ActiveSupport::TestCase
     assert_not subscription.managed_externally?
     assert_nil subscription.external_customer_id
     assert_nil subscription.external_subscription_id
+    assert_nil subscription.entitlement_ended_at
+    assert_nil subscription.past_due_observed_at
   end
 
   test "demo owner remains scoped away from unrelated accounts" do

@@ -314,6 +314,8 @@ class BillingCheckoutTest < ActionDispatch::IntegrationTest
       "external_subscription_id",
       "trial_ends_at",
       "current_period_ends_at",
+      "entitlement_ended_at",
+      "past_due_observed_at",
       "last_synced_at"
     )
   end

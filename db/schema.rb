@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_08_11_193000) do
+ActiveRecord::Schema[8.1].define(version: 2026_08_26_090000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -426,9 +426,11 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_11_193000) do
     t.datetime "canceled_at"
     t.datetime "created_at", null: false
     t.datetime "current_period_ends_at"
+    t.datetime "entitlement_ended_at"
     t.string "external_customer_id"
     t.string "external_subscription_id"
     t.datetime "last_synced_at"
+    t.datetime "past_due_observed_at"
     t.string "plan", default: "legacy", null: false
     t.string "provider", default: "local", null: false
     t.string "status", default: "active", null: false

@@ -28,6 +28,15 @@ class SubscriptionTest < ActiveSupport::TestCase
     assert subscription.managed_externally?
   end
 
+  test "local subscriptions do not fabricate Stripe lifecycle timing" do
+    subscription = create_account(name: "Local lifecycle timing").subscription
+
+    assert_nil subscription.entitlement_ended_at
+    assert_nil subscription.past_due_observed_at
+    assert Subscription.columns_hash.fetch("entitlement_ended_at").null
+    assert Subscription.columns_hash.fetch("past_due_observed_at").null
+  end
+
   test "lifecycle predicates are status specific" do
     subscription = Subscription.new(plan: "legacy", status: "active", provider: "local")
 

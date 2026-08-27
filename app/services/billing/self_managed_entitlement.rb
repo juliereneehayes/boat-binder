@@ -20,6 +20,14 @@ module Billing
       evaluation[:entitlement_ends_at]
     end
 
+    def entitlement_ended_at
+      lifecycle_evaluation[:entitlement_ended_at]
+    end
+
+    def entitlement_end_reason
+      lifecycle_evaluation.fetch(:reason)
+    end
+
     private
 
     attr_reader :account, :now
@@ -31,7 +39,14 @@ module Billing
     def evaluate
       return result(:inactive_account) unless account.active?
 
-      subscription = account.subscription
+      subscription_evaluation
+    end
+
+    def subscription_evaluation
+      @subscription_evaluation ||= evaluate_subscription
+    end
+
+    def evaluate_subscription
       return result(:missing_subscription) unless subscription
       return result(:wrong_provider) unless subscription.provider == Subscription::STRIPE_PROVIDER
       return result(:wrong_plan) unless subscription.plan == "self_managed"
@@ -45,6 +60,52 @@ module Billing
       else
         result(:non_qualifying_status)
       end
+    end
+
+    def subscription
+      @subscription ||= account.subscription
+    end
+
+    def lifecycle_evaluation
+      @lifecycle_evaluation ||= evaluate_lifecycle_end
+    end
+
+    def evaluate_lifecycle_end
+      # Account activation gates application access, not verified Stripe lifecycle evidence.
+      subscription_result = subscription_evaluation
+
+      case subscription_result.fetch(:reason)
+      when *QUALIFYING_REASONS
+        lifecycle_result(:current_entitlement)
+      when :trial_expired
+        lifecycle_result(:verified_trial_end, subscription_result[:entitlement_ends_at])
+      when :entitlement_expired
+        lifecycle_result(:verified_paid_period_end, subscription_result[:entitlement_ends_at])
+      when :non_qualifying_status
+        evaluate_non_qualifying_lifecycle_end
+      else
+        lifecycle_result(subscription_result.fetch(:reason))
+      end
+    end
+
+    def evaluate_non_qualifying_lifecycle_end
+      return lifecycle_result(:past_due_policy_pending) if subscription.past_due?
+
+      if subscription.canceled? && subscription.cancel_at_period_end?
+        return verified_lifecycle_end(subscription.current_period_ends_at, :verified_paid_period_end)
+      end
+
+      if subscription.canceled? || subscription.expired? || subscription.suspended?
+        return verified_lifecycle_end(subscription.entitlement_ended_at, :verified_lifecycle_end)
+      end
+
+      lifecycle_result(:entitlement_end_unavailable)
+    end
+
+    def verified_lifecycle_end(value, reason)
+      return lifecycle_result(:entitlement_end_unavailable) unless valid_time?(value) && value <= now
+
+      lifecycle_result(reason, value)
     end
 
     def verified?(subscription)
@@ -78,6 +139,10 @@ module Billing
 
     def result(reason, entitlement_ends_at = nil)
       { reason:, entitlement_ends_at: }
+    end
+
+    def lifecycle_result(reason, entitlement_ended_at = nil)
+      { reason:, entitlement_ended_at: }
     end
   end
 end

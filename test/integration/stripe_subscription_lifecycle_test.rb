@@ -75,15 +75,31 @@ class StripeSubscriptionLifecycleTest < ActionDispatch::IntegrationTest
     assert_equal renewed_period_end.to_i, subscription.current_period_ends_at.to_i
     assert_equal 1, Subscription.where(account: state.fetch(:account)).count
 
-    post_invoice_event(
-      state:,
-      event_id: "evt_invoice_payment_failed",
-      event_type: "invoice.payment_failed",
-      canonical_status: "past_due"
-    )
+    first_observed_at = Time.zone.local(2026, 8, 25, 12)
+    travel_to first_observed_at do
+      post_invoice_event(
+        state:,
+        event_id: "evt_invoice_payment_failed",
+        event_type: "invoice.payment_failed",
+        canonical_status: "past_due"
+      )
+    end
 
     assert_response :success
     assert_equal "past_due", subscription.reload.status
+    assert_equal first_observed_at, subscription.past_due_observed_at
+
+    travel_to first_observed_at + 1.hour do
+      post_invoice_event(
+        state:,
+        event_id: "evt_invoice_payment_still_failed",
+        event_type: "invoice.payment_failed",
+        canonical_status: "past_due"
+      )
+    end
+
+    assert_response :success
+    assert_equal first_observed_at, subscription.reload.past_due_observed_at
 
     post_invoice_event(
       state:,
@@ -94,21 +110,75 @@ class StripeSubscriptionLifecycleTest < ActionDispatch::IntegrationTest
 
     assert_response :success
     assert_equal "active", subscription.reload.status
+    assert_nil subscription.past_due_observed_at
+  end
+
+  test "verified trial transition persists its canonical ending boundary without fabricating a new trial" do
+    state = create_stripe_state("trial_ended", status: "trialing")
+    trial_end = Time.zone.local(2026, 8, 25, 12)
+
+    travel_to trial_end + 1.second do
+      post_subscription_event(
+        state:,
+        event_id: "evt_trial_ended_paused",
+        event_type: "customer.subscription.paused",
+        status: "paused",
+        trial_end:
+      )
+    end
+
+    subscription = state.fetch(:subscription).reload
+    entitlement = Billing::SelfManagedEntitlement.new(account: state.fetch(:account).reload, now: trial_end + 1.second)
+    assert_equal "suspended", subscription.status
+    assert_equal trial_end, subscription.entitlement_ended_at
+    assert_equal trial_end, entitlement.entitlement_ended_at
+    assert_equal :verified_lifecycle_end, entitlement.entitlement_end_reason
+    assert_equal 1, Subscription.where(account: state.fetch(:account)).count
   end
 
   test "scheduled cancellation reversal pause resume and final deletion follow canonical state" do
     state = create_stripe_state("subscription_lifecycle")
     account = state.fetch(:account)
     vessel = create_vessel(account:, name: "Lifecycle Vessel")
+    owner = create_user(email: "lifecycle-owner@example.test", role: "owner")
+    membership = create_account_membership(user: owner, account:, access_level: "editor")
+    document = vessel.documents.create!(account:, title: "Lifecycle document", document_type: "other")
+    document.file.attach(fixture_file_upload("sample.pdf", "application/pdf"))
+    vessel.primary_photo.attach(fixture_file_upload("sample.jpg", "image/jpeg"))
+    note = vessel.binder_notes.create!(
+      account:,
+      title: "Lifecycle note",
+      body: "Retain this note.",
+      note_type: "general"
+    )
+    reminder = vessel.reminders.create!(
+      title: "Lifecycle reminder",
+      due_date: Date.tomorrow,
+      reminder_type: "maintenance",
+      status: "pending"
+    )
+    service_visit = ServiceVisit.create!(
+      asset: vessel,
+      performed_by_user: owner,
+      visit_date: Date.current,
+      summary: "Lifecycle visit"
+    )
+    period_end = 1.month.from_now.change(usec: 0)
+    cancellation_requested_at = Time.current.change(usec: 0)
 
     post_subscription_event(
       state:,
       event_id: "evt_cancel_scheduled",
       event_type: "customer.subscription.updated",
       status: "active",
-      cancel_at_period_end: true
+      period_end:,
+      cancel_at_period_end: true,
+      canceled_at: cancellation_requested_at
     )
-    assert state.fetch(:subscription).reload.cancel_at_period_end?
+    subscription = state.fetch(:subscription).reload
+    assert subscription.cancel_at_period_end?
+    assert_equal cancellation_requested_at, subscription.canceled_at
+    assert_nil subscription.entitlement_ended_at
 
     post_subscription_event(
       state:,
@@ -135,22 +205,81 @@ class StripeSubscriptionLifecycleTest < ActionDispatch::IntegrationTest
     )
     assert_equal "active", state.fetch(:subscription).reload.status
 
-    canceled_at = Time.current.change(usec: 0)
+    ended_at = Time.current.change(usec: 0)
     post_subscription_event(
       state:,
       event_id: "evt_subscription_deleted",
       event_type: "customer.subscription.deleted",
       status: "canceled",
-      canceled_at:
+      period_end:,
+      canceled_at: ended_at,
+      ended_at:
     )
 
     subscription = state.fetch(:subscription).reload
     assert_equal "canceled", subscription.status
-    assert_equal canceled_at.to_i, subscription.canceled_at.to_i
+    assert_equal ended_at.to_i, subscription.canceled_at.to_i
+    assert_equal ended_at.to_i, subscription.entitlement_ended_at.to_i
     assert_equal state.fetch(:customer_id), subscription.external_customer_id
     assert_equal state.fetch(:subscription_id), subscription.external_subscription_id
     assert Account.exists?(account.id)
     assert Asset.exists?(vessel.id)
+    assert AccountMembership.exists?(membership.id)
+    assert Document.exists?(document.id)
+    assert BinderNote.exists?(note.id)
+    assert Reminder.exists?(reminder.id)
+    assert ServiceVisit.exists?(service_visit.id)
+    assert document.reload.file.attached?
+    assert vessel.reload.primary_photo.attached?
+  end
+
+  test "terminal canonical state does not fabricate former entitlement without verified local history" do
+    state = create_stripe_state("unverified_terminal")
+    state.fetch(:subscription).update!(plan: "legacy", last_synced_at: nil)
+    ended_at = 1.hour.ago.change(usec: 0)
+
+    post_subscription_event(
+      state:,
+      event_id: "evt_unverified_terminal",
+      event_type: "customer.subscription.deleted",
+      status: "canceled",
+      ended_at:
+    )
+
+    subscription = state.fetch(:subscription).reload
+    entitlement = Billing::SelfManagedEntitlement.new(account: state.fetch(:account).reload)
+    assert_equal "canceled", subscription.status
+    assert_nil subscription.entitlement_ended_at
+    assert_nil entitlement.entitlement_ended_at
+    assert_equal :entitlement_end_unavailable, entitlement.entitlement_end_reason
+  end
+
+  test "delayed event snapshots converge on canonical ending boundary without rewinding it" do
+    state = create_stripe_state("canonical_end_order")
+    ended_at = 1.hour.ago.change(usec: 0)
+    canonical = subscription_data(state:, status: "canceled", ended_at:)
+    stale_snapshot = subscription_data(state:, status: "active", period_end: 1.month.from_now)
+
+    post_lifecycle_event(
+      event_id: "evt_delayed_active_snapshot",
+      event_type: "customer.subscription.updated",
+      data_object: stale_snapshot,
+      canonical_subscription: canonical
+    )
+    assert_response :success
+    assert_equal ended_at, state.fetch(:subscription).reload.entitlement_ended_at
+
+    canonical[:ended_at] = (ended_at - 1.day).to_i
+    post_lifecycle_event(
+      event_id: "evt_delayed_canceled_snapshot",
+      event_type: "customer.subscription.deleted",
+      data_object: subscription_data(state:, status: "canceled", ended_at: ended_at - 1.day),
+      canonical_subscription: canonical
+    )
+
+    assert_response :success
+    assert_equal ended_at, state.fetch(:subscription).reload.entitlement_ended_at
+    assert_equal 1, Subscription.where(account: state.fetch(:account)).count
   end
 
   test "invoice association mismatches and missing correlation fail closed" do
@@ -296,7 +425,7 @@ class StripeSubscriptionLifecycleTest < ActionDispatch::IntegrationTest
   test "duplicate invoice delivery is idempotent and does not retrieve twice" do
     state = create_stripe_state("duplicate_invoice")
     invoice = invoice_data(state:, invoice_id: "in_duplicate")
-    canonical = subscription_data(state:, status: "active")
+    canonical = subscription_data(state:, status: "past_due")
     payload = event_payload(
       event_id: "evt_duplicate_invoice",
       event_type: "invoice.paid",
@@ -304,21 +433,27 @@ class StripeSubscriptionLifecycleTest < ActionDispatch::IntegrationTest
     )
     retrieve_count = 0
 
-    with_stripe_subscription_retrieve(lambda { |subscription_id, options|
-      retrieve_count += 1
-      assert_equal state.fetch(:subscription_id), subscription_id
-      assert_equal Rails.configuration.x.stripe.secret_key, options.fetch(:api_key)
-      Stripe::Subscription.construct_from(canonical)
-    }) do
-      2.times do
-        post webhooks_stripe_path, params: payload, headers: signature_headers(payload)
-        assert_response :success
+    observed_at = Time.zone.local(2026, 8, 25, 14)
+    travel_to observed_at do
+      with_stripe_subscription_retrieve(lambda { |subscription_id, options|
+        retrieve_count += 1
+        assert_equal state.fetch(:subscription_id), subscription_id
+        assert_equal Rails.configuration.x.stripe.secret_key, options.fetch(:api_key)
+        Stripe::Subscription.construct_from(canonical)
+      }) do
+        2.times do
+          post webhooks_stripe_path, params: payload, headers: signature_headers(payload)
+          assert_response :success
+        end
       end
     end
 
     assert_equal 1, retrieve_count
     assert_equal 1, BillingWebhookEvent.where(external_event_id: "evt_duplicate_invoice").count
     assert_equal "processed", receipt("evt_duplicate_invoice").status
+    subscription = state.fetch(:subscription).reload
+    assert_equal "past_due", subscription.status
+    assert_equal observed_at, subscription.past_due_observed_at
   end
 
   test "Stripe retrieval failure remains retryable and a later delivery reconciles" do
@@ -335,6 +470,7 @@ class StripeSubscriptionLifecycleTest < ActionDispatch::IntegrationTest
     assert_response :internal_server_error
     assert_equal "failed", receipt("evt_retry_invoice").status
     assert_equal original_state, subscription_state(state.fetch(:subscription).reload)
+    assert_nil state.fetch(:subscription).past_due_observed_at
 
     with_stripe_subscription_retrieve(->(*) { Stripe::Subscription.construct_from(canonical) }) do
       post webhooks_stripe_path, params: payload, headers: signature_headers(payload)
@@ -343,6 +479,7 @@ class StripeSubscriptionLifecycleTest < ActionDispatch::IntegrationTest
     assert_response :success
     assert_equal "processed", receipt("evt_retry_invoice").status
     assert_equal "past_due", state.fetch(:subscription).reload.status
+    assert state.fetch(:subscription).past_due_observed_at.present?
   end
 
   private
@@ -434,15 +571,17 @@ class StripeSubscriptionLifecycleTest < ActionDispatch::IntegrationTest
   end
 
   def subscription_data(state:, status:, price_id: "price_lifecycle_monthly", period_end: 1.month.from_now,
-    cancel_at_period_end: false, canceled_at: nil)
+    trial_end: status == "trialing" ? 7.days.from_now : nil,
+    cancel_at_period_end: false, canceled_at: nil, ended_at: nil)
     {
       id: state.fetch(:subscription_id),
       object: "subscription",
       customer: state.fetch(:customer_id),
       status:,
-      trial_end: status == "trialing" ? 7.days.from_now.to_i : nil,
+      trial_end: trial_end&.to_i,
       cancel_at_period_end:,
       canceled_at: canceled_at&.to_i,
+      ended_at: ended_at&.to_i,
       metadata: correlation_metadata(state),
       items: {
         data: [
@@ -528,6 +667,8 @@ class StripeSubscriptionLifecycleTest < ActionDispatch::IntegrationTest
       "current_period_ends_at",
       "cancel_at_period_end",
       "canceled_at",
+      "entitlement_ended_at",
+      "past_due_observed_at",
       "last_synced_at"
     )
   end

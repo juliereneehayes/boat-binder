@@ -148,6 +148,8 @@ module BuildWeek
           current_period_ends_at: nil,
           cancel_at_period_end: false,
           canceled_at: nil,
+          entitlement_ended_at: nil,
+          past_due_observed_at: nil,
           last_synced_at: nil
         )
       )

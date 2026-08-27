@@ -56,7 +56,7 @@ module Billing
           expected_subscription_id: event_subscription_id
         )
 
-        subscription.update!(synchronized_attributes(canonical_subscription, canonical_option))
+        subscription.update!(synchronized_attributes(subscription, canonical_subscription, canonical_option))
         locked_attempt.update!(status: "completed") unless locked_attempt.status == "completed"
         subscription
       end
@@ -199,19 +199,70 @@ module Billing
       end
     end
 
-    def synchronized_attributes(canonical_subscription, option)
+    def synchronized_attributes(subscription, canonical_subscription, option)
+      synchronized_at = Time.current
+      status = local_status(canonical_subscription)
+      trial_ends_at = timestamp(canonical_subscription.trial_end)
+      current_period_ends_at = current_period_end(canonical_subscription)
+      canonical_ended_at = timestamp(canonical_subscription[:ended_at])
+
       {
         provider: Subscription::STRIPE_PROVIDER,
         plan: option.plan_key,
-        status: local_status(canonical_subscription),
+        status:,
         external_customer_id: customer_id(canonical_subscription),
         external_subscription_id: subscription_id(canonical_subscription),
-        trial_ends_at: timestamp(canonical_subscription.trial_end),
-        current_period_ends_at: current_period_end(canonical_subscription),
+        trial_ends_at:,
+        current_period_ends_at:,
         cancel_at_period_end: canonical_subscription.cancel_at_period_end == true,
         canceled_at: timestamp(canonical_subscription.canceled_at),
-        last_synced_at: Time.current
+        entitlement_ended_at: synchronized_entitlement_end(
+          subscription,
+          option:,
+          status:,
+          trial_ends_at:,
+          canonical_ended_at:,
+          synchronized_at:
+        ),
+        past_due_observed_at: synchronized_past_due_observation(subscription, status, synchronized_at),
+        last_synced_at: synchronized_at
       }
+    end
+
+    def synchronized_entitlement_end(subscription, option:, status:, trial_ends_at:, canonical_ended_at:,
+      synchronized_at:)
+      if status == "canceled" && previously_verified_as_qualifying?(subscription, option) &&
+          canonical_ended_at && canonical_ended_at <= synchronized_at
+        candidate = canonical_ended_at
+      end
+      if candidate.nil? && previously_verified_trial?(subscription, option) && !%w[active trialing].include?(status) &&
+          trial_ends_at && trial_ends_at <= synchronized_at
+        candidate = trial_ends_at
+      end
+
+      [ subscription.entitlement_ended_at, candidate ].compact.max
+    end
+
+    def synchronized_past_due_observation(subscription, status, synchronized_at)
+      return unless status == "past_due"
+
+      subscription.past_due_observed_at || synchronized_at
+    end
+
+    def previously_verified_as_qualifying?(subscription, option)
+      synchronized_self_managed?(subscription, option) && (subscription.active? || subscription.trialing?)
+    end
+
+    def previously_verified_trial?(subscription, option)
+      synchronized_self_managed?(subscription, option) && subscription.trialing?
+    end
+
+    def synchronized_self_managed?(subscription, option)
+      subscription.provider == Subscription::STRIPE_PROVIDER &&
+        subscription.plan == option.plan_key &&
+        subscription.external_customer_id.present? &&
+        subscription.external_subscription_id.present? &&
+        subscription.last_synced_at.present?
     end
 
     def local_status(remote_subscription)
