@@ -1,7 +1,9 @@
 module Billing
   class SelfManagedEntitlement
     QUALIFYING_REASONS = %i[active trialing canceling_at_period_end].freeze
-    private_constant :QUALIFYING_REASONS
+    READ_ONLY_GRACE_PERIOD = 90.days
+    RETENTION_PERIOD = 12.months
+    private_constant :QUALIFYING_REASONS, :READ_ONLY_GRACE_PERIOD, :RETENTION_PERIOD
 
     def initialize(account:, now: Time.current)
       @account = account
@@ -26,6 +28,10 @@ module Billing
 
     def entitlement_end_reason
       lifecycle_evaluation.fetch(:reason)
+    end
+
+    def lifecycle_phase
+      @lifecycle_phase ||= evaluate_lifecycle_phase
     end
 
     private
@@ -90,16 +96,46 @@ module Billing
 
     def evaluate_non_qualifying_lifecycle_end
       return lifecycle_result(:past_due_policy_pending) if subscription.past_due?
+      if subscription.suspended?
+        ended_at = subscription.entitlement_ended_at
+        ended_at = nil unless valid_time?(ended_at) && ended_at <= now
+        return lifecycle_result(:suspended_policy_pending, ended_at)
+      end
 
       if subscription.canceled? && subscription.cancel_at_period_end?
         return verified_lifecycle_end(subscription.current_period_ends_at, :verified_paid_period_end)
       end
 
-      if subscription.canceled? || subscription.expired? || subscription.suspended?
+      if subscription.canceled? || subscription.expired?
         return verified_lifecycle_end(subscription.entitlement_ended_at, :verified_lifecycle_end)
       end
 
       lifecycle_result(:entitlement_end_unavailable)
+    end
+
+    def evaluate_lifecycle_phase
+      lifecycle = lifecycle_evaluation
+
+      case lifecycle.fetch(:reason)
+      when :current_entitlement
+        :current_entitlement
+      when :past_due_policy_pending
+        :payment_recovery_pending
+      when :suspended_policy_pending
+        :manual_review
+      when :verified_trial_end, :verified_paid_period_end, :verified_lifecycle_end
+        phase_for_verified_end(lifecycle[:entitlement_ended_at])
+      else
+        :unavailable
+      end
+    end
+
+    def phase_for_verified_end(ended_at)
+      return :unavailable unless valid_time?(ended_at) && ended_at <= now
+      return :read_only_grace if now < ended_at + READ_ONLY_GRACE_PERIOD
+      return :retained_inactive if now < ended_at + RETENTION_PERIOD
+
+      :archive_eligible
     end
 
     def verified_lifecycle_end(value, reason)

@@ -132,7 +132,8 @@ class StripeSubscriptionLifecycleTest < ActionDispatch::IntegrationTest
     assert_equal "suspended", subscription.status
     assert_equal trial_end, subscription.entitlement_ended_at
     assert_equal trial_end, entitlement.entitlement_ended_at
-    assert_equal :verified_lifecycle_end, entitlement.entitlement_end_reason
+    assert_equal :suspended_policy_pending, entitlement.entitlement_end_reason
+    assert_equal :manual_review, entitlement.lifecycle_phase
     assert_equal 1, Subscription.where(account: state.fetch(:account)).count
   end
 
