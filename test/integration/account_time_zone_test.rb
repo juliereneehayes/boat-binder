@@ -13,6 +13,7 @@ class AccountTimeZoneTest < ActionDispatch::IntegrationTest
     travel_to Time.utc(2026, 7, 6, 6, 30) do
       account = create_account(name: "Elliott Family", time_zone: "America/New_York")
       owner = create_user(email: "owner-timezone@example.test", role: "owner")
+      qualify_self_managed_subscription(account)
       create_account_membership(user: owner, account: account)
 
       sign_in_as owner

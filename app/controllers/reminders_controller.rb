@@ -1,4 +1,5 @@
 class RemindersController < ApplicationController
+  before_action :require_owner_read_access!, only: :index
   before_action :require_write_access!, except: %i[index]
   before_action :set_reminder, only: %i[edit update]
   before_action :require_reminder_write_access!, only: %i[edit update]

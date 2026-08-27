@@ -2,6 +2,7 @@ class VesselsController < ApplicationController
   PrimaryPhotoAttachmentError = Class.new(StandardError)
 
   before_action :require_internal!, only: %i[new create destroy]
+  before_action :require_owner_read_access!, only: :index
   before_action :set_vessel, only: %i[show edit update destroy destroy_primary_photo]
   before_action :require_vessel_write_access!, only: %i[edit update destroy_primary_photo]
 

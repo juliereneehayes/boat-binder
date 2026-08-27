@@ -1,5 +1,11 @@
 class DashboardController < ApplicationController
   def index
+    if owner_lifecycle_restricted?
+      @self_managed_plans_available = self_managed_plans_available?
+      render :restricted_owner
+      return
+    end
+
     @dashboard_account = scoped_accounts.limit(2).to_a.then { |accounts| accounts.one? ? accounts.first : nil }
     @vessels = scoped_vessels.active.includes(:account, :reminders, :service_visits).with_attached_primary_photo.ordered
     @upcoming_reminders = scoped_reminders.includes(asset: :account).upcoming.limit(6)
@@ -10,5 +16,13 @@ class DashboardController < ApplicationController
     @open_notes_count = scoped_binder_notes.where.not(note_type: "owner_preference").count
     @upcoming_service_items_count = scoped_reminders.upcoming.count
     @documents_count = scoped_documents.count
+  end
+
+  private
+
+  def self_managed_plans_available?
+    Billing::StripeCheckoutAccountResolver.call(current_user).present?
+  rescue Billing::StripeCheckoutAccountResolver::ResolutionError
+    false
   end
 end

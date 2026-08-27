@@ -87,15 +87,19 @@ class AccessControlTest < ActionDispatch::IntegrationTest
     assert_not_includes response.body, @owner_b_vessel.name
   end
 
-  test "subscription status does not change existing owner access in phase one" do
+  test "manual review subscription status denies owner binder access" do
     setup_access_records
-    @owner_a_account.subscription.update!(status: "suspended")
+    @owner_a_account.subscription.update!(status: "suspended", entitlement_ended_at: Time.current)
     sign_in_as @owner_a_user
 
-    get vessel_path(@owner_a_vessel)
+    get root_path
 
     assert_response :success
-    assert_includes response.body, @owner_a_vessel.name
+    assert_includes response.body, "Your binder is not available right now."
+    assert_not_includes response.body, @owner_a_vessel.name
+
+    get vessel_path(@owner_a_vessel)
+    assert_response :not_found
   end
 
   test "owner cannot access another owner's direct object URLs" do
@@ -568,6 +572,8 @@ class AccessControlTest < ActionDispatch::IntegrationTest
 
     @owner_a_account = create_account(name: "Elliott Family")
     @owner_b_account = create_account(name: "Harbor North")
+    qualify_self_managed_subscription(@owner_a_account)
+    qualify_self_managed_subscription(@owner_b_account)
     @owner_a_vessel = create_vessel(account: @owner_a_account, name: "Blue Meridian")
     @owner_b_vessel = create_vessel(account: @owner_b_account, name: "Tide Runner")
 

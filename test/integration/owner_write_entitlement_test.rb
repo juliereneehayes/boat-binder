@@ -128,7 +128,7 @@ class OwnerWriteEntitlementTest < ActionDispatch::IntegrationTest
         primary_photo: fixture_file_upload("sample.png", "image/png")
       }
     }
-    assert_access_denied_redirect
+    assert_response :not_found
     assert_equal "Entitlement Vessel", @vessel.reload.name
     assert_equal photo_blob_id, @vessel.primary_photo.blob.id
 
@@ -141,7 +141,7 @@ class OwnerWriteEntitlementTest < ActionDispatch::IntegrationTest
         }
       }
     end
-    assert_access_denied_redirect
+    assert_response :not_found
 
     patch document_path(document), params: {
       document: {
@@ -150,14 +150,14 @@ class OwnerWriteEntitlementTest < ActionDispatch::IntegrationTest
         file: fixture_file_upload("sample.png", "image/png")
       }
     }
-    assert_access_denied_redirect
+    assert_response :not_found
     assert_equal "Existing registration", document.reload.title
     assert_equal document_blob_id, document.file.blob.id
 
     assert_no_difference -> { Document.count } do
       delete document_path(document)
     end
-    assert_access_denied_redirect
+    assert_response :not_found
 
     assert_no_difference -> { Reminder.count } do
       post reminders_path, params: {
@@ -213,13 +213,13 @@ class OwnerWriteEntitlementTest < ActionDispatch::IntegrationTest
     assert_access_denied_redirect
 
     delete primary_photo_vessel_path(@vessel)
-    assert_access_denied_redirect
+    assert_response :not_found
     assert_equal photo_blob_id, @vessel.reload.primary_photo.blob.id
     assert_equal original_blob_count, ActiveStorage::Blob.count
     assert_equal original_attachment_count, ActiveStorage::Attachment.count
   end
 
-  test "non qualifying editor retains reads and loses existing write controls" do
+  test "read only grace editor retains reads and loses existing write controls" do
     document = @vessel.documents.create!(
       account: @account,
       title: "Readable document",
@@ -237,29 +237,40 @@ class OwnerWriteEntitlementTest < ActionDispatch::IntegrationTest
       body: "Still available",
       note_type: "general"
     )
+    @account.subscription.update!(
+      provider: Subscription::STRIPE_PROVIDER,
+      plan: "self_managed",
+      status: "canceled",
+      external_customer_id: "cus_#{@account.id}",
+      external_subscription_id: "sub_#{@account.id}",
+      entitlement_ended_at: @now - 1.day,
+      last_synced_at: @now - 1.minute
+    )
     sign_in_as @owner
 
-    get vessel_path(@vessel)
+    travel_to @now do
+      get vessel_path(@vessel)
 
-    assert_response :success
-    assert_includes response.body, document.title
-    assert_includes response.body, reminder.title
-    assert_includes response.body, note.title
-    assert_select "a[href=?]", edit_vessel_path(@vessel), count: 0
-    assert_select "a[href=?]", new_vessel_document_path(@vessel), count: 0
-    assert_select "form[action=?]", vessel_binder_notes_path(@vessel), count: 0
-    assert_select "a[href=?]", edit_vessel_binder_note_path(@vessel, note), count: 0
+      assert_response :success
+      assert_includes response.body, document.title
+      assert_includes response.body, reminder.title
+      assert_includes response.body, note.title
+      assert_select "a[href=?]", edit_vessel_path(@vessel), count: 0
+      assert_select "a[href=?]", new_vessel_document_path(@vessel), count: 0
+      assert_select "form[action=?]", vessel_binder_notes_path(@vessel), count: 0
+      assert_select "a[href=?]", edit_vessel_binder_note_path(@vessel, note), count: 0
 
-    get document_path(document)
-    assert_response :success
-    assert_select "a[href=?]", edit_document_path(document), count: 0
-    assert_select "form[action=?]", document_path(document), count: 0
+      get document_path(document)
+      assert_response :success
+      assert_select "a[href=?]", edit_document_path(document), count: 0
+      assert_select "form[action=?]", document_path(document), count: 0
 
-    get reminders_path
-    assert_response :success
-    assert_includes response.body, reminder.title
-    assert_select "a[href=?]", edit_reminder_path(reminder), count: 0
-    assert_select "form[action=?]", reminder_path(reminder, status_action: "complete"), count: 0
+      get reminders_path
+      assert_response :success
+      assert_includes response.body, reminder.title
+      assert_select "a[href=?]", edit_reminder_path(reminder), count: 0
+      assert_select "form[action=?]", reminder_path(reminder, status_action: "complete"), count: 0
+    end
   end
 
   test "qualifying entitlement cannot replace account membership scope" do
@@ -305,7 +316,7 @@ class OwnerWriteEntitlementTest < ActionDispatch::IntegrationTest
 
     patch vessel_path(@vessel), params: { asset: { name: "Blocked inactive account update" } }
 
-    assert_access_denied_redirect
+    assert_response :not_found
     assert_equal "Entitlement Vessel", @vessel.reload.name
   end
 
@@ -333,7 +344,12 @@ class OwnerWriteEntitlementTest < ActionDispatch::IntegrationTest
 
     patch vessel_path(@vessel), params: { asset: { name: "Blocked #{label}" } }
 
-    assert_access_denied_redirect
+    lifecycle_phase = Billing::SelfManagedEntitlement.new(account: @account, now: @now).lifecycle_phase
+    if Authorization::OWNER_READABLE_LIFECYCLE_PHASES.include?(lifecycle_phase)
+      assert_access_denied_redirect
+    else
+      assert_response :not_found
+    end
     assert_equal original_name, @vessel.reload.name, "#{label} should not grant write access"
   end
 

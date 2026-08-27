@@ -530,6 +530,7 @@ class VesselManagementTest < ActionDispatch::IntegrationTest
     owner_vessel.primary_photo.attach(fixture_file_upload("sample.jpg", "image/jpeg"))
     other_vessel.primary_photo.attach(fixture_file_upload("sample.png", "image/png"))
     owner = create_user(email: "owner-photo-scope@example.test", role: "owner")
+    qualify_self_managed_subscription(owner_account)
     create_account_membership(user: owner, account: owner_account)
     sign_in_as owner
 
