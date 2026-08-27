@@ -184,6 +184,30 @@ class OwnerReadLifecycleTest < ActionDispatch::IntegrationTest
     end
   end
 
+  test "active Local Legacy subscription denies owner binder reads" do
+    @account.subscription.update!(
+      provider: Subscription::LOCAL_PROVIDER,
+      plan: "legacy",
+      status: "active"
+    )
+
+    assert_unsupported_plan_owner_is_restricted
+  end
+
+  test "active Stripe Starter subscription denies owner binder reads" do
+    configure_current_entitlement
+    @account.subscription.update!(plan: "starter")
+
+    assert_unsupported_plan_owner_is_restricted
+  end
+
+  test "active Stripe Professional subscription denies owner binder reads" do
+    configure_current_entitlement
+    @account.subscription.update!(plan: "professional")
+
+    assert_unsupported_plan_owner_is_restricted
+  end
+
   test "mixed memberships expose only records and counts from readable accounts" do
     configure_current_entitlement
     restricted_account = create_account(name: "Restricted Lifecycle Account")
@@ -374,8 +398,22 @@ class OwnerReadLifecycleTest < ActionDispatch::IntegrationTest
     assert_select "a[href=?]", vessels_path, count: 0
     assert_select "a[href=?]", documents_path, count: 0
     assert_select "a[href=?]", service_visits_path, count: 0
+    assert_select "a[href*='/rails/active_storage']", count: 0
+    assert_select "img[src*='/rails/active_storage']", count: 0
     assert_select "form[action=?]", session_path, minimum: 1
     assert_select "a[href=?]", billing_checkout_path, text: "View Self Managed plans", count: 1
+  end
+
+  def assert_unsupported_plan_owner_is_restricted
+    sign_in_as @owner
+    assert_redirected_to root_path
+    original_state = persisted_state
+
+    travel_to @now do
+      assert_restricted_owner_state
+    end
+
+    assert_equal original_state, persisted_state
   end
 
   def configure_current_entitlement(account: @account)

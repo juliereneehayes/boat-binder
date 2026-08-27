@@ -41,39 +41,75 @@ class OwnerWriteEntitlementTest < ActionDispatch::IntegrationTest
     sign_in_as @owner
 
     configurations = {
-      "local legacy" => ->(subscription) {
-        subscription.update!(
-          provider: Subscription::LOCAL_PROVIDER,
-          plan: "legacy",
-          status: "active"
-        )
+      "local legacy" => {
+        configure: ->(subscription) {
+          subscription.update!(
+            provider: Subscription::LOCAL_PROVIDER,
+            plan: "legacy",
+            status: "active"
+          )
+        },
+        expected_response: :not_found
       },
-      "wrong provider" => ->(subscription) { subscription.update!(provider: Subscription::LOCAL_PROVIDER) },
-      "wrong plan" => ->(subscription) { subscription.update!(plan: "professional") },
-      "missing customer identifier" => ->(subscription) { subscription.update!(external_customer_id: nil) },
-      "missing subscription identifier" => ->(subscription) { subscription.update!(external_subscription_id: nil) },
-      "missing synchronization time" => ->(subscription) { subscription.update!(last_synced_at: nil) },
-      "missing entitlement end" => ->(subscription) { subscription.update!(current_period_ends_at: nil) },
-      "expired active period" => ->(subscription) { subscription.update!(current_period_ends_at: @now - 1.second) },
-      "expired trial" => ->(subscription) {
-        subscription.update!(status: "trialing", trial_ends_at: @now - 1.second)
+      "wrong provider" => {
+        configure: ->(subscription) { subscription.update!(provider: Subscription::LOCAL_PROVIDER) },
+        expected_response: :not_found
+      },
+      "wrong plan" => {
+        configure: ->(subscription) { subscription.update!(plan: "professional") },
+        expected_response: :not_found
+      },
+      "missing customer identifier" => {
+        configure: ->(subscription) { subscription.update!(external_customer_id: nil) },
+        expected_response: :not_found
+      },
+      "missing subscription identifier" => {
+        configure: ->(subscription) { subscription.update!(external_subscription_id: nil) },
+        expected_response: :not_found
+      },
+      "missing synchronization time" => {
+        configure: ->(subscription) { subscription.update!(last_synced_at: nil) },
+        expected_response: :not_found
+      },
+      "missing entitlement end" => {
+        configure: ->(subscription) { subscription.update!(current_period_ends_at: nil) },
+        expected_response: :not_found
+      },
+      "expired active period" => {
+        configure: ->(subscription) { subscription.update!(current_period_ends_at: @now - 1.second) },
+        expected_response: :access_denied
+      },
+      "expired trial" => {
+        configure: ->(subscription) {
+          subscription.update!(status: "trialing", trial_ends_at: @now - 1.second)
+        },
+        expected_response: :access_denied
       }
     }
 
-    Subscription::STATUSES.excluding("active", "trialing").each do |status|
-      configurations[status] = ->(subscription) { subscription.update!(status:) }
+    {
+      "legacy" => :not_found,
+      "past_due" => :access_denied,
+      "canceled" => :not_found,
+      "expired" => :not_found,
+      "suspended" => :not_found
+    }.each do |status, expected_response|
+      configurations[status] = {
+        configure: ->(subscription) { subscription.update!(status:) },
+        expected_response:
+      }
     end
 
     travel_to @now do
-      configurations.each do |label, configure|
+      configurations.each do |label, configuration|
         subscription = configure_verified_subscription
-        configure.call(subscription)
+        configuration.fetch(:configure).call(subscription)
 
-        assert_denied_vessel_update(label)
+        assert_denied_vessel_update(label, expected_response: configuration.fetch(:expected_response))
       end
 
       @account.subscription.destroy!
-      assert_denied_vessel_update("missing subscription")
+      assert_denied_vessel_update("missing subscription", expected_response: :not_found)
     end
   end
 
@@ -82,10 +118,10 @@ class OwnerWriteEntitlementTest < ActionDispatch::IntegrationTest
 
     travel_to @now do
       configure_verified_subscription(status: "active", current_period_ends_at: @now)
-      assert_denied_vessel_update("active boundary")
+      assert_denied_vessel_update("active boundary", expected_response: :access_denied)
 
       configure_verified_subscription(status: "trialing", trial_ends_at: @now)
-      assert_denied_vessel_update("trial boundary")
+      assert_denied_vessel_update("trial boundary", expected_response: :access_denied)
     end
   end
 
@@ -339,16 +375,18 @@ class OwnerWriteEntitlementTest < ActionDispatch::IntegrationTest
     subscription
   end
 
-  def assert_denied_vessel_update(label)
+  def assert_denied_vessel_update(label, expected_response:)
     original_name = @vessel.reload.name
 
     patch vessel_path(@vessel), params: { asset: { name: "Blocked #{label}" } }
 
-    lifecycle_phase = Billing::SelfManagedEntitlement.new(account: @account, now: @now).lifecycle_phase
-    if Authorization::OWNER_READABLE_LIFECYCLE_PHASES.include?(lifecycle_phase)
+    case expected_response
+    when :access_denied
       assert_access_denied_redirect
-    else
+    when :not_found
       assert_response :not_found
+    else
+      raise ArgumentError, "unsupported expected response: #{expected_response.inspect}"
     end
     assert_equal original_name, @vessel.reload.name, "#{label} should not grant write access"
   end
