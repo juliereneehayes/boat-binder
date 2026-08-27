@@ -2,7 +2,7 @@ require "test_helper"
 
 module Billing
   class SelfManagedEntitlementTest < ActiveSupport::TestCase
-    BOUNDARY_DELTA = 0.000001
+    BOUNDARY_DELTA = Rational(1, 1_000_000)
 
     setup do
       @now = Time.zone.local(2026, 8, 21, 12, 0, 0)
@@ -17,6 +17,7 @@ module Billing
       assert_equal @now + 1.month, entitlement.entitlement_ends_at
       assert_nil entitlement.entitlement_ended_at
       assert_equal :current_entitlement, entitlement.entitlement_end_reason
+      assert_equal :current_entitlement, entitlement.lifecycle_phase
     end
 
     test "active subscription fails at and after its verified current period end" do
@@ -31,6 +32,7 @@ module Billing
         assert_equal period_end, entitlement.entitlement_ends_at
         assert_equal period_end, entitlement.entitlement_ended_at
         assert_equal :verified_paid_period_end, entitlement.entitlement_end_reason
+        assert_equal :read_only_grace, entitlement.lifecycle_phase
       end
     end
 
@@ -48,6 +50,7 @@ module Billing
       assert_equal :canceling_at_period_end, entitlement.reason
       assert_equal period_end, entitlement.entitlement_ends_at
       assert_nil entitlement.entitlement_ended_at
+      assert_equal :current_entitlement, entitlement.lifecycle_phase
     end
 
     test "scheduled cancellation fails at and after current period end" do
@@ -66,6 +69,7 @@ module Billing
         assert_equal period_end, entitlement.entitlement_ends_at
         assert_equal period_end, entitlement.entitlement_ended_at
         assert_equal :verified_paid_period_end, entitlement.entitlement_end_reason
+        assert_equal :read_only_grace, entitlement.lifecycle_phase
       end
     end
 
@@ -78,6 +82,7 @@ module Billing
       assert_equal :trialing, entitlement.reason
       assert_equal trial_end, entitlement.entitlement_ends_at
       assert_nil entitlement.entitlement_ended_at
+      assert_equal :current_entitlement, entitlement.lifecycle_phase
     end
 
     test "trial fails at and after verified trial end" do
@@ -92,6 +97,7 @@ module Billing
         assert_equal trial_end, entitlement.entitlement_ends_at
         assert_equal trial_end, entitlement.entitlement_ended_at
         assert_equal :verified_trial_end, entitlement.entitlement_end_reason
+        assert_equal :read_only_grace, entitlement.lifecycle_phase
       end
     end
 
@@ -110,6 +116,7 @@ module Billing
       assert_equal period_end, entitlement.entitlement_ended_at
       assert_not_equal cancellation_requested_at, entitlement.entitlement_ended_at
       assert_equal :verified_paid_period_end, entitlement.entitlement_end_reason
+      assert_equal :read_only_grace, entitlement.lifecycle_phase
     end
 
     test "cancellation reversal restores current evaluation without erasing history" do
@@ -126,6 +133,7 @@ module Billing
       assert entitlement.qualifying?
       assert_equal :active, entitlement.reason
       assert_nil entitlement.entitlement_ended_at
+      assert_equal :current_entitlement, entitlement.lifecycle_phase
       assert_equal historical_end, account.subscription.entitlement_ended_at
     end
 
@@ -140,6 +148,7 @@ module Billing
 
       assert_equal effective_end, entitlement.entitlement_ended_at
       assert_equal :verified_lifecycle_end, entitlement.entitlement_end_reason
+      assert_equal :read_only_grace, entitlement.lifecycle_phase
     end
 
     test "immediate cancellation without a verified effective boundary remains unavailable" do
@@ -148,6 +157,58 @@ module Billing
 
       assert_nil entitlement.entitlement_ended_at
       assert_equal :entitlement_end_unavailable, entitlement.entitlement_end_reason
+      assert_equal :unavailable, entitlement.lifecycle_phase
+    end
+
+    test "verified ending boundary transitions exactly through grace retention and archive eligibility" do
+      ended_at = Time.zone.local(2027, 3, 1, 12)
+      account = verified_account(status: "canceled", entitlement_ended_at: ended_at)
+      account.subscription.update!(last_synced_at: ended_at)
+      grace_boundary = ended_at + 90.days
+      archive_boundary = ended_at + 12.months
+
+      expected_phases = {
+        grace_boundary - BOUNDARY_DELTA => :read_only_grace,
+        grace_boundary => :retained_inactive,
+        grace_boundary + BOUNDARY_DELTA => :retained_inactive,
+        archive_boundary - BOUNDARY_DELTA => :retained_inactive,
+        archive_boundary => :archive_eligible,
+        archive_boundary + BOUNDARY_DELTA => :archive_eligible
+      }
+
+      expected_phases.each do |evaluation_time, expected_phase|
+        entitlement = entitlement_for(account, now: evaluation_time)
+
+        assert_equal expected_phase, entitlement.lifecycle_phase
+        assert_equal expected_phase, entitlement.lifecycle_phase
+      end
+    end
+
+    test "suspended subscription requires manual review regardless of historical ending boundary" do
+      historical_end = @now - 1.year
+      account = verified_account(status: "suspended", entitlement_ended_at: historical_end)
+      entitlement = entitlement_for(account)
+
+      assert_not entitlement.qualifying?
+      assert_equal :non_qualifying_status, entitlement.reason
+      assert_equal historical_end, entitlement.entitlement_ended_at
+      assert_equal :suspended_policy_pending, entitlement.entitlement_end_reason
+      assert_equal :manual_review, entitlement.lifecycle_phase
+      assert_equal historical_end, account.subscription.entitlement_ended_at
+    end
+
+    test "period end cancellation without paid through boundary remains unavailable" do
+      account = verified_account(
+        status: "canceled",
+        current_period_ends_at: nil,
+        cancel_at_period_end: true,
+        entitlement_ended_at: @now - 1.month
+      )
+      entitlement = entitlement_for(account)
+
+      assert_nil entitlement.entitlement_ended_at
+      assert_equal :entitlement_end_unavailable, entitlement.entitlement_end_reason
+      assert_equal :unavailable, entitlement.lifecycle_phase
     end
 
     test "past due timing remains distinct from the post entitlement boundary" do
@@ -160,21 +221,32 @@ module Billing
 
       assert_nil entitlement.entitlement_ended_at
       assert_equal :past_due_policy_pending, entitlement.entitlement_end_reason
+      assert_equal :payment_recovery_pending, entitlement.lifecycle_phase
     end
 
     test "verified reactivation supersedes a historical ending boundary" do
       historical_end = @now - 1.month
+      historical_trial_end = @now - 2.months
       account = verified_account(
         status: "active",
+        trial_ends_at: historical_trial_end,
         current_period_ends_at: @now + 1.month,
         entitlement_ended_at: historical_end
       )
+      account_id = account.id
+      subscription_id = account.subscription.id
       entitlement = entitlement_for(account)
 
       assert entitlement.qualifying?
       assert_nil entitlement.entitlement_ended_at
       assert_equal :current_entitlement, entitlement.entitlement_end_reason
-      assert_equal historical_end, account.subscription.entitlement_ended_at
+      assert_equal :current_entitlement, entitlement.lifecycle_phase
+      subscription = account.reload.subscription
+      assert_equal account_id, account.id
+      assert_equal subscription_id, subscription.id
+      assert_equal historical_trial_end, subscription.trial_ends_at
+      assert_equal historical_end, subscription.entitlement_ended_at
+      assert_equal 1, Subscription.where(account:).count
     end
 
     test "trial with no verified trial end fails closed" do
@@ -185,6 +257,7 @@ module Billing
       assert_equal :missing_entitlement_end, entitlement.reason
       assert_nil entitlement.entitlement_ends_at
       assert_nil entitlement.entitlement_ended_at
+      assert_equal :unavailable, entitlement.lifecycle_phase
     end
 
     test "active subscription with no verified period end fails closed" do
@@ -195,6 +268,7 @@ module Billing
       assert_equal :missing_entitlement_end, entitlement.reason
       assert_nil entitlement.entitlement_ends_at
       assert_nil entitlement.entitlement_ended_at
+      assert_equal :unavailable, entitlement.lifecycle_phase
     end
 
     test "scheduled cancellation with no verified period end fails closed" do
@@ -207,6 +281,7 @@ module Billing
 
       assert_not entitlement.qualifying?
       assert_equal :missing_entitlement_end, entitlement.reason
+      assert_equal :unavailable, entitlement.lifecycle_phase
     end
 
     test "invalid entitlement end value fails closed" do
@@ -217,6 +292,7 @@ module Billing
       assert_not entitlement.qualifying?
       assert_equal :missing_entitlement_end, entitlement.reason
       assert_nil entitlement.entitlement_ends_at
+      assert_equal :unavailable, entitlement.lifecycle_phase
     end
 
     test "missing subscription fails closed" do
@@ -230,6 +306,7 @@ module Billing
 
       assert_not entitlement.qualifying?
       assert_equal :missing_subscription, entitlement.reason
+      assert_equal :unavailable, entitlement.lifecycle_phase
     end
 
     test "inactive account blocks access without fabricating an end for a current Stripe entitlement" do
@@ -241,6 +318,7 @@ module Billing
       assert_equal :inactive_account, entitlement.reason
       assert_nil entitlement.entitlement_ended_at
       assert_equal :current_entitlement, entitlement.entitlement_end_reason
+      assert_equal :current_entitlement, entitlement.lifecycle_phase
     end
 
     test "inactive account retains a verified historical Stripe ending boundary" do
@@ -253,6 +331,7 @@ module Billing
       assert_equal :inactive_account, entitlement.reason
       assert_equal historical_end, entitlement.entitlement_ended_at
       assert_equal :verified_lifecycle_end, entitlement.entitlement_end_reason
+      assert_equal :read_only_grace, entitlement.lifecycle_phase
     end
 
     test "local legacy subscription fails closed" do
@@ -262,6 +341,7 @@ module Billing
       assert_not entitlement.qualifying?
       assert_equal :wrong_provider, entitlement.reason
       assert_nil entitlement.entitlement_ended_at
+      assert_equal :unavailable, entitlement.lifecycle_phase
     end
 
     test "non Stripe provider fails closed" do
@@ -271,6 +351,7 @@ module Billing
 
       assert_not entitlement.qualifying?
       assert_equal :wrong_provider, entitlement.reason
+      assert_equal :unavailable, entitlement.lifecycle_phase
     end
 
     test "non Self Managed plan fails closed" do
@@ -280,6 +361,7 @@ module Billing
 
       assert_not entitlement.qualifying?
       assert_equal :wrong_plan, entitlement.reason
+      assert_equal :unavailable, entitlement.lifecycle_phase
     end
 
     test "missing Stripe identifiers or synchronization timestamp fail closed" do
@@ -291,6 +373,7 @@ module Billing
         assert_not entitlement.qualifying?, "#{attribute} should be required"
         assert_equal :missing_verification, entitlement.reason
         assert_nil entitlement.entitlement_ended_at
+        assert_equal :unavailable, entitlement.lifecycle_phase
       end
     end
 
@@ -301,6 +384,7 @@ module Billing
 
       assert_not entitlement.qualifying?
       assert_equal :missing_verification, entitlement.reason
+      assert_equal :unavailable, entitlement.lifecycle_phase
     end
 
     test "every locally supported non qualifying status fails closed" do
@@ -323,6 +407,7 @@ module Billing
 
       assert_not entitlement.qualifying?
       assert_equal :non_qualifying_status, entitlement.reason
+      assert_equal :unavailable, entitlement.lifecycle_phase
     end
 
     test "evaluation does not make a synchronous Stripe request" do
@@ -336,6 +421,7 @@ module Billing
 
       assert entitlement.qualifying?
       assert_nil entitlement.entitlement_ended_at
+      assert_equal :current_entitlement, entitlement.lifecycle_phase
     ensure
       Stripe::Subscription.define_singleton_method(:retrieve, original_retrieve) if original_retrieve
     end
