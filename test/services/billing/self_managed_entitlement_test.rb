@@ -232,13 +232,27 @@ module Billing
       assert_equal :missing_subscription, entitlement.reason
     end
 
-    test "inactive account fails closed" do
+    test "inactive account blocks access without fabricating an end for a current Stripe entitlement" do
       account = verified_account(status: "active", current_period_ends_at: @now + 1.month)
       account.update!(active: false)
       entitlement = entitlement_for(account)
 
       assert_not entitlement.qualifying?
       assert_equal :inactive_account, entitlement.reason
+      assert_nil entitlement.entitlement_ended_at
+      assert_equal :current_entitlement, entitlement.entitlement_end_reason
+    end
+
+    test "inactive account retains a verified historical Stripe ending boundary" do
+      historical_end = @now - 1.hour
+      account = verified_account(status: "canceled", entitlement_ended_at: historical_end)
+      account.update!(active: false)
+      entitlement = entitlement_for(account)
+
+      assert_not entitlement.qualifying?
+      assert_equal :inactive_account, entitlement.reason
+      assert_equal historical_end, entitlement.entitlement_ended_at
+      assert_equal :verified_lifecycle_end, entitlement.entitlement_end_reason
     end
 
     test "local legacy subscription fails closed" do

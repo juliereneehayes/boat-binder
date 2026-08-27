@@ -71,6 +71,7 @@ module Billing
     end
 
     def evaluate_lifecycle_end
+      # Account activation gates application access, not verified Stripe lifecycle evidence.
       subscription_result = subscription_evaluation
 
       case subscription_result.fetch(:reason)
