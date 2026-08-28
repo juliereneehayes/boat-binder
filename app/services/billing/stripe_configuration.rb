@@ -30,6 +30,10 @@ module Billing
         Rails.configuration.x.stripe.self_managed_annual_price_id.presence
       end
 
+      def billing_portal_configuration_id
+        Rails.configuration.x.stripe.billing_portal_configuration_id.presence
+      end
+
       def webhook_secret!
         webhook_secret || raise(MissingConfigurationError, "Stripe webhook signing secret is not configured")
       end
@@ -43,6 +47,11 @@ module Billing
         return value unless value.nil?
 
         raise MissingConfigurationError, "Stripe webhook mode is not configured"
+      end
+
+      def billing_portal_configuration_id!
+        billing_portal_configuration_id ||
+          raise(MissingConfigurationError, "Stripe Billing Portal configuration is not configured")
       end
     end
   end

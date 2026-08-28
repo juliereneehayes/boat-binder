@@ -57,6 +57,7 @@ These are required before production transactional email can actually deliver.
 - `STRIPE_LIVEMODE` - expected webhook mode (`false` for development/staging, `true` for production).
 - `STRIPE_SELF_MANAGED_MONTHLY_PRICE_ID` - Stripe Price ID for the Self Managed monthly option.
 - `STRIPE_SELF_MANAGED_ANNUAL_PRICE_ID` - Stripe Price ID for the Self Managed annual option.
+- `STRIPE_BILLING_PORTAL_CONFIGURATION_ID` - environment-specific Billing Portal configuration ID.
 
 Production Stripe values are stored in Heroku environment/config vars. The initializer prefers those
 environment values and retains its existing Rails-credentials fallback for API and webhook secrets in
@@ -68,6 +69,11 @@ Checkout requires the secret API key and both Price IDs. The webhook endpoint re
 secret independently. Production-style environments must configure `STRIPE_LIVEMODE` explicitly;
 mode-mismatched events are recorded as ignored before reconciliation. Use `false` with test-mode
 keys in development/staging and `true` with live-mode keys in production.
+
+Billing Portal session creation requires the secret API key, an explicit
+`STRIPE_BILLING_PORTAL_CONFIGURATION_ID`, and `STRIPE_LIVEMODE`. Staging must use a test-mode Portal
+configuration; production must use a separately configured live-mode Portal configuration. Boat
+Binder never silently falls back to Stripe's default Portal configuration.
 
 ## Build Week Demo
 

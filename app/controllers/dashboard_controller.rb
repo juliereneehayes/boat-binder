@@ -6,6 +6,7 @@ class DashboardController < ApplicationController
       return
     end
 
+    @billing_portal_available = billing_portal_available?
     @dashboard_account = scoped_accounts.limit(2).to_a.then { |accounts| accounts.one? ? accounts.first : nil }
     @vessels = scoped_vessels.active.includes(:account, :reminders, :service_visits).with_attached_primary_photo.ordered
     @upcoming_reminders = scoped_reminders.includes(asset: :account).upcoming.limit(6)
@@ -22,6 +23,13 @@ class DashboardController < ApplicationController
 
   def self_managed_plans_available?
     Billing::StripeCheckoutAccountResolver.call(current_user).present?
+  rescue Billing::StripeCheckoutAccountResolver::ResolutionError
+    false
+  end
+
+  def billing_portal_available?
+    account = Billing::StripeCheckoutAccountResolver.call(current_user)
+    Billing::StripePortalSessionCreator.eligible_account?(account)
   rescue Billing::StripeCheckoutAccountResolver::ResolutionError
     false
   end

@@ -68,6 +68,56 @@ stable Boat Binder option key. Webhook synchronization requires those signed ref
 cross-checks the Stripe Customer, Subscription, Session, Price, and local Account associations. The
 signed references are additional correlation defenses, not replacements for identifier checks.
 
+## Billing Portal First Slice
+
+An authenticated active Owner with exactly one active Editor membership for an active client Account
+can create a fresh Stripe Billing Portal session through `POST /billing/portal`. Boat Binder resolves
+the Account and its verified Stripe Customer association server-side. It permits only verified Self
+Managed `current_entitlement` and `payment_recovery_pending` lifecycle phases; Read-only members,
+ambiguous Account relationships, unsupported phases, plans, providers, and unverified records fail
+closed.
+
+Set `STRIPE_BILLING_PORTAL_CONFIGURATION_ID` to an explicit configuration created for the current
+Stripe environment. Staging uses a test-mode configuration with `STRIPE_LIVEMODE=false`; production
+uses a separate live-mode configuration with `STRIPE_LIVEMODE=true`. The approved configuration
+should enable payment-method and invoice recovery plus cancellation at period end and its supported
+reversal. Keep plan switching, quantity changes, promotion codes, and trial behavior disabled.
+
+Portal sessions are created only after the authorized POST. Ordinary rendering and authorization do
+not call Stripe. Boat Binder sends its configured application root URL as the return destination and
+validates the returned Customer, Portal configuration, livemode, return URL, and HTTPS
+`billing.stripe.com` session destination before redirecting. It does not log or persist the short-lived
+Portal URL.
+
+Returning from Portal is informational. It does not mark an invoice paid, clear cancellation, alter
+the local Subscription, restore entitlement, or create billing records. Authenticated canonical
+webhooks remain authoritative.
+
+### Staging Portal Validation
+
+1. In the Stripe test environment, create and save a dedicated Portal configuration. Enable payment
+   method updates, invoice history/payment recovery, and cancellation at period end. Keep plan and
+   quantity changes and promotion codes disabled.
+2. Configure staging with that test configuration ID, Stripe test credentials, and
+   `STRIPE_LIVEMODE=false`. Do not reuse the production configuration.
+3. Sign in as a fictional active Owner with one active Editor membership and a verified Self Managed
+   subscription. Confirm **Manage billing** opens Stripe's hosted Portal.
+4. Repeat for active, trialing, scheduled-cancellation, and `past_due` fixtures. Confirm Read-only,
+   inactive, unsupported, and multi-Account users cannot create a session.
+5. For payment recovery, verify whether the subscription has its own default payment method. A Portal
+   update sets the Customer invoice default, which may not replace a subscription-level default.
+6. Confirm the intended payment method is applied to the outstanding invoice and explicitly trigger
+   or wait for the configured invoice payment/retry. A changed payment method or successful Portal
+   return is not evidence that payment succeeded.
+7. Confirm verified invoice/subscription webhooks synchronize the canonical Stripe status before
+   Boat Binder restores write entitlement.
+8. Schedule cancellation and confirm paid-through access remains current through the verified period
+   end. Reverse it in Portal while Stripe supports reversal, then confirm the resulting canonical
+   webhook clears the local scheduled-cancellation state.
+
+These Stripe Dashboard and end-to-end recovery checks remain operator-run external validation; the
+automated suite stubs Stripe and does not prove deployed Portal configuration or invoice behavior.
+
 Verified events actively processed:
 
 - `checkout.session.completed` verifies the pending attempt, then associates its Stripe Customer and
@@ -267,5 +317,5 @@ and use live Price IDs only in production. Verify delivery from Stripe Dashboard
 before considering production webhook setup complete. Staging uses its own endpoint secret, test
 keys and Prices, and `STRIPE_LIVEMODE=false`; the two environments must not share Stripe configuration.
 
-Billing Portal, application access enforcement, invoice-history storage/UI, customer payment-failure
-emails, public signup, and entitlement enforcement remain out of scope.
+Broader Billing Portal features, terminal-subscription replacement, full Account Billing UI,
+invoice-history storage/UI, customer payment-failure emails, and public signup remain out of scope.
