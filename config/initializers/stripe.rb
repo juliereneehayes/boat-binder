@@ -13,5 +13,7 @@ Rails.application.config.x.stripe.self_managed_monthly_price_id =
   ENV["STRIPE_SELF_MANAGED_MONTHLY_PRICE_ID"].presence
 Rails.application.config.x.stripe.self_managed_annual_price_id =
   ENV["STRIPE_SELF_MANAGED_ANNUAL_PRICE_ID"].presence
+Rails.application.config.x.stripe.billing_portal_configuration_id =
+  ENV["STRIPE_BILLING_PORTAL_CONFIGURATION_ID"].presence
 
 Stripe.api_key = Rails.application.config.x.stripe.secret_key if Rails.application.config.x.stripe.secret_key.present?
