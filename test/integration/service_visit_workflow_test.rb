@@ -53,6 +53,7 @@ class ServiceVisitWorkflowTest < ActionDispatch::IntegrationTest
     other_vessel = create_vessel(account: other_account, name: "Tide Runner")
     captain = create_user(email: "captain-scope@example.test")
     owner = create_user(email: "owner-visits@example.test", role: "owner")
+    qualify_self_managed_subscription(owner_account)
     create_account_membership(user: owner, account: owner_account)
     owner_vessel.service_visits.create!(performed_by_user: captain, visit_date: Date.current, summary: "Owner visible visit")
     other_vessel.service_visits.create!(performed_by_user: captain, visit_date: Date.current, summary: "Restricted visit")

@@ -145,10 +145,10 @@ module ApplicationHelper
   end
 
   def app_nav_items
-    items = [
-      [ "Dashboard", root_path, "D" ],
-      [ "Vessels", vessels_path, "V" ]
-    ]
+    items = [ [ "Dashboard", root_path, "D" ] ]
+    return items if owner_lifecycle_restricted?
+
+    items << [ "Vessels", vessels_path, "V" ]
     items << [ "Owners", owners_path, "O" ] if internal_user?
     items << [ "Documents", documents_path, "F" ]
     items << [ "Service Visits", service_visits_path, "S" ]

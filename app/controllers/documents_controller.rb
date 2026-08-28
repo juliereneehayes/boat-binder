@@ -3,6 +3,7 @@ class DocumentsController < ApplicationController
   DOCUMENT_ATTRIBUTE_KEYS = %i[title document_type notes].freeze
   DOCUMENT_RELATIONSHIP_KEYS = %i[account_id asset_id].freeze
 
+  before_action :require_owner_read_access!, only: :index
   before_action :set_vessel, only: %i[new create]
   before_action :require_document_write_access!, only: %i[new create]
   before_action :set_document, only: %i[show edit update destroy]

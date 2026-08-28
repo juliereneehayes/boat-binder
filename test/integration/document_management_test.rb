@@ -172,6 +172,7 @@ class DocumentManagementTest < ActionDispatch::IntegrationTest
     account = create_account(name: "Elliott Family")
     document = Document.create!(account: account, title: "Read only document", document_type: "other")
     read_only_owner = create_user(email: "document-readonly@example.test", role: "owner")
+    qualify_self_managed_subscription(account)
     create_account_membership(user: read_only_owner, account: account, access_level: "read_only")
     sign_in_as read_only_owner
 

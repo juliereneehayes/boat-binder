@@ -41,39 +41,75 @@ class OwnerWriteEntitlementTest < ActionDispatch::IntegrationTest
     sign_in_as @owner
 
     configurations = {
-      "local legacy" => ->(subscription) {
-        subscription.update!(
-          provider: Subscription::LOCAL_PROVIDER,
-          plan: "legacy",
-          status: "active"
-        )
+      "local legacy" => {
+        configure: ->(subscription) {
+          subscription.update!(
+            provider: Subscription::LOCAL_PROVIDER,
+            plan: "legacy",
+            status: "active"
+          )
+        },
+        expected_response: :not_found
       },
-      "wrong provider" => ->(subscription) { subscription.update!(provider: Subscription::LOCAL_PROVIDER) },
-      "wrong plan" => ->(subscription) { subscription.update!(plan: "professional") },
-      "missing customer identifier" => ->(subscription) { subscription.update!(external_customer_id: nil) },
-      "missing subscription identifier" => ->(subscription) { subscription.update!(external_subscription_id: nil) },
-      "missing synchronization time" => ->(subscription) { subscription.update!(last_synced_at: nil) },
-      "missing entitlement end" => ->(subscription) { subscription.update!(current_period_ends_at: nil) },
-      "expired active period" => ->(subscription) { subscription.update!(current_period_ends_at: @now - 1.second) },
-      "expired trial" => ->(subscription) {
-        subscription.update!(status: "trialing", trial_ends_at: @now - 1.second)
+      "wrong provider" => {
+        configure: ->(subscription) { subscription.update!(provider: Subscription::LOCAL_PROVIDER) },
+        expected_response: :not_found
+      },
+      "wrong plan" => {
+        configure: ->(subscription) { subscription.update!(plan: "professional") },
+        expected_response: :not_found
+      },
+      "missing customer identifier" => {
+        configure: ->(subscription) { subscription.update!(external_customer_id: nil) },
+        expected_response: :not_found
+      },
+      "missing subscription identifier" => {
+        configure: ->(subscription) { subscription.update!(external_subscription_id: nil) },
+        expected_response: :not_found
+      },
+      "missing synchronization time" => {
+        configure: ->(subscription) { subscription.update!(last_synced_at: nil) },
+        expected_response: :not_found
+      },
+      "missing entitlement end" => {
+        configure: ->(subscription) { subscription.update!(current_period_ends_at: nil) },
+        expected_response: :not_found
+      },
+      "expired active period" => {
+        configure: ->(subscription) { subscription.update!(current_period_ends_at: @now - 1.second) },
+        expected_response: :access_denied
+      },
+      "expired trial" => {
+        configure: ->(subscription) {
+          subscription.update!(status: "trialing", trial_ends_at: @now - 1.second)
+        },
+        expected_response: :access_denied
       }
     }
 
-    Subscription::STATUSES.excluding("active", "trialing").each do |status|
-      configurations[status] = ->(subscription) { subscription.update!(status:) }
+    {
+      "legacy" => :not_found,
+      "past_due" => :access_denied,
+      "canceled" => :not_found,
+      "expired" => :not_found,
+      "suspended" => :not_found
+    }.each do |status, expected_response|
+      configurations[status] = {
+        configure: ->(subscription) { subscription.update!(status:) },
+        expected_response:
+      }
     end
 
     travel_to @now do
-      configurations.each do |label, configure|
+      configurations.each do |label, configuration|
         subscription = configure_verified_subscription
-        configure.call(subscription)
+        configuration.fetch(:configure).call(subscription)
 
-        assert_denied_vessel_update(label)
+        assert_denied_vessel_update(label, expected_response: configuration.fetch(:expected_response))
       end
 
       @account.subscription.destroy!
-      assert_denied_vessel_update("missing subscription")
+      assert_denied_vessel_update("missing subscription", expected_response: :not_found)
     end
   end
 
@@ -82,10 +118,10 @@ class OwnerWriteEntitlementTest < ActionDispatch::IntegrationTest
 
     travel_to @now do
       configure_verified_subscription(status: "active", current_period_ends_at: @now)
-      assert_denied_vessel_update("active boundary")
+      assert_denied_vessel_update("active boundary", expected_response: :access_denied)
 
       configure_verified_subscription(status: "trialing", trial_ends_at: @now)
-      assert_denied_vessel_update("trial boundary")
+      assert_denied_vessel_update("trial boundary", expected_response: :access_denied)
     end
   end
 
@@ -128,7 +164,7 @@ class OwnerWriteEntitlementTest < ActionDispatch::IntegrationTest
         primary_photo: fixture_file_upload("sample.png", "image/png")
       }
     }
-    assert_access_denied_redirect
+    assert_response :not_found
     assert_equal "Entitlement Vessel", @vessel.reload.name
     assert_equal photo_blob_id, @vessel.primary_photo.blob.id
 
@@ -141,7 +177,7 @@ class OwnerWriteEntitlementTest < ActionDispatch::IntegrationTest
         }
       }
     end
-    assert_access_denied_redirect
+    assert_response :not_found
 
     patch document_path(document), params: {
       document: {
@@ -150,14 +186,14 @@ class OwnerWriteEntitlementTest < ActionDispatch::IntegrationTest
         file: fixture_file_upload("sample.png", "image/png")
       }
     }
-    assert_access_denied_redirect
+    assert_response :not_found
     assert_equal "Existing registration", document.reload.title
     assert_equal document_blob_id, document.file.blob.id
 
     assert_no_difference -> { Document.count } do
       delete document_path(document)
     end
-    assert_access_denied_redirect
+    assert_response :not_found
 
     assert_no_difference -> { Reminder.count } do
       post reminders_path, params: {
@@ -213,13 +249,13 @@ class OwnerWriteEntitlementTest < ActionDispatch::IntegrationTest
     assert_access_denied_redirect
 
     delete primary_photo_vessel_path(@vessel)
-    assert_access_denied_redirect
+    assert_response :not_found
     assert_equal photo_blob_id, @vessel.reload.primary_photo.blob.id
     assert_equal original_blob_count, ActiveStorage::Blob.count
     assert_equal original_attachment_count, ActiveStorage::Attachment.count
   end
 
-  test "non qualifying editor retains reads and loses existing write controls" do
+  test "read only grace editor retains reads and loses existing write controls" do
     document = @vessel.documents.create!(
       account: @account,
       title: "Readable document",
@@ -237,29 +273,40 @@ class OwnerWriteEntitlementTest < ActionDispatch::IntegrationTest
       body: "Still available",
       note_type: "general"
     )
+    @account.subscription.update!(
+      provider: Subscription::STRIPE_PROVIDER,
+      plan: "self_managed",
+      status: "canceled",
+      external_customer_id: "cus_#{@account.id}",
+      external_subscription_id: "sub_#{@account.id}",
+      entitlement_ended_at: @now - 1.day,
+      last_synced_at: @now - 1.minute
+    )
     sign_in_as @owner
 
-    get vessel_path(@vessel)
+    travel_to @now do
+      get vessel_path(@vessel)
 
-    assert_response :success
-    assert_includes response.body, document.title
-    assert_includes response.body, reminder.title
-    assert_includes response.body, note.title
-    assert_select "a[href=?]", edit_vessel_path(@vessel), count: 0
-    assert_select "a[href=?]", new_vessel_document_path(@vessel), count: 0
-    assert_select "form[action=?]", vessel_binder_notes_path(@vessel), count: 0
-    assert_select "a[href=?]", edit_vessel_binder_note_path(@vessel, note), count: 0
+      assert_response :success
+      assert_includes response.body, document.title
+      assert_includes response.body, reminder.title
+      assert_includes response.body, note.title
+      assert_select "a[href=?]", edit_vessel_path(@vessel), count: 0
+      assert_select "a[href=?]", new_vessel_document_path(@vessel), count: 0
+      assert_select "form[action=?]", vessel_binder_notes_path(@vessel), count: 0
+      assert_select "a[href=?]", edit_vessel_binder_note_path(@vessel, note), count: 0
 
-    get document_path(document)
-    assert_response :success
-    assert_select "a[href=?]", edit_document_path(document), count: 0
-    assert_select "form[action=?]", document_path(document), count: 0
+      get document_path(document)
+      assert_response :success
+      assert_select "a[href=?]", edit_document_path(document), count: 0
+      assert_select "form[action=?]", document_path(document), count: 0
 
-    get reminders_path
-    assert_response :success
-    assert_includes response.body, reminder.title
-    assert_select "a[href=?]", edit_reminder_path(reminder), count: 0
-    assert_select "form[action=?]", reminder_path(reminder, status_action: "complete"), count: 0
+      get reminders_path
+      assert_response :success
+      assert_includes response.body, reminder.title
+      assert_select "a[href=?]", edit_reminder_path(reminder), count: 0
+      assert_select "form[action=?]", reminder_path(reminder, status_action: "complete"), count: 0
+    end
   end
 
   test "qualifying entitlement cannot replace account membership scope" do
@@ -305,7 +352,7 @@ class OwnerWriteEntitlementTest < ActionDispatch::IntegrationTest
 
     patch vessel_path(@vessel), params: { asset: { name: "Blocked inactive account update" } }
 
-    assert_access_denied_redirect
+    assert_response :not_found
     assert_equal "Entitlement Vessel", @vessel.reload.name
   end
 
@@ -328,12 +375,19 @@ class OwnerWriteEntitlementTest < ActionDispatch::IntegrationTest
     subscription
   end
 
-  def assert_denied_vessel_update(label)
+  def assert_denied_vessel_update(label, expected_response:)
     original_name = @vessel.reload.name
 
     patch vessel_path(@vessel), params: { asset: { name: "Blocked #{label}" } }
 
-    assert_access_denied_redirect
+    case expected_response
+    when :access_denied
+      assert_access_denied_redirect
+    when :not_found
+      assert_response :not_found
+    else
+      raise ArgumentError, "unsupported expected response: #{expected_response.inspect}"
+    end
     assert_equal original_name, @vessel.reload.name, "#{label} should not grant write access"
   end
 

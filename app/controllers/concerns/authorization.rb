@@ -2,9 +2,15 @@ module Authorization
   extend ActiveSupport::Concern
 
   ACCESS_DENIED_MESSAGE = "That page is not available for your account."
+  OWNER_READABLE_LIFECYCLE_PHASES = %i[
+    current_entitlement
+    read_only_grace
+    payment_recovery_pending
+  ].freeze
 
   included do
-    helper_method :current_user, :admin_user?, :internal_user?, :owner_user?, :can_manage_records?, :can_manage_account?
+    helper_method :current_user, :admin_user?, :internal_user?, :owner_user?, :can_manage_records?,
+      :can_manage_account?, :owner_lifecycle_restricted?
   end
 
   private
@@ -50,6 +56,10 @@ module Authorization
     deny_access! unless can_manage_records?(account)
   end
 
+  def require_owner_read_access!
+    deny_access! if owner_lifecycle_restricted?
+  end
+
   def deny_access!
     if request.format.html? || request.format.turbo_stream?
       redirect_to root_path, alert: ACCESS_DENIED_MESSAGE
@@ -69,7 +79,7 @@ module Authorization
   def scoped_accounts
     return Account.all if internal_user?
 
-    Account.where(id: current_user.active_account_ids)
+    Account.where(id: readable_account_ids)
   end
 
   def manageable_accounts
@@ -99,7 +109,7 @@ module Authorization
   def scoped_assets
     return Asset.all if internal_user?
 
-    Asset.where(account_id: current_user.active_account_ids)
+    Asset.where(account_id: readable_account_ids)
   end
 
   def scoped_vessels
@@ -115,24 +125,48 @@ module Authorization
   def scoped_documents
     return Document.all if internal_user?
 
-    Document.where(account_id: current_user.active_account_ids)
+    Document.where(account_id: readable_account_ids)
   end
 
   def scoped_reminders
     return Reminder.all if internal_user?
 
-    Reminder.joins(:asset).where(assets: { account_id: current_user.active_account_ids })
+    Reminder.joins(:asset).where(assets: { account_id: readable_account_ids })
   end
 
   def scoped_service_visits
     return ServiceVisit.all if internal_user?
 
-    ServiceVisit.joins(:asset).where(assets: { account_id: current_user.active_account_ids })
+    ServiceVisit.joins(:asset).where(assets: { account_id: readable_account_ids })
   end
 
   def scoped_binder_notes
     return BinderNote.all if internal_user?
 
-    BinderNote.where(account_id: current_user.active_account_ids)
+    BinderNote.where(account_id: readable_account_ids)
+  end
+
+  def readable_account_ids
+    @readable_account_ids ||= if current_user&.owner? && current_user.active?
+      evaluated_at = Time.current
+
+      owner_read_candidate_accounts.filter_map do |account|
+        phase = Billing::SelfManagedEntitlement.new(account:, now: evaluated_at).lifecycle_phase
+        account.id if OWNER_READABLE_LIFECYCLE_PHASES.include?(phase)
+      end
+    else
+      []
+    end
+  end
+
+  def owner_lifecycle_restricted?
+    owner_user? && current_user.active? && owner_read_candidate_accounts.any? && readable_account_ids.empty?
+  end
+
+  def owner_read_candidate_accounts
+    @owner_read_candidate_accounts ||= Account.active
+      .joins(:account_memberships)
+      .merge(current_user.account_memberships.active)
+      .includes(:subscription)
   end
 end
