@@ -12,9 +12,11 @@ module Billing
     setup do
       @account = create_account(name: "Checkout Locking #{SecureRandom.hex(6)}")
       @previous_secret_key = Rails.configuration.x.stripe.secret_key
+      @previous_livemode = Rails.configuration.x.stripe.livemode
       @previous_monthly_price_id = Rails.configuration.x.stripe.self_managed_monthly_price_id
       @previous_annual_price_id = Rails.configuration.x.stripe.self_managed_annual_price_id
       Rails.configuration.x.stripe.secret_key = SECRET_KEY
+      Rails.configuration.x.stripe.livemode = false
       Rails.configuration.x.stripe.self_managed_monthly_price_id = MONTHLY_PRICE_ID
       Rails.configuration.x.stripe.self_managed_annual_price_id = ANNUAL_PRICE_ID
     end
@@ -22,6 +24,7 @@ module Billing
     teardown do
       @account&.destroy!
       Rails.configuration.x.stripe.secret_key = @previous_secret_key
+      Rails.configuration.x.stripe.livemode = @previous_livemode
       Rails.configuration.x.stripe.self_managed_monthly_price_id = @previous_monthly_price_id
       Rails.configuration.x.stripe.self_managed_annual_price_id = @previous_annual_price_id
     end
@@ -104,6 +107,71 @@ module Billing
       assert_equal 1, @account.billing_checkout_attempts.count
       assert_equal 1, @account.billing_checkout_attempts.active.count
       assert_equal "open", @account.billing_checkout_attempts.first.status
+    end
+
+    test "concurrent terminal reactivation requests serialize and reuse one no-trial Session" do
+      historical_attempt, ended_at = configure_terminal_reactivation
+      canonical_subscription = terminal_subscription(historical_attempt, ended_at:)
+      retrieval_count = 0
+      retrieval_mutex = Mutex.new
+      retrievals_started = Queue.new
+      release_first_retrieval = Queue.new
+      second_worker_started = Queue.new
+      session_creates = Queue.new
+      session_retrieves = Queue.new
+      checkout_session_factory = method(:checkout_session)
+
+      with_stripe_methods(
+        customer_create: ->(*) { raise "reactivation must reuse its Stripe Customer" },
+        session_create: ->(params, options) {
+          session_creates << [ params, options ]
+          checkout_session_factory.call(id: "cs_concurrent_reactivation")
+        },
+        session_retrieve: ->(*) {
+          session_retrieves << true
+          checkout_session_factory.call(id: "cs_concurrent_reactivation")
+        },
+        subscription_retrieve: ->(*) {
+          retrieval_number = retrieval_mutex.synchronize do
+            retrieval_count += 1
+          end
+          retrievals_started << retrieval_number
+          release_first_retrieval.pop if retrieval_number == 1
+          canonical_subscription
+        }
+      ) do
+        first_thread, first_result = run_in_thread { create_terminal_reactivation }
+        assert_equal 1, Timeout.timeout(5) { retrievals_started.pop }
+
+        second_thread, second_result = run_in_thread do
+          second_worker_started << true
+          create_terminal_reactivation
+        end
+        Timeout.timeout(5) { second_worker_started.pop }
+        assert_raises(Timeout::Error) { Timeout.timeout(0.2) { retrievals_started.pop } }
+
+        release_first_retrieval << true
+        assert first_thread.join(5), "first reactivation request did not finish"
+        first_session = assert_thread_succeeded(first_result)
+        assert_equal 2, Timeout.timeout(5) { retrievals_started.pop }
+        assert second_thread.join(5), "second reactivation request did not finish"
+        second_session = assert_thread_succeeded(second_result)
+
+        assert_equal "cs_concurrent_reactivation", first_session.id
+        assert_equal first_session.id, second_session.id
+      ensure
+        release_first_retrieval << true if first_thread&.alive?
+        first_thread&.join(1)
+        second_thread&.join(1)
+      end
+
+      create_params, = session_creates.pop
+      assert session_creates.empty?, "concurrent reactivation must create only one Stripe Session"
+      assert_equal 1, session_retrieves.length
+      assert_not create_params.fetch(:subscription_data).key?(:trial_period_days)
+      assert_equal 1, @account.billing_checkout_attempts.active.count
+      assert_equal 1, @account.billing_checkout_attempts.where.not(replaces_external_subscription_id: nil).count
+      assert_equal "sub_terminal_reactivation", @account.subscription.reload.external_subscription_id
     end
 
     test "subscription lifecycle synchronization shares the Account lock protocol" do
@@ -430,6 +498,59 @@ module Billing
         option_key: option_key,
         success_url: "https://app.example.test/billing/checkout/success",
         cancel_url: "https://app.example.test/billing/checkout/cancel"
+      )
+    end
+
+    def create_terminal_reactivation
+      StripeTerminalReactivationSessionCreator.call(
+        account: Account.find(@account.id),
+        option_key: "self_managed_monthly",
+        success_url: "https://app.example.test/billing/checkout/success",
+        cancel_url: "https://app.example.test/billing/checkout/cancel"
+      )
+    end
+
+    def configure_terminal_reactivation
+      ended_at = 2.days.ago.change(usec: 0)
+      attempt = BillingCheckoutAttempt.create!(
+        account: @account,
+        option_key: "self_managed_monthly",
+        stripe_customer_id: "cus_terminal_reactivation",
+        stripe_checkout_session_id: "cs_terminal_historical",
+        idempotency_key: SecureRandom.uuid,
+        status: "completed"
+      )
+      @account.subscription.update!(
+        provider: "stripe",
+        plan: "self_managed",
+        status: "canceled",
+        external_customer_id: attempt.stripe_customer_id,
+        external_subscription_id: "sub_terminal_reactivation",
+        current_period_ends_at: ended_at,
+        canceled_at: ended_at,
+        entitlement_ended_at: ended_at,
+        last_synced_at: ended_at
+      )
+
+      [ attempt, ended_at ]
+    end
+
+    def terminal_subscription(attempt, ended_at:)
+      account_reference = StripeAccountReference.generate(@account)
+
+      Stripe::Subscription.construct_from(
+        id: "sub_terminal_reactivation",
+        customer: attempt.stripe_customer_id,
+        livemode: false,
+        status: "canceled",
+        ended_at: ended_at.to_i,
+        metadata: {
+          StripeCheckoutSessionCreator::ACCOUNT_REFERENCE_KEY => account_reference,
+          StripeCheckoutSessionCreator::ATTEMPT_REFERENCE_KEY =>
+            StripeCheckoutAttemptReference.generate(attempt),
+          StripeCheckoutSessionCreator::OPTION_KEY => attempt.option_key
+        },
+        items: { data: [ { price: { id: MONTHLY_PRICE_ID } } ] }
       )
     end
 

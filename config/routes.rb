@@ -9,6 +9,7 @@ Rails.application.routes.draw do
   post "billing/checkout", to: "billing/checkouts#create"
   get "billing/checkout/success", to: "billing/checkouts#success", as: :billing_checkout_success
   get "billing/checkout/cancel", to: "billing/checkouts#cancel", as: :billing_checkout_cancel
+  post "billing/reactivation", to: "billing/reactivations#create", as: :billing_reactivation
   post "billing/portal", to: "billing/portal_sessions#create", as: :billing_portal
 
   get "/404", to: "errors#not_found", as: :not_found

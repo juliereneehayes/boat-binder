@@ -172,6 +172,230 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
     assert subscription.last_synced_at.present?
   end
 
+  test "signed replacement events hand off the existing local Subscription without granting a trial" do
+    now = Time.zone.local(2026, 8, 28, 12)
+    ended_at = now - 2.days
+    period_end = now + 1.month
+    account = create_account(name: "Webhook Reactivation Owner")
+    account_reference = Billing::StripeAccountReference.generate(account)
+    old_attempt = create_checkout_attempt(
+      account:,
+      customer_id: "cus_reactivation_handoff",
+      session_id: "cs_reactivation_old",
+      status: "completed"
+    )
+    replacement_attempt = create_checkout_attempt(
+      account:,
+      customer_id: "cus_reactivation_handoff",
+      session_id: "cs_reactivation_new",
+      status: "open",
+      replaces_external_subscription_id: "sub_reactivation_old"
+    )
+    configure_terminal_subscription(
+      account,
+      customer_id: "cus_reactivation_handoff",
+      subscription_id: "sub_reactivation_old",
+      ended_at:
+    )
+    subscription_id = account.subscription.id
+    record_counts = [ Account.count, Subscription.count ]
+
+    travel_to now do
+      post_signed_event(
+        event_id: "evt_reactivation_checkout",
+        event_type: "checkout.session.completed",
+        data_object: checkout_session_data(
+          attempt: replacement_attempt,
+          account_reference:,
+          customer_id: "cus_reactivation_handoff",
+          subscription_id: "sub_reactivation_new"
+        )
+      )
+      assert_response :success
+
+      subscription = account.subscription.reload
+      assert_equal subscription_id, subscription.id
+      assert_equal "sub_reactivation_new", subscription.external_subscription_id
+      assert_equal "canceled", subscription.status
+      assert_not Billing::SelfManagedEntitlement.new(account:, now:).qualifying?
+      assert_equal "processed", BillingWebhookEvent.find_by!(external_event_id: "evt_reactivation_checkout").status
+
+      post_signed_event(
+        event_id: "evt_reactivation_subscription",
+        event_type: "customer.subscription.created",
+        data_object: subscription_data(
+          attempt: replacement_attempt,
+          account_reference:,
+          customer_id: "cus_reactivation_handoff",
+          subscription_id: "sub_reactivation_new",
+          status: "active",
+          trial_end: nil,
+          period_end:
+        )
+      )
+      assert_response :success
+    end
+
+    subscription = account.subscription.reload
+    assert_equal subscription_id, subscription.id
+    assert_equal "cus_reactivation_handoff", subscription.external_customer_id
+    assert_equal "sub_reactivation_new", subscription.external_subscription_id
+    assert_equal "active", subscription.status
+    assert_nil subscription.trial_ends_at
+    assert_equal ended_at.to_i, subscription.entitlement_ended_at.to_i
+    assert Billing::SelfManagedEntitlement.new(account:, now:).qualifying?
+    assert_equal "completed", replacement_attempt.reload.status
+    assert_equal "completed", old_attempt.reload.status
+    assert_equal record_counts, [ Account.count, Subscription.count ]
+    assert_equal "processed", BillingWebhookEvent.find_by!(external_event_id: "evt_reactivation_subscription").status
+  end
+
+  test "canonical replacement event can complete the handoff before Checkout completion" do
+    now = Time.zone.local(2026, 8, 28, 12)
+    account = create_account(name: "Webhook Reactivation Ordering")
+    account_reference = Billing::StripeAccountReference.generate(account)
+    replacement_attempt = create_checkout_attempt(
+      account:,
+      customer_id: "cus_reactivation_order",
+      session_id: "cs_reactivation_order",
+      status: "open",
+      replaces_external_subscription_id: "sub_reactivation_order_old"
+    )
+    configure_terminal_subscription(
+      account,
+      customer_id: "cus_reactivation_order",
+      subscription_id: "sub_reactivation_order_old",
+      ended_at: now - 1.day
+    )
+
+    travel_to now do
+      post_signed_event(
+        event_id: "evt_reactivation_subscription_first",
+        event_type: "customer.subscription.created",
+        data_object: subscription_data(
+          attempt: replacement_attempt,
+          account_reference:,
+          customer_id: "cus_reactivation_order",
+          subscription_id: "sub_reactivation_order_new",
+          status: "active",
+          trial_end: nil,
+          period_end: now + 1.month
+        )
+      )
+      assert_response :success
+      assert_equal "sub_reactivation_order_new", account.subscription.reload.external_subscription_id
+      assert_equal "completed", replacement_attempt.reload.status
+
+      post_signed_event(
+        event_id: "evt_reactivation_checkout_late",
+        event_type: "checkout.session.completed",
+        data_object: checkout_session_data(
+          attempt: replacement_attempt,
+          account_reference:,
+          customer_id: "cus_reactivation_order",
+          subscription_id: "sub_reactivation_order_new"
+        )
+      )
+      assert_response :success
+    end
+
+    assert_equal "processed", BillingWebhookEvent.find_by!(external_event_id: "evt_reactivation_subscription_first").status
+    assert_equal "processed", BillingWebhookEvent.find_by!(external_event_id: "evt_reactivation_checkout_late").status
+    assert_equal "active", account.subscription.reload.status
+  end
+
+  test "delayed old subscription events cannot reclaim a completed replacement association" do
+    now = Time.zone.local(2026, 8, 28, 12)
+    account = create_account(name: "Webhook Old Subscription Delay")
+    account_reference = Billing::StripeAccountReference.generate(account)
+    old_attempt = create_checkout_attempt(
+      account:,
+      customer_id: "cus_old_event_delay",
+      session_id: "cs_old_event_delay",
+      status: "completed"
+    )
+    replacement_attempt = create_checkout_attempt(
+      account:,
+      customer_id: "cus_old_event_delay",
+      session_id: "cs_new_event_delay",
+      status: "completed",
+      replaces_external_subscription_id: "sub_old_event_delay"
+    )
+    account.subscription.update!(
+      provider: "stripe",
+      plan: "self_managed",
+      status: "active",
+      external_customer_id: "cus_old_event_delay",
+      external_subscription_id: "sub_new_event_delay",
+      current_period_ends_at: now + 1.month,
+      entitlement_ended_at: now - 1.day,
+      last_synced_at: now
+    )
+    original_state = subscription_state(account.subscription)
+
+    travel_to now do
+      post_signed_event(
+        event_id: "evt_delayed_old_subscription",
+        event_type: "customer.subscription.updated",
+        data_object: subscription_data(
+          attempt: old_attempt,
+          account_reference:,
+          customer_id: "cus_old_event_delay",
+          subscription_id: "sub_old_event_delay",
+          status: "canceled",
+          trial_end: nil,
+          period_end: now - 1.day
+        )
+      )
+    end
+
+    assert_response :success
+    assert_equal "ignored", BillingWebhookEvent.find_by!(external_event_id: "evt_delayed_old_subscription").status
+    assert_equal original_state, subscription_state(account.subscription)
+    assert_equal "completed", replacement_attempt.reload.status
+  end
+
+  test "a replacement Subscription with trial state fails closed without entitlement" do
+    now = Time.zone.local(2026, 8, 28, 12)
+    account = create_account(name: "Webhook Reactivation Trial Refusal")
+    account_reference = Billing::StripeAccountReference.generate(account)
+    attempt = create_checkout_attempt(
+      account:,
+      customer_id: "cus_reactivation_trial",
+      session_id: "cs_reactivation_trial",
+      status: "open",
+      replaces_external_subscription_id: "sub_reactivation_trial_old"
+    )
+    configure_terminal_subscription(
+      account,
+      customer_id: "cus_reactivation_trial",
+      subscription_id: "sub_reactivation_trial_old",
+      ended_at: now - 1.day
+    )
+    original_state = subscription_state(account.subscription)
+
+    travel_to now do
+      post_signed_event(
+        event_id: "evt_reactivation_trial_refused",
+        event_type: "customer.subscription.created",
+        data_object: subscription_data(
+          attempt:,
+          account_reference:,
+          customer_id: "cus_reactivation_trial",
+          subscription_id: "sub_reactivation_trial_new",
+          status: "trialing",
+          trial_end: now + 7.days,
+          period_end: now + 1.month
+        )
+      )
+    end
+
+    assert_response :success
+    assert_equal "ignored", BillingWebhookEvent.find_by!(external_event_id: "evt_reactivation_trial_refused").status
+    assert_equal original_state, subscription_state(account.subscription)
+    assert_not Billing::SelfManagedEntitlement.new(account:, now:).qualifying?
+  end
+
   test "disabled known option still synchronizes an already-issued Checkout Session" do
     account = create_account(name: "Disabled Checkout Option Owner")
     account_reference = Billing::StripeAccountReference.generate(account)
@@ -1594,14 +1818,29 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
   end
 
   def create_checkout_attempt(account:, customer_id:, session_id: SecureRandom.uuid,
-    option_key: "self_managed_monthly", status: "open")
+    option_key: "self_managed_monthly", status: "open", replaces_external_subscription_id: nil)
     BillingCheckoutAttempt.create!(
       account: account,
       option_key: option_key,
       stripe_customer_id: customer_id,
       stripe_checkout_session_id: session_id,
       idempotency_key: SecureRandom.uuid,
+      replaces_external_subscription_id:,
       status: status
+    )
+  end
+
+  def configure_terminal_subscription(account, customer_id:, subscription_id:, ended_at:)
+    account.subscription.update!(
+      provider: "stripe",
+      plan: "self_managed",
+      status: "canceled",
+      external_customer_id: customer_id,
+      external_subscription_id: subscription_id,
+      current_period_ends_at: ended_at,
+      canceled_at: ended_at,
+      entitlement_ended_at: ended_at,
+      last_synced_at: ended_at
     )
   end
 

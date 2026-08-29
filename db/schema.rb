@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_08_26_090000) do
+ActiveRecord::Schema[8.1].define(version: 2026_08_28_170000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -128,6 +128,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_26_090000) do
     t.datetime "created_at", null: false
     t.string "idempotency_key", null: false
     t.string "option_key", null: false
+    t.string "replaces_external_subscription_id"
     t.string "status", default: "creating", null: false
     t.string "stripe_checkout_session_id"
     t.string "stripe_customer_id", null: false
@@ -137,6 +138,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_26_090000) do
     t.index ["idempotency_key"], name: "index_billing_checkout_attempts_on_idempotency_key", unique: true
     t.index ["stripe_checkout_session_id"], name: "index_billing_checkout_attempts_on_stripe_checkout_session_id", unique: true, where: "(stripe_checkout_session_id IS NOT NULL)"
     t.index ["stripe_customer_id"], name: "index_billing_checkout_attempts_on_stripe_customer_id"
+    t.check_constraint "replaces_external_subscription_id IS NULL OR replaces_external_subscription_id::text <> ''::text", name: "chk_billing_checkout_attempts_replacement_present"
     t.check_constraint "status::text = ANY (ARRAY['creating'::character varying, 'open'::character varying, 'replacing'::character varying, 'submitted'::character varying, 'completed'::character varying, 'canceled'::character varying, 'expired'::character varying, 'replaced'::character varying]::text[])", name: "chk_billing_checkout_attempts_status"
   end
 

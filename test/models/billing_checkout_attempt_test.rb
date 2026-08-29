@@ -92,6 +92,26 @@ class BillingCheckoutAttemptTest < ActiveSupport::TestCase
     end
   end
 
+  test "a replacement subscription reference identifies reactivation attempts" do
+    attempt = build_attempt(account: create_account, status: "creating")
+    assert_not attempt.reactivation?
+
+    attempt.replaces_external_subscription_id = "sub_terminal"
+
+    assert attempt.valid?
+    assert attempt.reactivation?
+  end
+
+  test "database constraint rejects blank replacement subscription references" do
+    attempt = create_attempt(status: "completed")
+
+    assert_raises(ActiveRecord::StatementInvalid) do
+      BillingCheckoutAttempt.transaction(requires_new: true) do
+        attempt.update_column(:replaces_external_subscription_id, "")
+      end
+    end
+  end
+
   private
 
   def create_attempt(account: create_account, status:)
