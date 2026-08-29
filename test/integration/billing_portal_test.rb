@@ -1,7 +1,8 @@
 require "test_helper"
 
 class BillingPortalTest < ActionDispatch::IntegrationTest
-  PORTAL_URL = "https://billing.stripe.com/p/session/controller_secret"
+  PORTAL_SECRET = "test_controller_portal_secret"
+  PORTAL_URL = "https://billing.stripe.com/p/session?secret=#{PORTAL_SECRET}"
 
   setup do
     @now = Time.zone.local(2026, 8, 28, 12)
@@ -45,26 +46,28 @@ class BillingPortalTest < ActionDispatch::IntegrationTest
     captured_arguments = nil
     original_subscription = subscription_state
     original_counts = record_counts
-    logged_redirect_location = nil
+    logged_redirect_payload = nil
     sign_in_as @owner
 
     subscriber = ActiveSupport::Notifications.subscribe("redirect_to.action_controller") do |event|
-      logged_redirect_location = event.payload.fetch(:location)
+      logged_redirect_payload = event.payload
     end
     begin
-      travel_to @now do
-        with_portal_creator(->(**arguments) {
-          captured_arguments = arguments
-          Struct.new(:url).new(PORTAL_URL)
-        }) do
-          post billing_portal_path, params: {
-            account_id: other_account.id,
-            customer_id: "cus_attacker",
-            subscription_id: "sub_attacker",
-            configuration: "bpc_attacker",
-            return_url: "https://attacker.example/",
-            lifecycle_phase: "current_entitlement"
-          }
+      log_output = capture_rails_logs do
+        travel_to @now do
+          with_portal_creator(->(**arguments) {
+            captured_arguments = arguments
+            Struct.new(:url).new(PORTAL_URL)
+          }) do
+            post billing_portal_path, params: {
+              account_id: other_account.id,
+              customer_id: "cus_attacker",
+              subscription_id: "sub_attacker",
+              configuration: "bpc_attacker",
+              return_url: "https://attacker.example/",
+              lifecycle_phase: "current_entitlement"
+            }
+          end
         end
       end
     ensure
@@ -73,8 +76,10 @@ class BillingPortalTest < ActionDispatch::IntegrationTest
 
     assert_response :see_other
     assert_redirected_to PORTAL_URL
-    assert_equal "[FILTERED]", logged_redirect_location
-    assert_not_includes logged_redirect_location, "controller_secret"
+    assert_equal "[FILTERED]", logged_redirect_payload.fetch(:location)
+    assert_not_includes logged_redirect_payload.inspect, PORTAL_SECRET
+    assert_not_includes response.body, PORTAL_SECRET
+    assert_not_includes log_output, PORTAL_SECRET
     assert_equal @account, captured_arguments.fetch(:account)
     assert_equal "http://example.com/", captured_arguments.fetch(:return_url)
     assert_equal original_subscription, subscription_state
@@ -300,5 +305,17 @@ class BillingPortalTest < ActionDispatch::IntegrationTest
     assert_select "div", text: /couldn't open billing management right now/
     assert_not_includes response.body, "private Stripe network detail"
     assert_not_includes response.body, "cus_other"
+  end
+
+  def capture_rails_logs
+    previous_logger = Rails.logger
+    output = StringIO.new
+    Rails.logger = ActiveSupport::TaggedLogging.new(ActiveSupport::Logger.new(output))
+
+    yield
+
+    output.string
+  ensure
+    Rails.logger = previous_logger
   end
 end

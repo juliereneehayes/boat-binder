@@ -1,7 +1,7 @@
 module Billing
   class StripePortalSessionCreator
     PORTAL_HOST = "billing.stripe.com"
-    PORTAL_PATH_PREFIX = "/p/session/"
+    PORTAL_PATH = "/p/session"
     SUPPORTED_LIFECYCLE_PHASES = %i[current_entitlement payment_recovery_pending].freeze
 
     class PortalError < StandardError; end
@@ -84,9 +84,13 @@ module Billing
         uri.host == PORTAL_HOST &&
         uri.port == 443 &&
         uri.userinfo.nil? &&
-        uri.path.start_with?(PORTAL_PATH_PREFIX)
+        valid_portal_path?(uri.path)
     rescue URI::InvalidURIError
       false
+    end
+
+    def valid_portal_path?(path)
+      path == PORTAL_PATH || path.start_with?("#{PORTAL_PATH}/")
     end
   end
 end

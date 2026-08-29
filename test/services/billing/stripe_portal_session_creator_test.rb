@@ -49,6 +49,23 @@ module Billing
       assert_equal original_counts, record_counts
     end
 
+    test "accepts the documented Portal path and bounded slash paths" do
+      valid_urls = [
+        "https://billing.stripe.com/p/session?secret=test_portal_secret",
+        "https://billing.stripe.com/p/session/test_portal_secret"
+      ]
+
+      travel_to @now do
+        valid_urls.each do |url|
+          session = portal_session(url:)
+
+          with_portal_create(->(*) { session }) do
+            assert_equal url, create_portal_session.url
+          end
+        end
+      end
+    end
+
     test "accepts active trialing scheduled cancellation and payment recovery phases" do
       configurations = [
         { status: "active", current_period_ends_at: @now + 1.month },
@@ -126,9 +143,13 @@ module Billing
         portal_session(configuration: "bpc_other"),
         portal_session(livemode: true),
         portal_session(return_url: "https://attacker.example/"),
-        portal_session(url: "http://billing.stripe.com/p/session/test_secret"),
-        portal_session(url: "https://attacker.example/p/session/test_secret"),
-        portal_session(url: "https://user@billing.stripe.com/p/session/test_secret"),
+        portal_session(url: "http://billing.stripe.com/p/session?secret=test_portal_secret"),
+        portal_session(url: "https://attacker.example/p/session?secret=test_portal_secret"),
+        portal_session(url: "https://subdomain.billing.stripe.com/p/session?secret=test_portal_secret"),
+        portal_session(url: "https://billing.stripe.com:444/p/session?secret=test_portal_secret"),
+        portal_session(url: "https://user@billing.stripe.com/p/session?secret=test_portal_secret"),
+        portal_session(url: "https://billing.stripe.com/p/session-attacker?secret=test_portal_secret"),
+        portal_session(url: "https://billing.stripe.com/p/session.evil?secret=test_portal_secret"),
         portal_session(url: "https://billing.stripe.com/not-a-session"),
         portal_session(url: "not a URL")
       ]
@@ -169,7 +190,7 @@ module Billing
 
     def portal_session(customer: @account.subscription.external_customer_id,
       configuration: CONFIGURATION_ID, livemode: false, return_url: RETURN_URL,
-      url: "https://billing.stripe.com/p/session/test_secret")
+      url: "https://billing.stripe.com/p/session?secret=test_portal_secret")
       Stripe::BillingPortal::Session.construct_from(
         id: "bps_test_portal",
         customer:,
