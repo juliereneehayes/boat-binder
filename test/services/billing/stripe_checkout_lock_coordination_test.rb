@@ -151,7 +151,8 @@ module Billing
         assert_raises(Timeout::Error) { Timeout.timeout(0.2) { retrievals_started.pop } }
 
         release_first_retrieval << true
-        assert first_thread.join(5), "first reactivation request did not finish"
+        assert first_thread.join(5),
+          "nested advisory and row-lock reactivation path self-deadlocked"
         first_session = assert_thread_succeeded(first_result)
         assert_equal 2, Timeout.timeout(5) { retrievals_started.pop }
         assert second_thread.join(5), "second reactivation request did not finish"

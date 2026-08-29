@@ -100,12 +100,19 @@ Price, livemode, and old-to-new Subscription relationship. Delayed events for th
 Subscription fail correlation after the handoff and cannot reclaim or rewind the local association.
 Trial-bearing replacement events are ignored as invalid associations.
 
-Reactivation verification and Checkout creation share the Account advisory lock. Duplicate requests
-therefore converge on one active replacement attempt and one Stripe idempotency key; an open Session
-is retrieved and reused. An ambiguous Stripe create result retains the creating attempt and retries
-with the same idempotency key. Browser success and cancellation returns remain informational and do
-not mutate billing state. Operational errors log only minimized exception classes, and the external
-Checkout redirect is filtered from Rails redirect instrumentation.
+Reactivation verification and Checkout orchestration remain inside one Account-scoped PostgreSQL
+session advisory lock. `StripeAccountStateLock` is a separate primitive: it applies short database
+transactions and row locks in Account -> Subscription -> Checkout-attempt order. Nesting those state
+locks inside the reconciliation scope is therefore not recursive acquisition of the advisory lock.
+The advisory lock intentionally remains held across canonical Stripe verification and Checkout
+orchestration, but each state-lock transaction and its row locks are released before a Stripe network
+call begins.
+
+Duplicate requests therefore converge on one active replacement attempt and one Stripe idempotency
+key; an open Session is retrieved and reused. An ambiguous Stripe create result retains the creating
+attempt and retries with the same idempotency key. Browser success and cancellation returns remain
+informational and do not mutate billing state. Operational errors log only minimized exception
+classes, and the external Checkout redirect is filtered from Rails redirect instrumentation.
 
 Deploy the nullable attempt column and application code together before enabling any reactivation
 entry point. No destructive reconciliation or history backfill is required. Rolling application code
