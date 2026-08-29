@@ -21,7 +21,7 @@ module Billing
 
         validate_attempt!(locked_attempt)
         validate_account_reference!(account.id)
-        validate_identifiers!(subscription)
+        validate_identifiers!(subscription, locked_attempt)
         subscription.update!(
           provider: Subscription::STRIPE_PROVIDER,
           external_customer_id: customer_id,
@@ -71,12 +71,15 @@ module Billing
       )
     end
 
-    def validate_identifiers!(subscription)
+    def validate_identifiers!(subscription, attempt)
       if subscription.external_customer_id.present? && subscription.external_customer_id != customer_id
         raise_association_error("customer_mismatch")
       end
-      if subscription.external_subscription_id.present? &&
-          subscription.external_subscription_id != external_subscription_id
+      unless StripeSubscriptionHandoff.allowed?(
+        subscription:,
+        attempt:,
+        incoming_subscription_id: external_subscription_id
+      )
         raise_association_error("subscription_mismatch")
       end
       if identifier_used_by_another_account?(:external_customer_id, customer_id, subscription.account_id)

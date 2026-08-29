@@ -149,7 +149,7 @@ module Billing
       raise_association_error("customer_mismatch") unless attempt.stripe_customer_id == remote_customer_id
       raise_association_error("option_mismatch") unless attempt.option_key == option.key
       raise_association_error("customer_mismatch") unless subscription.external_customer_id == remote_customer_id
-      raise_association_error("subscription_mismatch") unless subscription.external_subscription_id == remote_subscription_id
+      validate_subscription_handoff!(subscription, attempt, remote_subscription_id)
       if identifier_used_by_another_account?(:external_customer_id, remote_customer_id, subscription.account_id)
         raise_association_error("customer_account_mismatch")
       end
@@ -187,10 +187,8 @@ module Billing
       if subscription.external_customer_id.present? && subscription.external_customer_id != remote_customer_id
         raise_association_error("customer_mismatch")
       end
-      if subscription.external_subscription_id.present? &&
-          subscription.external_subscription_id != remote_subscription_id
-        raise_association_error("subscription_mismatch")
-      end
+      validate_subscription_handoff!(subscription, attempt, remote_subscription_id)
+      validate_reactivation_has_no_trial!(remote_subscription, attempt)
       if identifier_used_by_another_account?(:external_customer_id, remote_customer_id, subscription.account_id)
         raise_association_error("customer_account_mismatch")
       end
@@ -227,6 +225,23 @@ module Billing
         past_due_observed_at: synchronized_past_due_observation(subscription, status, synchronized_at),
         last_synced_at: synchronized_at
       }
+    end
+
+    def validate_subscription_handoff!(subscription, attempt, remote_subscription_id)
+      return if StripeSubscriptionHandoff.allowed?(
+        subscription:,
+        attempt:,
+        incoming_subscription_id: remote_subscription_id
+      )
+
+      raise_association_error("subscription_mismatch")
+    end
+
+    def validate_reactivation_has_no_trial!(remote_subscription, attempt)
+      return unless attempt.reactivation?
+      return unless remote_subscription.status.to_s == "trialing" || remote_subscription.trial_end.present?
+
+      raise_association_error("reactivation_trial_not_allowed")
     end
 
     def synchronized_entitlement_end(subscription, option:, status:, trial_ends_at:, canonical_ended_at:,

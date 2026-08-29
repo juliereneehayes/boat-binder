@@ -17,6 +17,7 @@ class BillingCheckoutAttempt < ApplicationRecord
   validates :option_key, :stripe_customer_id, :idempotency_key, presence: true
   validates :idempotency_key, uniqueness: true
   validates :stripe_checkout_session_id, uniqueness: true, allow_nil: true
+  validates :replaces_external_subscription_id, presence: true, allow_nil: true
   validates :status, inclusion: { in: STATUSES }
   validate :status_transition_is_allowed, if: :will_save_change_to_status?
   validates :account_id,
@@ -31,6 +32,10 @@ class BillingCheckoutAttempt < ApplicationRecord
 
   def active?
     ACTIVE_STATUSES.include?(status)
+  end
+
+  def reactivation?
+    replaces_external_subscription_id.present?
   end
 
   private

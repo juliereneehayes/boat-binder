@@ -14,6 +14,7 @@ module Billing
       :session_id,
       :idempotency_key,
       :signed_reference,
+      :replacement_subscription_id,
       keyword_init: true
     )
     Outcome = Struct.new(:session, :option_key, :attempt_id, :error, :expire_session_id, keyword_init: true)
@@ -22,21 +23,24 @@ module Billing
     class InvalidAccountError < CheckoutError; end
     class InvalidOptionError < CheckoutError; end
 
-    def self.call(account:, option_key:, success_url:, cancel_url:)
+    def self.call(account:, option_key:, success_url:, cancel_url:, replacement_subscription_id: nil)
       new(
         account: account,
         option_key: option_key,
         success_url: success_url,
-        cancel_url: cancel_url
+        cancel_url: cancel_url,
+        replacement_subscription_id: replacement_subscription_id
       ).call
     end
 
-    def initialize(account:, option_key:, success_url:, cancel_url:, catalog: nil)
+    def initialize(account:, option_key:, success_url:, cancel_url:, catalog: nil,
+      replacement_subscription_id: nil)
       @account = account
       @option_key = option_key.to_s
       @success_url = success_url
       @cancel_url = cancel_url
       @catalog = catalog
+      @replacement_subscription_id = replacement_subscription_id.to_s.presence
     end
 
     def call
@@ -70,7 +74,7 @@ module Billing
 
     private
 
-    attr_reader :account, :option_key, :success_url, :cancel_url
+    attr_reader :account, :option_key, :success_url, :cancel_url, :replacement_subscription_id
 
     def catalog
       @catalog ||= SubscriptionPlanCatalog.new
@@ -85,12 +89,14 @@ module Billing
 
     def checkout_customer_id
       customer_id = StripeAccountStateLock.call(account: account) do |subscription, _attempt|
-        if stripe_subscription_present?(subscription)
+        if !reactivation? && stripe_subscription_present?(subscription)
           complete_active_attempt!
           next InvalidAccountError.new("Account already has a Stripe subscription")
         end
 
         validate_subscription!(subscription)
+        next subscription.external_customer_id if reactivation?
+
         subscription.external_customer_id.presence || reusable_attempt_customer_id
       end
       raise customer_id if customer_id.is_a?(CheckoutError)
@@ -121,7 +127,7 @@ module Billing
 
     def reserve_attempt(option, customer_id)
       result = StripeAccountStateLock.call(account: account) do |subscription, _attempt|
-        if stripe_subscription_present?(subscription)
+        if !reactivation? && stripe_subscription_present?(subscription)
           complete_active_attempt!
           next InvalidAccountError.new("Account already has a Stripe subscription")
         end
@@ -132,6 +138,7 @@ module Billing
         active_attempt = account.billing_checkout_attempts.active.lock.order(:id).first
         if active_attempt
           validate_attempt_customer!(active_attempt, customer_id)
+          validate_attempt_flow!(active_attempt)
           active_attempt.id
         else
           create_reserved_attempt(option, customer_id).id
@@ -147,6 +154,7 @@ module Billing
         option_key: option.key,
         stripe_customer_id: customer_id,
         idempotency_key: SecureRandom.uuid,
+        replaces_external_subscription_id: replacement_subscription_id,
         status: "creating"
       )
     end
@@ -171,7 +179,7 @@ module Billing
 
     def locked_attempt_snapshot(attempt_id, customer_id)
       result = StripeAccountStateLock.call(account: account, attempt_id: attempt_id) do |subscription, attempt|
-        if stripe_subscription_present?(subscription)
+        if !reactivation? && stripe_subscription_present?(subscription)
           attempt.update!(status: "completed") if attempt&.active?
           next InvalidAccountError.new("Account already has a Stripe subscription")
         end
@@ -180,6 +188,7 @@ module Billing
         next unless attempt
 
         validate_attempt_customer!(attempt, customer_id)
+        validate_attempt_flow!(attempt)
         snapshot(attempt)
       end
       raise result if result.is_a?(CheckoutError)
@@ -210,13 +219,14 @@ module Billing
     def commit_created_session(snapshot, session)
       StripeAccountStateLock.call(account: account, attempt_id: snapshot.id) do |subscription, attempt|
         next :authoritative if attempt && %w[submitted completed].include?(attempt.status)
-        if stripe_subscription_present?(subscription)
+        if !reactivation? && stripe_subscription_present?(subscription)
           attempt.update!(status: attempt.status == "creating" ? "canceled" : "completed") if attempt&.active?
           next :subscription_active
         end
 
         validate_subscription!(subscription)
         next :stale unless attempt
+        validate_attempt_flow!(attempt)
 
         case attempt.status
         when "creating"
@@ -269,6 +279,7 @@ module Billing
         next Outcome.new unless attempt
 
         validate_attempt_customer!(attempt, customer_id)
+        validate_attempt_flow!(attempt)
         next Outcome.new unless attempt.stripe_checkout_session_id == snapshot.session_id
 
         apply_session_status(attempt, session, option, customer_id)
@@ -329,6 +340,7 @@ module Billing
         next Outcome.new unless attempt
 
         validate_attempt_customer!(attempt, customer_id)
+        validate_attempt_flow!(attempt)
         if attempt.status == "replacing" && attempt.stripe_checkout_session_id == snapshot.session_id
           attempt.update!(status: "replaced")
           Outcome.new(attempt_id: create_reserved_attempt(option, customer_id).id)
@@ -342,7 +354,7 @@ module Billing
 
     def create_checkout_session(option, snapshot)
       subscription_data = { metadata: stripe_metadata(snapshot) }
-      subscription_data[:trial_period_days] = option.trial_days if option.trial?
+      subscription_data[:trial_period_days] = option.trial_days if option.trial? && !reactivation?
 
       Stripe::Checkout::Session.create(
         {
@@ -386,6 +398,18 @@ module Billing
 
     def validate_subscription!(subscription)
       raise InvalidAccountError, "Account subscription state is unavailable" unless subscription
+
+      if reactivation?
+        valid = account.active? && account.account_type == "client" &&
+          subscription.provider == Subscription::STRIPE_PROVIDER &&
+          subscription.plan == "self_managed" &&
+          subscription.external_customer_id.present? &&
+          subscription.external_subscription_id == replacement_subscription_id
+        return if valid
+
+        raise InvalidAccountError, "Account replacement subscription state is unavailable"
+      end
+
       raise InvalidAccountError, "Account already has a Stripe subscription" if stripe_subscription_present?(subscription)
       return if subscription.external_customer_id.blank? || subscription.provider == Subscription::STRIPE_PROVIDER
 
@@ -407,6 +431,12 @@ module Billing
       raise InvalidAccountError, "Active Checkout Customer association is invalid"
     end
 
+    def validate_attempt_flow!(attempt)
+      return if attempt.replaces_external_subscription_id == replacement_subscription_id
+
+      raise InvalidAccountError, "Active Checkout attempt belongs to another billing flow"
+    end
+
     def verified_session(outcome, option)
       return outcome.session if outcome.option_key == option.key
 
@@ -420,7 +450,8 @@ module Billing
     def attempt_matches_snapshot?(attempt, snapshot)
       attempt.option_key == snapshot.option_key &&
         attempt.stripe_customer_id == snapshot.customer_id &&
-        attempt.idempotency_key == snapshot.idempotency_key
+        attempt.idempotency_key == snapshot.idempotency_key &&
+        attempt.replaces_external_subscription_id == snapshot.replacement_subscription_id
     end
 
     def snapshot(attempt)
@@ -431,7 +462,8 @@ module Billing
         customer_id: attempt.stripe_customer_id,
         session_id: attempt.stripe_checkout_session_id,
         idempotency_key: attempt.idempotency_key,
-        signed_reference: StripeCheckoutAttemptReference.generate(attempt)
+        signed_reference: StripeCheckoutAttemptReference.generate(attempt),
+        replacement_subscription_id: attempt.replaces_external_subscription_id
       )
     end
 
@@ -467,6 +499,10 @@ module Billing
 
     def checkout_idempotency_key(snapshot)
       "boat-binder-checkout-v1-#{snapshot.idempotency_key}"
+    end
+
+    def reactivation?
+      replacement_subscription_id.present?
     end
   end
 end

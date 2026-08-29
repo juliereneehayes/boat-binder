@@ -68,6 +68,78 @@ stable Boat Binder option key. Webhook synchronization requires those signed ref
 cross-checks the Stripe Customer, Subscription, Session, Price, and local Account associations. The
 signed references are additional correlation defenses, not replacements for identifier checks.
 
+## Verified Terminal Reactivation
+
+Boat Binder supports a narrowly scoped replacement Checkout for an authenticated active Owner with
+exactly one active Editor membership for an active client Account. The existing local Subscription
+must be a previously synchronized Stripe Self Managed subscription with a Stripe Customer,
+Subscription, synchronization timestamp, and historical entitlement end. Boat Binder then retrieves
+that exact Subscription from Stripe and requires canonical `canceled` status, matching test/live mode,
+Customer, Price, signed Account reference, signed completed Checkout attempt, and exact ending
+boundary before starting replacement Checkout.
+
+`canceled` is the only supported terminal state. Active, trialing, scheduled-cancellation,
+`past_due`, unpaid, paused, incomplete, locally suspended, and inconsistent records fail closed.
+`incomplete_expired` is also unsupported because it describes a Subscription that never became an
+active entitlement and therefore is not evidence of former verified Self Managed access. A locally
+elapsed date by itself never establishes Stripe cancellation.
+
+The Account, Stripe Customer, local Subscription row, users, memberships, attempts, and service
+history are preserved. The old external Subscription ID remains authoritative while Checkout is
+pending. A nullable `BillingCheckoutAttempt#replaces_external_subscription_id` records which verified
+terminal Subscription the attempt may replace; existing attempts remain initial-Checkout attempts
+without speculative backfill. Replacement Checkout uses a server-selected monthly or annual Price
+and omits `trial_period_days` even though initial Checkout continues to use the catalog trial.
+
+Authenticated webhooks perform the handoff. `checkout.session.completed` may atomically associate the
+new external Subscription ID, but it does not restore entitlement. A canonically retrieved
+subscription lifecycle event must establish a qualifying state before access returns. If the
+lifecycle event arrives first, it performs both association and lifecycle synchronization; the later
+Checkout event is idempotent. Both paths require the same signed attempt, Account, Customer, option,
+Price, livemode, and old-to-new Subscription relationship. Delayed events for the replaced
+Subscription fail correlation after the handoff and cannot reclaim or rewind the local association.
+Trial-bearing replacement events are ignored as invalid associations.
+
+Reactivation verification and Checkout orchestration remain inside one Account-scoped PostgreSQL
+session advisory lock. `StripeAccountStateLock` is a separate primitive: it applies short database
+transactions and row locks in Account -> Subscription -> Checkout-attempt order. Nesting those state
+locks inside the reconciliation scope is therefore not recursive acquisition of the advisory lock.
+The advisory lock intentionally remains held across canonical Stripe verification and Checkout
+orchestration, but each state-lock transaction and its row locks are released before a Stripe network
+call begins.
+
+Duplicate requests therefore converge on one active replacement attempt and one Stripe idempotency
+key; an open Session is retrieved and reused. An ambiguous Stripe create result retains the creating
+attempt and retries with the same idempotency key. Browser success and cancellation returns remain
+informational and do not mutate billing state. Operational errors log only minimized exception
+classes, and the external Checkout redirect is filtered from Rails redirect instrumentation.
+
+Deploy the nullable attempt column and application code together before enabling any reactivation
+entry point. No destructive reconciliation or history backfill is required. Rolling application code
+back is safe while the nullable column remains. Do not roll the migration back after replacement
+attempts exist: the migration raises rather than discard their correlation history. Resolve or retain
+those records and roll forward instead.
+
+### Staging Reactivation Validation
+
+1. Use an isolated fictional test-mode Account with a completed original Checkout attempt and a
+   canonically canceled Self Managed Subscription whose ending boundary has synchronized locally.
+2. Start monthly and annual replacement Checkouts and confirm the existing Customer is reused, the
+   configured Price is correct, and Stripe creates no trial.
+3. Retry and concurrently submit the same option. Confirm one live Checkout Session and no duplicate
+   Stripe Subscription or charge is created.
+4. Complete Checkout and deliver `checkout.session.completed` and
+   `customer.subscription.created` in both orders. Confirm one Account and one local Subscription row
+   remain, the external Subscription ID is replaced, and entitlement returns only after canonical
+   lifecycle synchronization.
+5. Redeliver both events and delayed events from the canceled Subscription. Confirm idempotency and
+   that the old Subscription cannot reclaim the association.
+6. Confirm Read-only, inactive, multi-Account, wrong-role, mode-mismatched, tampered-reference,
+   nonterminal, and `incomplete_expired` cases fail without opening Checkout.
+
+These Stripe test-mode checks remain external operator validation. The automated suite stubs Stripe
+and does not prove deployed Stripe configuration or hosted Checkout behavior.
+
 ## Billing Portal First Slice
 
 An authenticated active Owner with exactly one active Editor membership for an active client Account
@@ -317,5 +389,5 @@ and use live Price IDs only in production. Verify delivery from Stripe Dashboard
 before considering production webhook setup complete. Staging uses its own endpoint secret, test
 keys and Prices, and `STRIPE_LIVEMODE=false`; the two environments must not share Stripe configuration.
 
-Broader Billing Portal features, terminal-subscription replacement, full Account Billing UI,
-invoice-history storage/UI, customer payment-failure emails, and public signup remain out of scope.
+Broader Billing Portal features, full Account Billing UI, invoice-history storage/UI, customer
+payment-failure emails, and public signup remain out of scope.
