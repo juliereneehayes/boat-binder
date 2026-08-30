@@ -1,0 +1,14 @@
+<% visible_recoveries = recoveries.select(&:visible?) %>
+<% if visible_recoveries.any? %>
+  <section class="mb-5 rounded-md border border-amber-200 bg-amber-50 px-4 py-3" aria-label="Account status">
+    <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+      <div>
+        <p class="text-sm font-black text-amber-900">Account options are available</p>
+        <p class="mt-1 text-sm text-amber-800">
+          Review billing, reactivation, or export-request options for your Account.
+        </p>
+      </div>
+      <%= link_to "Review account options", root_path, class: subtle_link_class("self-start bg-white sm:self-auto") %>
+    </div>
+  </section>
+<% end %>

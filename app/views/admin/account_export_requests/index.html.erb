@@ -1,0 +1,41 @@
+<section class="space-y-6">
+  <div>
+    <p class="text-sm font-black uppercase tracking-normal text-[#1E5A7A]">Administration</p>
+    <h1 class="mt-2 text-3xl font-black tracking-normal">Account export requests</h1>
+    <p class="mt-2 text-sm text-slate-600">Review recipient and scope before recording an approval or fulfillment.</p>
+  </div>
+
+  <% if @export_requests.any? %>
+    <div class="overflow-x-auto rounded-md border border-[#E7DED2] bg-white">
+      <table class="min-w-full divide-y divide-[#E7DED2] text-left text-sm">
+        <thead class="bg-[#F7F5F2] text-[#0B1F35]">
+          <tr>
+            <th class="px-4 py-3 font-black">Account</th>
+            <th class="px-4 py-3 font-black">Requested by</th>
+            <th class="px-4 py-3 font-black">Requested</th>
+            <th class="px-4 py-3 font-black">Status</th>
+            <th class="px-4 py-3"><span class="sr-only">Review</span></th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-[#F0E8DE]">
+          <% @export_requests.each do |export_request| %>
+            <tr>
+              <td class="px-4 py-3 font-black"><%= export_request.account.name %></td>
+              <td class="px-4 py-3"><%= user_display_name(export_request.requester) %></td>
+              <td class="px-4 py-3"><%= local_datetime(export_request.created_at, account: export_request.account) %></td>
+              <td class="px-4 py-3"><%= status_chip(export_request.status.humanize) %></td>
+              <td class="px-4 py-3 text-right">
+                <%= link_to "Review", admin_account_export_request_path(export_request), class: subtle_link_class %>
+              </td>
+            </tr>
+          <% end %>
+        </tbody>
+      </table>
+    </div>
+  <% else %>
+    <div class="<%= app_card_class("p-6") %>">
+      <p class="font-black">No export requests yet.</p>
+      <p class="mt-2 text-sm text-slate-600">Owner requests will appear here for review.</p>
+    </div>
+  <% end %>
+</section>

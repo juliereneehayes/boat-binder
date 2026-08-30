@@ -11,6 +11,7 @@ Rails.application.routes.draw do
   get "billing/checkout/cancel", to: "billing/checkouts#cancel", as: :billing_checkout_cancel
   post "billing/reactivation", to: "billing/reactivations#create", as: :billing_reactivation
   post "billing/portal", to: "billing/portal_sessions#create", as: :billing_portal
+  resources :account_export_requests, only: :create
 
   get "/404", to: "errors#not_found", as: :not_found
   get "/422", to: "errors#unprocessable_entity"
@@ -37,6 +38,7 @@ Rails.application.routes.draw do
   get "users", to: redirect("/admin/users")
 
   namespace :admin do
+    resources :account_export_requests, only: %i[index show update]
     resources :users, except: %i[show destroy] do
       post :resend_invitation, on: :member
     end

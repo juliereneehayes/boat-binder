@@ -1,14 +1,21 @@
-<section class="mx-auto max-w-2xl py-8 md:py-16">
-  <div class="<%= app_card_class("p-6 text-center md:p-10") %>">
+<section class="space-y-6 py-4 md:py-8">
+  <div class="mx-auto max-w-3xl text-center">
     <%= render "shared/brand_mark", class_name: "mx-auto h-16 w-16" %>
-    <p class="mt-6 text-sm font-black uppercase tracking-normal text-[#1E5A7A]">Boat Binder</p>
-    <h1 class="mt-2 text-3xl font-black tracking-normal">Your binder is not available right now.</h1>
-    <p class="mx-auto mt-4 max-w-lg text-sm leading-6 text-slate-600">
-      Your account is still secure. Please contact an administrator if you believe you should have access.
+    <p class="mt-5 text-sm font-black uppercase tracking-normal text-[#1E5A7A]">Account recovery</p>
+    <h1 class="mt-2 text-3xl font-black tracking-normal">Review your Boat Binder options</h1>
+    <p class="mx-auto mt-3 max-w-xl text-sm leading-6 text-slate-600">
+      Your account remains secure. The options below are based on its current billing and retention stage.
     </p>
-
-    <% if @self_managed_plans_available %>
-      <%= link_to "View Self Managed plans", billing_checkout_path, class: primary_button_class("mt-6") %>
-    <% end %>
   </div>
+
+  <%= render "dashboard/owner_lifecycle_recoveries",
+    recoveries: @owner_lifecycle_recoveries,
+    reactivation_options: @reactivation_options,
+    open_export_request_account_ids: @open_export_request_account_ids %>
+
+  <% if @self_managed_plans_available %>
+    <div class="text-center">
+      <%= link_to "View Self Managed plans", billing_checkout_path, class: primary_button_class %>
+    </div>
+  <% end %>
 </section>

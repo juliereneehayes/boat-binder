@@ -10,7 +10,7 @@ module Authorization
 
   included do
     helper_method :current_user, :admin_user?, :internal_user?, :owner_user?, :can_manage_records?,
-      :can_manage_account?, :owner_lifecycle_restricted?
+      :can_manage_account?, :owner_lifecycle_restricted?, :owner_lifecycle_recoveries
   end
 
   private
@@ -161,6 +161,21 @@ module Authorization
 
   def owner_lifecycle_restricted?
     owner_user? && current_user.active? && owner_read_candidate_accounts.any? && readable_account_ids.empty?
+  end
+
+  def owner_lifecycle_recoveries
+    @owner_lifecycle_recoveries ||= if current_user&.owner? && current_user.active?
+      evaluated_at = Time.current
+
+      current_user.account_memberships.active.includes(account: :subscription).filter_map do |membership|
+        account = membership.account
+        next unless account.active? && account.account_type == "client"
+
+        Billing::OwnerLifecycleRecovery.new(account:, membership:, now: evaluated_at)
+      end
+    else
+      []
+    end
   end
 
   def owner_read_candidate_accounts

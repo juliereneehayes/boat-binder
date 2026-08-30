@@ -1,0 +1,64 @@
+<section class="mx-auto max-w-3xl space-y-6">
+  <div>
+    <%= link_to "Back to export requests", admin_account_export_requests_path, class: subtle_link_class("-ml-3") %>
+    <p class="mt-4 text-sm font-black uppercase tracking-normal text-[#1E5A7A]">Account export request</p>
+    <h1 class="mt-2 text-3xl font-black tracking-normal"><%= @export_request.account.name %></h1>
+  </div>
+
+  <%= field_error_messages(@export_request) %>
+
+  <div class="<%= app_card_class("p-5 md:p-6") %>">
+    <dl class="grid gap-5 sm:grid-cols-2">
+      <div>
+        <dt class="text-xs font-black uppercase text-slate-500">Requester</dt>
+        <dd class="mt-1 font-bold"><%= user_display_name(@export_request.requester) %></dd>
+      </div>
+      <div>
+        <dt class="text-xs font-black uppercase text-slate-500">Status</dt>
+        <dd class="mt-1"><%= status_chip(@export_request.status.humanize) %></dd>
+      </div>
+      <div>
+        <dt class="text-xs font-black uppercase text-slate-500">Requested</dt>
+        <dd class="mt-1"><%= local_datetime(@export_request.created_at, account: @export_request.account) %></dd>
+      </div>
+      <div>
+        <dt class="text-xs font-black uppercase text-slate-500">Recovery context</dt>
+        <dd class="mt-1"><%= @export_request.lifecycle_context.humanize %></dd>
+      </div>
+      <div>
+        <dt class="text-xs font-black uppercase text-slate-500">Recipient verified</dt>
+        <dd class="mt-1"><%= @export_request.recipient_verified_at? ? local_datetime(@export_request.recipient_verified_at, account: @export_request.account) : "Not yet" %></dd>
+      </div>
+      <div>
+        <dt class="text-xs font-black uppercase text-slate-500">Scope verified</dt>
+        <dd class="mt-1"><%= @export_request.scope_verified_at? ? local_datetime(@export_request.scope_verified_at, account: @export_request.account) : "Not yet" %></dd>
+      </div>
+    </dl>
+  </div>
+
+  <div class="<%= app_card_class("p-5 md:p-6") %>">
+    <h2 class="text-xl font-black">Review actions</h2>
+    <p class="mt-2 text-sm leading-6 text-slate-600">
+      Verify the intended recipient and export scope independently. This queue records decisions and fulfillment only; it does not generate or deliver files.
+    </p>
+    <div class="mt-5 flex flex-wrap gap-2">
+      <% unless @export_request.recipient_verified_at? %>
+        <%= button_to "Verify recipient", admin_account_export_request_path(@export_request), method: :patch,
+          params: { review_action: "verify_recipient" }, class: secondary_button_class %>
+      <% end %>
+      <% unless @export_request.scope_verified_at? %>
+        <%= button_to "Verify scope", admin_account_export_request_path(@export_request), method: :patch,
+          params: { review_action: "verify_scope" }, class: secondary_button_class %>
+      <% end %>
+      <% if @export_request.requested? %>
+        <%= button_to "Approve request", admin_account_export_request_path(@export_request), method: :patch,
+          params: { review_action: "approve" }, class: primary_button_class %>
+        <%= button_to "Decline request", admin_account_export_request_path(@export_request), method: :patch,
+          params: { review_action: "decline" }, class: secondary_button_class("border-red-200 text-red-700 hover:border-red-300") %>
+      <% elsif @export_request.approved? %>
+        <%= button_to "Mark fulfilled", admin_account_export_request_path(@export_request), method: :patch,
+          params: { review_action: "fulfill" }, class: primary_button_class %>
+      <% end %>
+    </div>
+  </div>
+</section>

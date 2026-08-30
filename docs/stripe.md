@@ -142,12 +142,14 @@ and does not prove deployed Stripe configuration or hosted Checkout behavior.
 
 ## Billing Portal First Slice
 
-An authenticated active Owner with exactly one active Editor membership for an active client Account
-can create a fresh Stripe Billing Portal session through `POST /billing/portal`. Boat Binder resolves
-the Account and its verified Stripe Customer association server-side. It permits only verified Self
+An authenticated active Owner with an active Editor membership for an active client Account can
+create a fresh Stripe Billing Portal session through `POST /billing/portal`. Recovery forms submit a
+server-generated, purpose-signed Account reference; Boat Binder resolves the Account and current
+membership again on the server. Requests without that reference retain the original exactly-one-
+eligible-Account behavior. It permits only verified Self
 Managed `current_entitlement` and `payment_recovery_pending` lifecycle phases; Read-only members,
-ambiguous Account relationships, unsupported phases, plans, providers, and unverified records fail
-closed.
+unsupported phases, plans, providers, unverified records, and invalid or cross-Account references
+fail closed.
 
 Set `STRIPE_BILLING_PORTAL_CONFIGURATION_ID` to an explicit configuration created for the current
 Stripe environment. Staging uses a test-mode configuration with `STRIPE_LIVEMODE=false`; production
@@ -189,6 +191,26 @@ webhooks remain authoritative.
 
 These Stripe Dashboard and end-to-end recovery checks remain operator-run external validation; the
 automated suite stubs Stripe and does not prove deployed Portal configuration or invoice behavior.
+
+## Owner Lifecycle Recovery and Export Requests
+
+Owner recovery presentation reads only the local `Billing::SelfManagedEntitlement` lifecycle API.
+Rendering and authorization do not contact Stripe. Ordinary current-entitlement screens remain
+unchanged; scheduled cancellation, payment recovery, read-only grace, retained/inactive,
+archive-eligible, and exceptional states receive distinct customer-facing copy and only the actions
+authorized for that phase. Restricted recovery surfaces do not expose vessel, document, service,
+note, reminder, attachment, Stripe, or security details.
+
+Billing Portal and terminal-reactivation actions remain POST-only and require an authenticated active
+Owner with an active Editor membership for the signed, server-resolved Account. Reactivation reuses
+the verified no-new-trial terminal path; a browser return never restores access. Active Read-only or
+Editor Owner memberships may request an Account export only in the approved lifecycle contexts.
+
+`AccountExportRequest` is a minimal Admin-only audit queue. It records the requester, Account,
+lifecycle context, independent recipient and scope verification, decision, and fulfillment status.
+It does not generate, store, download, deliver, archive, restore, or delete export data. One open
+request per Account is enforced in PostgreSQL, while declined and fulfilled requests remain as audit
+history.
 
 Verified events actively processed:
 
