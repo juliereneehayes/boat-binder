@@ -168,7 +168,10 @@ module Billing
       return result(:missing_entitlement_end) unless valid_time?(trial_ends_at)
 
       ends_at = effective_entitlement_end(trial_ends_at)
-      return result(:trial_expired, ends_at) unless ends_at > now
+      unless ends_at > now
+        expiration_reason = ends_at < trial_ends_at ? :entitlement_expired : :trial_expired
+        return result(expiration_reason, ends_at)
+      end
 
       result(:trialing, ends_at)
     end

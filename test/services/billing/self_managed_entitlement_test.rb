@@ -139,6 +139,66 @@ module Billing
       end
     end
 
+    test "canonical scheduled cancellation caps trial entitlement at its exact boundary" do
+      trial_end = @now + 7.days
+      cancel_at = @now + 3.days
+      account = verified_account(
+        status: "trialing",
+        trial_ends_at: trial_end,
+        cancel_at:
+      )
+
+      before_cancellation = entitlement_for(account, now: cancel_at - BOUNDARY_DELTA)
+      assert before_cancellation.qualifying?
+      assert_equal :trialing, before_cancellation.reason
+      assert_equal cancel_at, before_cancellation.entitlement_ends_at
+
+      after_cancellation = entitlement_for(account, now: cancel_at + BOUNDARY_DELTA)
+      assert_not after_cancellation.qualifying?
+      assert_equal :entitlement_expired, after_cancellation.reason
+      assert_equal cancel_at, after_cancellation.entitlement_ends_at
+    end
+
+    test "scheduled cancellation after trial end does not extend trial entitlement" do
+      trial_end = @now + 7.days
+      account = verified_account(
+        status: "trialing",
+        trial_ends_at: trial_end,
+        cancel_at: trial_end + 3.days
+      )
+
+      before_trial_end = entitlement_for(account, now: trial_end - BOUNDARY_DELTA)
+      assert before_trial_end.qualifying?
+      assert_equal :trialing, before_trial_end.reason
+      assert_equal trial_end, before_trial_end.entitlement_ends_at
+
+      after_trial_end = entitlement_for(account, now: trial_end + BOUNDARY_DELTA)
+      assert_not after_trial_end.qualifying?
+      assert_equal :trial_expired, after_trial_end.reason
+      assert_equal trial_end, after_trial_end.entitlement_ends_at
+    end
+
+    test "legacy period-end cancellation caps trial at current period end" do
+      trial_end = @now + 7.days
+      period_end = @now + 3.days
+      account = verified_account(
+        status: "trialing",
+        trial_ends_at: trial_end,
+        current_period_ends_at: period_end,
+        cancel_at_period_end: true
+      )
+
+      before_period_end = entitlement_for(account, now: period_end - BOUNDARY_DELTA)
+      assert before_period_end.qualifying?
+      assert_equal :trialing, before_period_end.reason
+      assert_equal period_end, before_period_end.entitlement_ends_at
+
+      after_period_end = entitlement_for(account, now: period_end + BOUNDARY_DELTA)
+      assert_not after_period_end.qualifying?
+      assert_equal :entitlement_expired, after_period_end.reason
+      assert_equal period_end, after_period_end.entitlement_ends_at
+    end
+
     test "scheduled cancellation ignores cancellation request time and ends at paid through boundary" do
       period_end = @now - 1.hour
       cancellation_requested_at = @now - 1.week
