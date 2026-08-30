@@ -13,6 +13,7 @@ module Billing
     def initialize(account:, membership:, now: Time.current)
       @account = account
       @membership = membership
+      @now = now
       entitlement = SelfManagedEntitlement.new(account:, now:)
       @phase = entitlement.lifecycle_phase
       @entitlement_ended_at = entitlement.entitlement_ended_at
@@ -24,7 +25,7 @@ module Billing
     end
 
     def scheduled_cancellation?
-      phase == :current_entitlement && account.subscription&.cancel_at_period_end?
+      phase == :current_entitlement && account.subscription&.scheduled_cancellation?(now:)
     end
 
     def status_label
@@ -73,7 +74,7 @@ module Billing
     end
 
     def date
-      return entitlement_ends_at if scheduled_cancellation?
+      return account.subscription.scheduled_cancellation_at if scheduled_cancellation?
 
       entitlement_ended_at if phase == :read_only_grace
     end
@@ -101,6 +102,8 @@ module Billing
     end
 
     private
+
+    attr_reader :now
 
     def editor?
       membership.access_level == "editor"

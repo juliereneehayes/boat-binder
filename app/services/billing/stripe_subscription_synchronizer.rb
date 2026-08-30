@@ -202,6 +202,7 @@ module Billing
       status = local_status(canonical_subscription)
       trial_ends_at = timestamp(canonical_subscription.trial_end)
       current_period_ends_at = current_period_end(canonical_subscription)
+      canonical_cancel_at = timestamp(canonical_subscription[:cancel_at])
       canonical_ended_at = timestamp(canonical_subscription[:ended_at])
 
       {
@@ -213,12 +214,14 @@ module Billing
         trial_ends_at:,
         current_period_ends_at:,
         cancel_at_period_end: canonical_subscription.cancel_at_period_end == true,
+        cancel_at: canonical_cancel_at,
         canceled_at: timestamp(canonical_subscription.canceled_at),
         entitlement_ended_at: synchronized_entitlement_end(
           subscription,
           option:,
           status:,
           trial_ends_at:,
+          canonical_cancel_at:,
           canonical_ended_at:,
           synchronized_at:
         ),
@@ -244,11 +247,12 @@ module Billing
       raise_association_error("reactivation_trial_not_allowed")
     end
 
-    def synchronized_entitlement_end(subscription, option:, status:, trial_ends_at:, canonical_ended_at:,
-      synchronized_at:)
+    def synchronized_entitlement_end(subscription, option:, status:, trial_ends_at:, canonical_cancel_at:,
+      canonical_ended_at:, synchronized_at:)
+      verified_terminal_end = canonical_ended_at || canonical_cancel_at
       if status == "canceled" && previously_verified_as_qualifying?(subscription, option) &&
-          canonical_ended_at && canonical_ended_at <= synchronized_at
-        candidate = canonical_ended_at
+          verified_terminal_end && verified_terminal_end <= synchronized_at
+        candidate = verified_terminal_end
       end
       if candidate.nil? && previously_verified_trial?(subscription, option) && !%w[active trialing].include?(status) &&
           trial_ends_at && trial_ends_at <= synchronized_at

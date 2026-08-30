@@ -109,10 +109,12 @@
             <div>
               <dt class="font-semibold text-slate-800">Cancellation state</dt>
               <dd class="mt-1">
-                <% if @subscription.canceled_at.present? %>
+                <% if @subscription.scheduled_cancellation? %>
+                  Cancels <%= local_datetime(@subscription.scheduled_cancellation_at, account: @account) %>
+                <% elsif @subscription.canceled? && @subscription.canceled_at.present? %>
                   Canceled <%= local_datetime(@subscription.canceled_at, account: @account) %>
-                <% elsif @subscription.cancel_at_period_end? %>
-                  Cancels at period end
+                <% elsif @subscription.canceled? %>
+                  Canceled
                 <% else %>
                   Not scheduled
                 <% end %>

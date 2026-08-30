@@ -9,7 +9,7 @@ module Billing
       @editor = create_account_membership(user: @owner, account: @account, access_level: "editor")
     end
 
-    test "ordinary current entitlement stays invisible while scheduled cancellation is actionable" do
+    test "ordinary current entitlement stays invisible while either canonical schedule is actionable" do
       configure_subscription(status: "active", current_period_ends_at: @now + 1.month)
       recovery = build_recovery
 
@@ -23,6 +23,17 @@ module Billing
       assert recovery.scheduled_cancellation?
       assert_equal "scheduled_cancellation", recovery.export_context
       assert recovery.billing_portal_available?
+      assert_not recovery.reactivation_available?
+
+      cancel_at = @now + 2.weeks
+      @account.subscription.update!(cancel_at_period_end: false, cancel_at:)
+      recovery = build_recovery
+
+      assert recovery.visible?
+      assert recovery.scheduled_cancellation?
+      assert_equal cancel_at, recovery.date
+      assert recovery.billing_portal_available?
+      assert recovery.export_available?
       assert_not recovery.reactivation_available?
     end
 
@@ -93,6 +104,7 @@ module Billing
         current_period_ends_at:,
         entitlement_ended_at:,
         cancel_at_period_end: false,
+        cancel_at: nil,
         last_synced_at: @now - 1.minute
       )
     end

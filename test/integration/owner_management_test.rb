@@ -220,7 +220,29 @@ class OwnerManagementTest < ActionDispatch::IntegrationTest
 
       assert_response :success
       assert_includes response.body, "Self Managed access current"
-      assert_includes response.body, "Cancels at period end"
+      assert_includes response.body, "Cancels Sep 20, 2026 at 12:00 PM PDT"
+    end
+  end
+
+  test "owner page describes an active canonical cancellation schedule as future" do
+    now = Time.zone.local(2026, 8, 20, 12)
+    admin = create_user(email: "admin-canonical-cancel-at@example.test", role: "admin")
+    account = create_account(name: "Canonical Cancellation Owner")
+    sign_in_as admin
+
+    travel_to now do
+      qualify_self_managed_subscription(account, status: "active", now:)
+      account.subscription.update!(
+        cancel_at_period_end: false,
+        cancel_at: now + 2.weeks,
+        canceled_at: now - 1.day
+      )
+
+      get owner_path(account)
+
+      assert_response :success
+      assert_includes response.body, "Cancels Sep 3, 2026 at 12:00 PM PDT"
+      assert_not_includes response.body, "Canceled Aug 19, 2026"
     end
   end
 
@@ -271,17 +293,19 @@ class OwnerManagementTest < ActionDispatch::IntegrationTest
     )
     sign_in_as admin
 
-    get owner_path(account)
+    travel_to Time.utc(2026, 7, 12, 18, 30) do
+      get owner_path(account)
 
-    assert_response :success
-    assert_includes response.body, "Professional"
-    assert_includes response.body, "Trialing"
-    assert_includes response.body, "Stripe"
-    assert_includes response.body, "No current Self Managed entitlement"
-    assert_includes response.body, "Cancels at period end"
-    assert_includes response.body, "Jul 15, 2026 at 4:00 PM EDT"
-    assert_includes response.body, "Aug 15, 2026 at 4:00 PM EDT"
-    assert_includes response.body, "Jul 12, 2026 at 2:30 PM EDT"
+      assert_response :success
+      assert_includes response.body, "Professional"
+      assert_includes response.body, "Trialing"
+      assert_includes response.body, "Stripe"
+      assert_includes response.body, "No current Self Managed entitlement"
+      assert_includes response.body, "Cancels Aug 15, 2026 at 4:00 PM EDT"
+      assert_includes response.body, "Jul 15, 2026 at 4:00 PM EDT"
+      assert_includes response.body, "Aug 15, 2026 at 4:00 PM EDT"
+      assert_includes response.body, "Jul 12, 2026 at 2:30 PM EDT"
+    end
   end
 
   test "owner form clarifies manual contact information does not grant access" do
