@@ -194,6 +194,40 @@ class OwnerReadLifecycleTest < ActionDispatch::IntegrationTest
     assert_unsupported_plan_owner_is_restricted
   end
 
+  test "local subscription offers Self Managed plans only when external identifiers are blank" do
+    @account.subscription.update!(
+      provider: Subscription::LOCAL_PROVIDER,
+      plan: "legacy",
+      status: "active",
+      external_customer_id: nil,
+      external_subscription_id: nil
+    )
+    sign_in_as @owner
+
+    get root_path
+    assert_response :success
+    assert_select "a[href=?]", billing_checkout_path,
+      text: "View Self Managed plans",
+      count: 1
+
+    @account.subscription.update!(external_customer_id: "cus_existing_local")
+    get root_path
+    assert_response :success
+    assert_select "a[href=?]", billing_checkout_path,
+      text: "View Self Managed plans",
+      count: 0
+
+    @account.subscription.update!(
+      external_customer_id: nil,
+      external_subscription_id: "sub_existing_local"
+    )
+    get root_path
+    assert_response :success
+    assert_select "a[href=?]", billing_checkout_path,
+      text: "View Self Managed plans",
+      count: 0
+  end
+
   test "active Stripe Starter subscription denies owner binder reads" do
     configure_current_entitlement
     @account.subscription.update!(plan: "starter")
