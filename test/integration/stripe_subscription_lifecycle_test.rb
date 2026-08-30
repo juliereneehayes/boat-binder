@@ -234,6 +234,83 @@ class StripeSubscriptionLifecycleTest < ActionDispatch::IntegrationTest
     assert vessel.reload.primary_photo.attached?
   end
 
+  test "canonical future cancel at is persisted exactly and cleared when Stripe removes the schedule" do
+    state = create_stripe_state("canonical_cancel_at")
+    local_subscription_id = state.fetch(:subscription).id
+    period_end = 1.month.from_now.change(usec: 0)
+    cancel_at = 2.weeks.from_now.change(usec: 0)
+    cancellation_requested_at = 1.day.ago.change(usec: 0)
+
+    post_subscription_event(
+      state:,
+      event_id: "evt_canonical_cancel_at_scheduled",
+      event_type: "customer.subscription.updated",
+      status: "active",
+      period_end:,
+      cancel_at:,
+      cancel_at_period_end: false,
+      canceled_at: cancellation_requested_at
+    )
+
+    assert_response :success
+    subscription = state.fetch(:subscription).reload
+    assert_equal local_subscription_id, subscription.id
+    assert_equal "active", subscription.status
+    assert_not subscription.cancel_at_period_end?
+    assert_equal cancel_at.to_i, subscription.cancel_at.to_i
+    assert_equal cancellation_requested_at.to_i, subscription.canceled_at.to_i
+    assert_equal :canceling_at_period_end,
+      Billing::SelfManagedEntitlement.new(account: state.fetch(:account).reload).reason
+    assert_equal "processed", receipt("evt_canonical_cancel_at_scheduled").status
+
+    post_subscription_event(
+      state:,
+      event_id: "evt_canonical_cancel_at_cleared",
+      event_type: "customer.subscription.updated",
+      status: "active",
+      period_end:,
+      cancel_at: nil,
+      cancel_at_period_end: false,
+      canceled_at: nil
+    )
+
+    assert_response :success
+    subscription.reload
+    assert_equal local_subscription_id, subscription.id
+    assert_nil subscription.cancel_at
+    assert_not subscription.cancel_at_period_end?
+    assert_nil subscription.canceled_at
+    assert_equal :active,
+      Billing::SelfManagedEntitlement.new(account: state.fetch(:account).reload).reason
+    assert_equal state.fetch(:customer_id), subscription.external_customer_id
+    assert_equal state.fetch(:subscription_id), subscription.external_subscription_id
+    assert_equal "processed", receipt("evt_canonical_cancel_at_cleared").status
+  end
+
+  test "terminal synchronization uses canonical cancel at when ended at is absent" do
+    state = create_stripe_state("terminal_canonical_cancel_at")
+    cancel_at = 1.hour.ago.change(usec: 0)
+
+    post_subscription_event(
+      state:,
+      event_id: "evt_terminal_canonical_cancel_at",
+      event_type: "customer.subscription.deleted",
+      status: "canceled",
+      cancel_at:,
+      canceled_at: cancel_at - 1.day,
+      ended_at: nil
+    )
+
+    assert_response :success
+    subscription = state.fetch(:subscription).reload
+    assert_equal "canceled", subscription.status
+    assert_equal cancel_at.to_i, subscription.cancel_at.to_i
+    assert_equal cancel_at.to_i, subscription.entitlement_ended_at.to_i
+    assert_equal :verified_lifecycle_end,
+      Billing::SelfManagedEntitlement.new(account: state.fetch(:account).reload).entitlement_end_reason
+    assert_equal "processed", receipt("evt_terminal_canonical_cancel_at").status
+  end
+
   test "terminal canonical state does not fabricate former entitlement without verified local history" do
     state = create_stripe_state("unverified_terminal")
     state.fetch(:subscription).update!(plan: "legacy", last_synced_at: nil)
@@ -573,7 +650,7 @@ class StripeSubscriptionLifecycleTest < ActionDispatch::IntegrationTest
 
   def subscription_data(state:, status:, price_id: "price_lifecycle_monthly", period_end: 1.month.from_now,
     trial_end: status == "trialing" ? 7.days.from_now : nil,
-    cancel_at_period_end: false, canceled_at: nil, ended_at: nil)
+    cancel_at_period_end: false, cancel_at: nil, canceled_at: nil, ended_at: nil)
     {
       id: state.fetch(:subscription_id),
       object: "subscription",
@@ -581,6 +658,7 @@ class StripeSubscriptionLifecycleTest < ActionDispatch::IntegrationTest
       status:,
       trial_end: trial_end&.to_i,
       cancel_at_period_end:,
+      cancel_at: cancel_at&.to_i,
       canceled_at: canceled_at&.to_i,
       ended_at: ended_at&.to_i,
       metadata: correlation_metadata(state),
@@ -667,6 +745,7 @@ class StripeSubscriptionLifecycleTest < ActionDispatch::IntegrationTest
       "trial_ends_at",
       "current_period_ends_at",
       "cancel_at_period_end",
+      "cancel_at",
       "canceled_at",
       "entitlement_ended_at",
       "past_due_observed_at",

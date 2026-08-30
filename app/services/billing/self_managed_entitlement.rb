@@ -152,21 +152,32 @@ module Billing
     end
 
     def evaluate_active(subscription)
-      ends_at = subscription.current_period_ends_at
-      return result(:missing_entitlement_end) unless valid_time?(ends_at)
+      period_ends_at = subscription.current_period_ends_at
+      return result(:missing_entitlement_end) unless valid_time?(period_ends_at)
+
+      ends_at = effective_entitlement_end(period_ends_at)
       return result(:entitlement_expired, ends_at) unless ends_at > now
 
       qualifying_reason =
-        subscription.cancel_at_period_end? ? :canceling_at_period_end : :active
+        subscription.scheduled_cancellation?(now:) ? :canceling_at_period_end : :active
       result(qualifying_reason, ends_at)
     end
 
     def evaluate_trial(subscription)
-      ends_at = subscription.trial_ends_at
-      return result(:missing_entitlement_end) unless valid_time?(ends_at)
+      trial_ends_at = subscription.trial_ends_at
+      return result(:missing_entitlement_end) unless valid_time?(trial_ends_at)
+
+      ends_at = effective_entitlement_end(trial_ends_at)
       return result(:trial_expired, ends_at) unless ends_at > now
 
       result(:trialing, ends_at)
+    end
+
+    def effective_entitlement_end(default_end)
+      scheduled_end = subscription.scheduled_cancellation_at
+      return default_end unless valid_time?(scheduled_end)
+
+      [ default_end, scheduled_end ].min
     end
 
     def valid_time?(value)

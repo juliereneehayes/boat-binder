@@ -73,6 +73,44 @@ module Billing
       end
     end
 
+    test "canonical cancel at schedules cancellation and caps entitlement at the exact boundary" do
+      period_end = @now + 1.month
+      cancel_at = @now + 2.weeks
+      account = verified_account(
+        status: "active",
+        current_period_ends_at: period_end,
+        cancel_at_period_end: false,
+        cancel_at:
+      )
+
+      before_cancellation = entitlement_for(account, now: cancel_at - BOUNDARY_DELTA)
+      assert before_cancellation.qualifying?
+      assert_equal :canceling_at_period_end, before_cancellation.reason
+      assert_equal cancel_at, before_cancellation.entitlement_ends_at
+
+      at_cancellation = entitlement_for(account, now: cancel_at)
+      assert_not at_cancellation.qualifying?
+      assert_equal :entitlement_expired, at_cancellation.reason
+      assert_equal cancel_at, at_cancellation.entitlement_ended_at
+      assert_equal :read_only_grace, at_cancellation.lifecycle_phase
+    end
+
+    test "clearing canonical cancel at resumes normal active-period evaluation" do
+      period_end = @now + 1.month
+      account = verified_account(
+        status: "active",
+        current_period_ends_at: period_end,
+        cancel_at: @now + 2.weeks
+      )
+
+      account.subscription.update!(cancel_at: nil)
+      entitlement = entitlement_for(account)
+
+      assert entitlement.qualifying?
+      assert_equal :active, entitlement.reason
+      assert_equal period_end, entitlement.entitlement_ends_at
+    end
+
     test "trial qualifies strictly before verified trial end" do
       trial_end = @now + 7.days
       account = verified_account(status: "trialing", trial_ends_at: trial_end)
@@ -434,7 +472,7 @@ module Billing
 
     def verified_account(status:, trial_ends_at: @now + 7.days,
       current_period_ends_at: @now + 1.month, cancel_at_period_end: false,
-      canceled_at: nil, entitlement_ended_at: nil, past_due_observed_at: nil)
+      cancel_at: nil, canceled_at: nil, entitlement_ended_at: nil, past_due_observed_at: nil)
       account = create_account(name: unique_name("Verified Self Managed"))
       account.subscription.update!(
         provider: Subscription::STRIPE_PROVIDER,
@@ -445,6 +483,7 @@ module Billing
         trial_ends_at:,
         current_period_ends_at:,
         cancel_at_period_end:,
+        cancel_at:,
         canceled_at:,
         entitlement_ended_at:,
         past_due_observed_at:,

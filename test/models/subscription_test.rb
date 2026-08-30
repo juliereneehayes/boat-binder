@@ -31,10 +31,62 @@ class SubscriptionTest < ActiveSupport::TestCase
   test "local subscriptions do not fabricate Stripe lifecycle timing" do
     subscription = create_account(name: "Local lifecycle timing").subscription
 
+    assert_nil subscription.cancel_at
     assert_nil subscription.entitlement_ended_at
     assert_nil subscription.past_due_observed_at
+    assert Subscription.columns_hash.fetch("cancel_at").null
     assert Subscription.columns_hash.fetch("entitlement_ended_at").null
     assert Subscription.columns_hash.fetch("past_due_observed_at").null
+  end
+
+  test "scheduled cancellation boundary prefers canonical cancel at and retains period-end compatibility" do
+    now = Time.zone.local(2026, 8, 30, 12)
+    subscription = create_account(name: "Scheduled cancellation predicates").subscription
+    subscription.update!(
+      status: "active",
+      current_period_ends_at: now + 1.month,
+      cancel_at_period_end: true
+    )
+
+    assert_equal now + 1.month, subscription.scheduled_cancellation_at
+    assert subscription.scheduled_cancellation?(now:)
+
+    subscription.update!(cancel_at_period_end: false, cancel_at: now + 2.weeks)
+    assert_equal now + 2.weeks, subscription.scheduled_cancellation_at
+    assert subscription.scheduled_cancellation?(now:)
+
+    subscription.update!(cancel_at: nil)
+    assert_nil subscription.scheduled_cancellation_at
+    assert_not subscription.scheduled_cancellation?(now:)
+  end
+
+  test "cancel at migration rollback refuses to discard canonical boundaries" do
+    subscription = create_account(name: "Canonical cancel at rollback").subscription
+    cancel_at = 1.month.from_now
+    subscription.update!(cancel_at:)
+    migration = cancel_at_migration
+
+    error = assert_raises(ActiveRecord::IrreversibleMigration) do
+      migration.migrate(:down)
+    end
+
+    assert_includes error.message, "canonical cancellation boundaries exist"
+    assert ActiveRecord::Base.connection.column_exists?(:subscriptions, :cancel_at)
+    assert_equal cancel_at.to_i, subscription.reload.cancel_at.to_i
+  end
+
+  test "cancel at migration rolls back when no canonical boundaries exist" do
+    Subscription.update_all(cancel_at: nil)
+    migration = cancel_at_migration
+
+    migration.migrate(:down)
+    Subscription.reset_column_information
+    assert_not ActiveRecord::Base.connection.column_exists?(:subscriptions, :cancel_at)
+  ensure
+    unless ActiveRecord::Base.connection.column_exists?(:subscriptions, :cancel_at)
+      migration&.migrate(:up)
+      Subscription.reset_column_information
+    end
   end
 
   test "lifecycle predicates are status specific" do
@@ -266,6 +318,16 @@ class SubscriptionTest < ActiveSupport::TestCase
     require migration_paths.fetch(0)
 
     AddSelfManagedToSubscriptionPlans.new
+  end
+
+  def cancel_at_migration
+    migration_paths = Dir.glob(
+      Rails.root.join("db/migrate/*_add_cancel_at_to_subscriptions.rb").to_s
+    )
+    assert_equal 1, migration_paths.length, "Expected exactly one cancel-at migration"
+    require migration_paths.fetch(0)
+
+    AddCancelAtToSubscriptions.new
   end
 
   def subscription_plan_constraint

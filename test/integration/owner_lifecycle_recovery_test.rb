@@ -45,21 +45,49 @@ class OwnerLifecycleRecoveryIntegrationTest < ActionDispatch::IntegrationTest
     assert_not_includes response.body, "Request an account export"
   end
 
-  test "scheduled cancellation offers Portal and export without terminal reactivation" do
+  test "canonical cancel at shows exact paid through recovery while preserving writes until the boundary" do
+    cancel_at = @now + 2.weeks
     configure_subscription(
       status: "active",
       current_period_ends_at: @now + 1.month,
-      cancel_at_period_end: true
+      cancel_at:
     )
+
+    travel_to @now do
+      without_stripe_calls { get root_path }
+
+      patch vessel_path(@vessel), params: { asset: { name: "Scheduled Access Vessel" } }
+    end
+
+    assert_redirected_to vessel_path(@vessel.reload)
+    assert_equal "Scheduled Access Vessel", @vessel.name
+
+    travel_to @now do
+      get root_path
+      assert_response :success
+      assert_includes response.body, "Your plan is scheduled to end"
+      assert_includes response.body, "Paid through"
+      assert_includes response.body, "Sep 12, 2026 at 12:00 PM PDT"
+      assert_select "form[action=?]", billing_portal_path, count: 1
+      assert_select "form[action=?]", account_export_requests_path, count: 1
+      assert_select "form[action=?]", billing_reactivation_path, count: 0
+    end
+  end
+
+  test "clearing canonical cancel at removes recovery actions and keeps current access" do
+    configure_subscription(
+      status: "active",
+      current_period_ends_at: @now + 1.month,
+      cancel_at: @now + 2.weeks
+    )
+    @account.subscription.update!(cancel_at: nil)
 
     travel_to(@now) { get root_path }
 
     assert_response :success
-    assert_includes response.body, "Your plan is scheduled to end"
-    assert_includes response.body, "Paid through"
-    assert_select "form[action=?]", billing_portal_path, count: 1
-    assert_select "form[action=?]", account_export_requests_path, count: 1
-    assert_select "form[action=?]", billing_reactivation_path, count: 0
+    assert_includes response.body, @vessel.name
+    assert_not_includes response.body, "Your plan is scheduled to end"
+    assert_select "form[action=?]", account_export_requests_path, count: 0
   end
 
   test "payment recovery preserves reads and offers supported recovery actions" do
@@ -216,7 +244,7 @@ class OwnerLifecycleRecoveryIntegrationTest < ActionDispatch::IntegrationTest
   private
 
   def configure_subscription(status:, current_period_ends_at: nil, entitlement_ended_at: nil,
-    cancel_at_period_end: false)
+    cancel_at_period_end: false, cancel_at: nil)
     @account.subscription.update!(
       provider: Subscription::STRIPE_PROVIDER,
       plan: "self_managed",
@@ -226,6 +254,7 @@ class OwnerLifecycleRecoveryIntegrationTest < ActionDispatch::IntegrationTest
       current_period_ends_at:,
       entitlement_ended_at:,
       cancel_at_period_end:,
+      cancel_at:,
       last_synced_at: @now - 1.minute
     )
   end

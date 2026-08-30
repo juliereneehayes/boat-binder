@@ -167,6 +167,12 @@ Returning from Portal is informational. It does not mark an invoice paid, clear 
 the local Subscription, restore entitlement, or create billing records. Authenticated canonical
 webhooks remain authoritative.
 
+Canonical synchronization preserves Stripe's exact `cancel_at` timestamp as well as the legacy
+`cancel_at_period_end` flag. An active subscription with either a verified future `cancel_at` or the
+period-end flag is presented as scheduled to end. Owner access remains bounded by the verified paid
+period and never extends beyond the canonical cancellation boundary. When Stripe removes the
+schedule, the next verified synchronization clears both local schedule values.
+
 ### Staging Portal Validation
 
 1. In the Stripe test environment, create and save a dedicated Portal configuration. Enable payment

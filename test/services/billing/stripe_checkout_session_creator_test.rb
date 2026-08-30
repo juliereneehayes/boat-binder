@@ -578,6 +578,7 @@ module Billing
         "trial_ends_at",
         "current_period_ends_at",
         "cancel_at_period_end",
+        "cancel_at",
         "canceled_at",
         "entitlement_ended_at",
         "past_due_observed_at",

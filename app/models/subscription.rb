@@ -39,6 +39,14 @@ class Subscription < ApplicationRecord
     status == "canceled"
   end
 
+  def scheduled_cancellation_at
+    cancel_at || (current_period_ends_at if cancel_at_period_end?)
+  end
+
+  def scheduled_cancellation?(now: Time.current)
+    (active? || trialing?) && scheduled_cancellation_at&.>(now)
+  end
+
   def expired?
     status == "expired"
   end
