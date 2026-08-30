@@ -32,7 +32,10 @@ module Billing
     end
 
     def set_billing_account
-      @billing_account = StripeCheckoutAccountResolver.call(current_user)
+      @billing_account = StripeCheckoutAccountResolver.call(
+        current_user,
+        account_reference: params[:account_reference]
+      )
     rescue StripeCheckoutAccountResolver::ResolutionError
       redirect_to root_path, alert: Authorization::ACCESS_DENIED_MESSAGE
     end

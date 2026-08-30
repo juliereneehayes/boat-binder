@@ -1,12 +1,16 @@
 class DashboardController < ApplicationController
   def index
+    @owner_lifecycle_recoveries = owner_lifecycle_recoveries
+    @reactivation_options = reactivation_options if @owner_lifecycle_recoveries.any?(&:reactivation_available?)
+    @open_export_request_account_ids = open_export_request_account_ids
+
     if owner_lifecycle_restricted?
       @self_managed_plans_available = self_managed_plans_available?
       render :restricted_owner
       return
     end
 
-    @billing_portal_available = billing_portal_available?
+    @billing_portal_available = billing_portal_available? && @owner_lifecycle_recoveries.none?(&:visible?)
     @dashboard_account = scoped_accounts.limit(2).to_a.then { |accounts| accounts.one? ? accounts.first : nil }
     @vessels = scoped_vessels.active.includes(:account, :reminders, :service_visits).with_attached_primary_photo.ordered
     @upcoming_reminders = scoped_reminders.includes(asset: :account).upcoming.limit(6)
@@ -22,9 +26,28 @@ class DashboardController < ApplicationController
   private
 
   def self_managed_plans_available?
-    Billing::StripeCheckoutAccountResolver.call(current_user).present?
+    account = Billing::StripeCheckoutAccountResolver.call(current_user)
+    subscription = account.subscription
+    subscription&.provider == Subscription::LOCAL_PROVIDER &&
+      subscription.external_customer_id.blank? &&
+      subscription.external_subscription_id.blank?
   rescue Billing::StripeCheckoutAccountResolver::ResolutionError
     false
+  end
+
+  def reactivation_options
+    Billing::SubscriptionPlanCatalog.new.enabled_options
+  rescue Billing::SubscriptionPlanCatalog::ConfigurationError
+    []
+  end
+
+  def open_export_request_account_ids
+    account_ids = @owner_lifecycle_recoveries.filter_map do |recovery|
+      recovery.account.id if recovery.export_available?
+    end
+    return [] if account_ids.empty?
+
+    AccountExportRequest.open.where(account_id: account_ids).pluck(:account_id)
   end
 
   def billing_portal_available?

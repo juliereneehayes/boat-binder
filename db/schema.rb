@@ -10,9 +10,35 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_08_28_170000) do
+ActiveRecord::Schema[8.1].define(version: 2026_08_29_100000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
+
+  create_table "account_export_requests", force: :cascade do |t|
+    t.bigint "account_id", null: false
+    t.datetime "created_at", null: false
+    t.datetime "decided_at"
+    t.bigint "decided_by_id"
+    t.datetime "fulfilled_at"
+    t.bigint "fulfilled_by_id"
+    t.string "lifecycle_context", null: false
+    t.datetime "recipient_verified_at"
+    t.bigint "recipient_verified_by_id"
+    t.bigint "requester_id", null: false
+    t.datetime "scope_verified_at"
+    t.bigint "scope_verified_by_id"
+    t.string "status", default: "requested", null: false
+    t.datetime "updated_at", null: false
+    t.index ["account_id"], name: "idx_account_export_requests_one_open_per_account", unique: true, where: "((status)::text = ANY ((ARRAY['requested'::character varying, 'approved'::character varying])::text[]))"
+    t.index ["account_id"], name: "index_account_export_requests_on_account_id"
+    t.index ["decided_by_id"], name: "index_account_export_requests_on_decided_by_id"
+    t.index ["fulfilled_by_id"], name: "index_account_export_requests_on_fulfilled_by_id"
+    t.index ["recipient_verified_by_id"], name: "index_account_export_requests_on_recipient_verified_by_id"
+    t.index ["requester_id"], name: "index_account_export_requests_on_requester_id"
+    t.index ["scope_verified_by_id"], name: "index_account_export_requests_on_scope_verified_by_id"
+    t.check_constraint "lifecycle_context::text = ANY (ARRAY['scheduled_cancellation'::character varying, 'payment_recovery_pending'::character varying, 'read_only_grace'::character varying, 'retained_inactive'::character varying, 'archive_eligible'::character varying]::text[])", name: "chk_account_export_requests_lifecycle_context"
+    t.check_constraint "status::text = ANY (ARRAY['requested'::character varying, 'approved'::character varying, 'declined'::character varying, 'fulfilled'::character varying]::text[])", name: "chk_account_export_requests_status"
+  end
 
   create_table "account_memberships", force: :cascade do |t|
     t.string "access_level", default: "read_only", null: false
@@ -460,6 +486,12 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_28_170000) do
     t.index ["email_address"], name: "index_users_on_email_address", unique: true
   end
 
+  add_foreign_key "account_export_requests", "accounts"
+  add_foreign_key "account_export_requests", "users", column: "decided_by_id"
+  add_foreign_key "account_export_requests", "users", column: "fulfilled_by_id"
+  add_foreign_key "account_export_requests", "users", column: "recipient_verified_by_id"
+  add_foreign_key "account_export_requests", "users", column: "requester_id"
+  add_foreign_key "account_export_requests", "users", column: "scope_verified_by_id"
   add_foreign_key "account_memberships", "accounts"
   add_foreign_key "account_memberships", "users"
   add_foreign_key "active_storage_attachments", "active_storage_blobs", column: "blob_id"

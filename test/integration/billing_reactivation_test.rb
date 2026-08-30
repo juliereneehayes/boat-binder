@@ -13,6 +13,7 @@ class BillingReactivationTest < ActionDispatch::IntegrationTest
     captured_arguments = nil
     logged_redirect_payload = nil
     other_account = create_account(name: "Forged Reactivation Account")
+    create_account_membership(user: @owner, account: other_account, access_level: "editor")
     sign_in_as @owner
 
     subscriber = ActiveSupport::Notifications.subscribe("redirect_to.action_controller") do |event|
@@ -25,6 +26,7 @@ class BillingReactivationTest < ActionDispatch::IntegrationTest
       }) do
         post billing_reactivation_path, params: {
           option_key: "self_managed_annual",
+          account_reference: Billing::OwnerAccountReference.generate(@account),
           account_id: other_account.id,
           customer_id: "cus_attacker",
           subscription_id: "sub_attacker",
@@ -69,6 +71,19 @@ class BillingReactivationTest < ActionDispatch::IntegrationTest
 
       assert_access_denied_redirect
     end
+  end
+
+  test "invalid signed Account references fail before reactivation" do
+    sign_in_as @owner
+
+    assert_no_reactivation_call do
+      post billing_reactivation_path, params: {
+        option_key: "self_managed_monthly",
+        account_reference: "tampered-reference"
+      }
+    end
+
+    assert_access_denied_redirect
   end
 
   test "inactive users wrong roles and owners without an eligible Account are denied" do

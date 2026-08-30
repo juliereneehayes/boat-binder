@@ -43,6 +43,7 @@ class BillingPortalTest < ActionDispatch::IntegrationTest
 
   test "Portal creation resolves Account and return URL server side and redirects with 303" do
     other_account = create_account(name: "Forged Portal Account")
+    create_account_membership(user: @owner, account: other_account, access_level: "editor")
     captured_arguments = nil
     original_subscription = subscription_state
     original_counts = record_counts
@@ -60,6 +61,7 @@ class BillingPortalTest < ActionDispatch::IntegrationTest
             Struct.new(:url).new(PORTAL_URL)
           }) do
             post billing_portal_path, params: {
+              account_reference: Billing::OwnerAccountReference.generate(@account),
               account_id: other_account.id,
               customer_id: "cus_attacker",
               subscription_id: "sub_attacker",
@@ -154,6 +156,16 @@ class BillingPortalTest < ActionDispatch::IntegrationTest
 
       assert_access_denied_redirect
     end
+  end
+
+  test "invalid signed Account references fail before Portal creation" do
+    sign_in_as @owner
+
+    assert_no_portal_creator_call do
+      post billing_portal_path, params: { account_reference: "tampered-reference" }
+    end
+
+    assert_access_denied_redirect
   end
 
   test "unauthenticated inactive and unsupported roles cannot create Portal sessions" do

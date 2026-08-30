@@ -1,4 +1,9 @@
 <section class="space-y-7">
+  <%= render "dashboard/owner_lifecycle_recoveries",
+    recoveries: @owner_lifecycle_recoveries,
+    reactivation_options: @reactivation_options,
+    open_export_request_account_ids: @open_export_request_account_ids %>
+
   <div class="overflow-hidden rounded-md bg-[#0B1F35] text-white shadow-sm shadow-[#0B1F35]/15">
     <div class="grid gap-6 p-6 md:grid-cols-[1fr_auto] md:items-end md:p-8">
       <div>

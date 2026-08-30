@@ -11,6 +11,7 @@ class Account < ApplicationRecord
   has_many :documents, dependent: :destroy
   has_many :binder_notes, dependent: :destroy
   has_many :billing_checkout_attempts, dependent: :destroy
+  has_many :account_export_requests, dependent: :restrict_with_exception
   has_one :subscription, dependent: :destroy
 
   before_validation :set_default_time_zone

@@ -95,7 +95,7 @@ class AccessControlTest < ActionDispatch::IntegrationTest
     get root_path
 
     assert_response :success
-    assert_includes response.body, "Your binder is not available right now."
+    assert_includes response.body, "Your account needs review"
     assert_not_includes response.body, @owner_a_vessel.name
 
     get vessel_path(@owner_a_vessel)

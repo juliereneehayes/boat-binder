@@ -11,6 +11,7 @@ class User < ApplicationRecord
   has_many :sessions, dependent: :destroy
   has_many :account_memberships, dependent: :destroy
   has_many :accounts, through: :account_memberships
+  has_many :account_export_requests, foreign_key: :requester_id, dependent: :restrict_with_exception
   has_many :service_visits, foreign_key: :performed_by_user_id, inverse_of: :performed_by_user, dependent: :restrict_with_exception
 
   normalizes :name, with: ->(value) { value.squish.presence }

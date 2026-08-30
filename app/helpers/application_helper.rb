@@ -153,6 +153,7 @@ module ApplicationHelper
     items << [ "Documents", documents_path, "F" ]
     items << [ "Service Visits", service_visits_path, "S" ]
     items << [ "Users", admin_users_path, "U" ] if admin_user?
+    items << [ "Export Requests", admin_account_export_requests_path, "E" ] if admin_user?
     items
   end
 end

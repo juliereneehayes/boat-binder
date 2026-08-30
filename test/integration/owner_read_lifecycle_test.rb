@@ -230,7 +230,7 @@ class OwnerReadLifecycleTest < ActionDispatch::IntegrationTest
       get root_path
       assert_response :success
       assert_includes response.body, @vessel.name
-      assert_not_includes response.body, restricted_account.name
+      assert_includes response.body, restricted_account.name
       assert_not_includes response.body, restricted_vessel.name
       assert_not_includes response.body, restricted_document.title
       assert_not_includes response.body, restricted_visit.summary
@@ -387,8 +387,8 @@ class OwnerReadLifecycleTest < ActionDispatch::IntegrationTest
 
   def assert_restricted_dashboard
     assert_response :success
-    assert_includes response.body, "Your binder is not available right now."
-    assert_not_includes response.body, @account.name
+    assert_includes response.body, "Account recovery"
+    assert_includes response.body, @account.name
     assert_not_includes response.body, @vessel.name
     assert_not_includes response.body, @document.title
     assert_not_includes response.body, @reminder.title
@@ -401,7 +401,15 @@ class OwnerReadLifecycleTest < ActionDispatch::IntegrationTest
     assert_select "a[href*='/rails/active_storage']", count: 0
     assert_select "img[src*='/rails/active_storage']", count: 0
     assert_select "form[action=?]", session_path, minimum: 1
-    assert_select "a[href=?]", billing_checkout_path, text: "View Self Managed plans", count: 1
+    subscription = @account.reload.subscription
+    expected_plan_links = if subscription&.persisted? && subscription.provider == Subscription::LOCAL_PROVIDER
+      1
+    else
+      0
+    end
+    assert_select "a[href=?]", billing_checkout_path,
+      text: "View Self Managed plans",
+      count: expected_plan_links
   end
 
   def assert_unsupported_plan_owner_is_restricted
