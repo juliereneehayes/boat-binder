@@ -41,6 +41,8 @@ class UserInvitationTest < ActionDispatch::IntegrationTest
     assert_equal "You've been invited to Boat Binder", mail.subject
 
     token = invitation_token_from(mail)
+    delete session_path
+
     get edit_invitation_path(token)
     assert_response :success
     assert_includes response.body, invited_user.email_address
@@ -172,6 +174,7 @@ class UserInvitationTest < ActionDispatch::IntegrationTest
     assert_nil invited_user.password_digest
     assert_operator invited_user.invitation_sent_at, :>, original_sent_at
 
+    delete session_path
     get edit_invitation_path(old_token)
     assert_redirected_to new_session_path
     follow_redirect!
@@ -268,6 +271,7 @@ class UserInvitationTest < ActionDispatch::IntegrationTest
     assert invited_user.invitation_pending?
     assert_not invited_user.active?
 
+    delete session_path
     get edit_invitation_path(old_token)
     assert_response :success
     assert_includes response.body, invited_user.email_address
@@ -390,6 +394,50 @@ class UserInvitationTest < ActionDispatch::IntegrationTest
     assert_not user.active?
     assert_not user.invitation_pending?
     assert user.authenticate("manual-password")
+  end
+
+  test "authenticated user cannot view invitation acceptance form" do
+    invited_user = create_invited_user
+    token = invited_user.generate_token_for(:invitation)
+    sign_in_as @admin
+
+    assert_no_difference -> { Session.count } do
+      get edit_invitation_path(token)
+    end
+
+    assert_redirected_to root_path
+    assert_equal "Sign out before accepting an invitation.", flash[:alert]
+    follow_redirect!
+    assert_includes response.body, @admin.name
+
+    invited_user.reload
+    assert_not invited_user.active?
+    assert invited_user.invitation_pending?
+    assert_nil invited_user.password_digest
+  end
+
+  test "authenticated user cannot accept invitation or switch sessions" do
+    invited_user = create_invited_user
+    token = invited_user.generate_token_for(:invitation)
+    sign_in_as @admin
+
+    assert_no_difference -> { Session.count } do
+      put invitation_path(token), params: {
+        password: "new-password",
+        password_confirmation: "new-password"
+      }
+    end
+
+    assert_redirected_to root_path
+    assert_equal "Sign out before accepting an invitation.", flash[:alert]
+    follow_redirect!
+    assert_includes response.body, @admin.name
+
+    invited_user.reload
+    assert_not invited_user.active?
+    assert invited_user.invitation_pending?
+    assert_not invited_user.invitation_accepted?
+    assert_nil invited_user.password_digest
   end
 
   test "invitation acceptance with blank password fails" do
