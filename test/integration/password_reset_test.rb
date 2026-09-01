@@ -40,13 +40,37 @@ class PasswordResetTest < ActionDispatch::IntegrationTest
     assert_response :success
   end
 
-  test "authenticated password reset preserves the current session identity" do
+  test "authenticated user cannot view another account password reset form" do
     signed_in_user = create_user(
-      email: "signed-in-reset@example.test",
+      email: "signed-in-reset-form@example.test",
       role: "admin",
       name: "Signed In Admin"
     )
-    reset_user = create_user(email: "reset-target@example.test")
+    reset_user = create_user(email: "reset-form-target@example.test")
+    original_password_digest = reset_user.password_digest
+    token = reset_user.password_reset_token
+    sign_in_as signed_in_user
+
+    assert_no_difference -> { Session.count } do
+      get edit_password_path(token)
+    end
+
+    assert_redirected_to root_path
+    assert_equal PasswordsController::AUTHENTICATED_RESET_MESSAGE, flash[:alert]
+    follow_redirect!
+    assert_response :success
+    assert_includes response.body, signed_in_user.name
+    assert_equal original_password_digest, reset_user.reload.password_digest
+  end
+
+  test "authenticated user cannot reset another account password" do
+    signed_in_user = create_user(
+      email: "signed-in-reset-update@example.test",
+      role: "admin",
+      name: "Signed In Admin"
+    )
+    reset_user = create_user(email: "reset-update-target@example.test")
+    original_password_digest = reset_user.password_digest
     token = reset_user.password_reset_token
     sign_in_as signed_in_user
 
@@ -57,12 +81,27 @@ class PasswordResetTest < ActionDispatch::IntegrationTest
       }
     end
 
-    assert_redirected_to new_session_path
-    follow_redirect!
     assert_redirected_to root_path
+    assert_equal PasswordsController::AUTHENTICATED_RESET_MESSAGE, flash[:alert]
     follow_redirect!
     assert_response :success
     assert_includes response.body, signed_in_user.name
+    assert_equal original_password_digest, reset_user.reload.password_digest
+    assert_not reset_user.authenticate("new-password")
+
+    delete session_path
+
+    assert_no_difference -> { Session.count } do
+      put password_path(token), params: {
+        password: "new-password",
+        password_confirmation: "new-password"
+      }
+    end
+
+    assert_redirected_to new_session_path
+    follow_redirect!
+    assert_response :success
+    assert_includes response.body, "Password has been reset."
     assert reset_user.reload.authenticate("new-password")
   end
 
