@@ -1,5 +1,7 @@
 class SessionsController < ApplicationController
   allow_unauthenticated_access only: %i[ new create ]
+  # Keep this before rate_limit: signed-in browsers must be redirected without
+  # consuming login attempts, and credentials must never replace the current identity.
   before_action :redirect_authenticated_user, only: %i[ new create ]
   rate_limit to: 10, within: 3.minutes, only: :create, with: -> { redirect_to new_session_path, alert: "Try again later." }
 
