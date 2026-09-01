@@ -2,6 +2,9 @@ class InvitationsController < ApplicationController
   INVITATION_INVALID_MESSAGE = "Invitation link is invalid or has expired."
 
   allow_unauthenticated_access
+  # Invitation acceptance starts a session, so require an explicit sign-out before
+  # another identity can be activated in the current browser.
+  before_action :redirect_authenticated_user
   before_action :set_user_by_invitation
 
   def edit
@@ -20,6 +23,10 @@ class InvitationsController < ApplicationController
   end
 
   private
+
+    def redirect_authenticated_user
+      redirect_to root_path, alert: "Sign out before accepting an invitation." if authenticated?
+    end
 
     def set_user_by_invitation
       @token = params[:token]
