@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <title><%= content_for(:title) || "Boat Binder | Vessel records made simple" %></title>
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <meta name="description" content="Boat Binder keeps vessel details, documents, service history, notes, and maintenance reminders organized in one secure place.">
+    <meta name="application-name" content="Boat Binder">
+    <meta name="theme-color" content="#0B1F35">
+    <link rel="canonical" href="https://boat-binder.com/">
+    <%= csrf_meta_tags %>
+    <%= csp_meta_tag %>
+    <%= yield :head %>
+    <%= favicon_link_tag "favicon.svg", type: "image/svg+xml" %>
+    <link rel="apple-touch-icon" href="/icon.png">
+    <%= stylesheet_link_tag :app, "data-turbo-track": "reload" %>
+    <%= javascript_importmap_tags %>
+  </head>
+
+  <body class="bg-[#F7F5F2] text-[#0B1F35] antialiased">
+    <%= yield %>
+  </body>
+</html>
