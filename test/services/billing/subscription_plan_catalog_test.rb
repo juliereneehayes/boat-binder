@@ -40,6 +40,14 @@ module Billing
       assert option.enabled?
     end
 
+    test "annual description reflects the savings calculated from catalog prices" do
+      monthly = catalog.fetch("self_managed_monthly")
+      annual = catalog.fetch("self_managed_annual")
+      savings_cents = (monthly.amount_cents * 12) - annual.amount_cents
+
+      assert_includes annual.description, "$#{savings_cents / 100} annual savings"
+    end
+
     test "monthly and annual options share the stable self managed plan key" do
       options = catalog.options_for_plan("self_managed")
 
