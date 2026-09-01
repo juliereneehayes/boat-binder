@@ -23,7 +23,7 @@ class MarketingControllerTest < ActionDispatch::IntegrationTest
     assert_select "link[rel='canonical'][href='https://boat-binder.com/']", count: 1
   end
 
-  test "application domain root still requires authentication" do
+  test "staging domain root still requires authentication" do\n    host! "staging.boat-binder.com"\n\n    get "/"\n\n    assert_redirected_to new_session_path\n  end\n\n  test "application domain root still requires authentication" do
     host! "app.boat-binder.com"
 
     get "/"
