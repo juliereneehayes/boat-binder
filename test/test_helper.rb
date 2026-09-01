@@ -84,6 +84,9 @@ module ActiveSupport
     end
 
     def sign_in_as(user = create_user)
+      # Mirror production: changing identities requires signing out the current session first.
+      delete session_path if cookies[:session_id].present?
+
       post session_path, params: {
         email_address: user.email_address,
         password: "password"
