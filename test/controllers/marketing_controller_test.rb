@@ -10,9 +10,20 @@ class MarketingControllerTest < ActionDispatch::IntegrationTest
     assert_select "h1", text: /Your vessel records/
     assert_select "a[href='mailto:support@boat-binder.com']"
     assert_select "a[href='https://app.boat-binder.com/']", count: 2
-    assert_includes response.body, "$24"
-    assert_includes response.body, "$240"
-    assert_includes response.body, "7-day free trial"
+    catalog = Billing::SubscriptionPlanCatalog.new(
+      price_ids: {
+        "self_managed_monthly" => "price_marketing_monthly",
+        "self_managed_annual" => "price_marketing_annual"
+      }
+    )
+    monthly = catalog.fetch("self_managed_monthly")
+    annual = catalog.fetch("self_managed_annual")
+    annual_savings = (monthly.amount_cents * 12) - annual.amount_cents
+
+    assert_includes response.body, "$#{monthly.amount_cents / 100}"
+    assert_includes response.body, "$#{annual.amount_cents / 100}"
+    assert_includes response.body, "Save $#{annual_savings / 100}"
+    assert_includes response.body, "#{monthly.trial_days}-day free trial"
   end
 
   test "www domain root is public" do

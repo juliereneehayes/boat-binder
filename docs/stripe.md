@@ -7,13 +7,17 @@ Boat Binder uses the official `stripe` Ruby gem for verified webhook receipt. Lo
 `Billing::SubscriptionPlanCatalog` is the local, immutable source for customer-facing plan metadata.
 The initial `self_managed` application plan has two billing options:
 
-- `self_managed_monthly`: $14 per month with 7-day trial metadata
-- `self_managed_annual`: $154 per year (one month free) with 7-day trial metadata
+- `self_managed_monthly`: $24 per month with 7-day trial metadata
+- `self_managed_annual`: $240 per year ($48 savings compared with monthly billing) with 7-day trial metadata
 
 Stripe Products and Prices are created outside Boat Binder in Stripe. Configure their Price IDs with:
 
 - `STRIPE_SELF_MANAGED_MONTHLY_PRICE_ID`
 - `STRIPE_SELF_MANAGED_ANNUAL_PRICE_ID`
+
+The seven-day trial is application-controlled: initial Checkout sets Stripe's
+`trial_period_days` from the catalog metadata. Do not configure a separate trial on the Stripe
+Product or Prices. Verified terminal reactivation intentionally omits a new trial.
 
 Use test-mode Price IDs in development and staging. Configure live-mode IDs separately before launch.
 Catalog loading and lookup read local configuration only and never call Stripe. Checkout uses these

@@ -24,8 +24,8 @@ class BillingCheckoutTest < ActionDispatch::IntegrationTest
 
     assert_response :success
     assert_includes response.body, @account.name
-    assert_includes response.body, "$14/month"
-    assert_includes response.body, "$154/year"
+    assert_includes response.body, "$24/month"
+    assert_includes response.body, "$240/year"
     assert_equal 2, response.body.scan("7-day trial").length
     assert_select "form[action=?][method=post]", billing_checkout_path, count: 2
     assert_select "form[action=?][method=post][data-turbo=false]", billing_checkout_path, count: 2

@@ -13,8 +13,8 @@ module Billing
       assert_equal "Self Managed", option.name
       assert_equal "month", option.interval
       assert_equal 1, option.interval_count
-      assert_equal 1_400, option.amount_cents
-      assert_equal "$14/month", option.display_price
+      assert_equal 2_400, option.amount_cents
+      assert_equal "$24/month", option.display_price
       assert_equal "usd", option.currency
       assert_equal 7, option.trial_days
       assert_equal MONTHLY_PRICE_ID, option.stripe_price_id
@@ -30,14 +30,22 @@ module Billing
       assert_equal "self_managed_annual", option.key
       assert_equal "self_managed", option.plan_key
       assert_equal "Self Managed", option.name
-      assert_includes option.description, "one month free"
+      assert_includes option.description, "$48 annual savings"
       assert_equal "year", option.interval
-      assert_equal 15_400, option.amount_cents
-      assert_equal "$154/year", option.display_price
+      assert_equal 24_000, option.amount_cents
+      assert_equal "$240/year", option.display_price
       assert_equal "usd", option.currency
       assert_equal 7, option.trial_days
       assert_equal ANNUAL_PRICE_ID, option.stripe_price_id
       assert option.enabled?
+    end
+
+    test "annual description reflects the savings calculated from catalog prices" do
+      monthly = catalog.fetch("self_managed_monthly")
+      annual = catalog.fetch("self_managed_annual")
+      savings_cents = (monthly.amount_cents * 12) - annual.amount_cents
+
+      assert_includes annual.description, "$#{savings_cents / 100} annual savings"
     end
 
     test "monthly and annual options share the stable self managed plan key" do
