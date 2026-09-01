@@ -175,6 +175,8 @@ class UserInvitationTest < ActionDispatch::IntegrationTest
     get edit_invitation_path(old_token)
     assert_redirected_to new_session_path
     follow_redirect!
+    assert_redirected_to root_path
+    follow_redirect!
     assert_includes response.body, InvitationsController::INVITATION_INVALID_MESSAGE
 
     new_token = invitation_token_from(ActionMailer::Base.deliveries.last)
