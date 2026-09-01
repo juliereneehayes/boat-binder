@@ -17,6 +17,10 @@ Rails.application.routes.draw do
   get "/422", to: "errors#unprocessable_entity"
   get "/500", to: "errors#internal_server_error"
 
+  constraints ->(request) { %w[boat-binder.com www.boat-binder.com].include?(request.host) } do
+    root "marketing#show", as: :marketing_root
+  end
+
   root "dashboard#index"
 
   get "accounts", to: "accounts#index", as: :accounts
