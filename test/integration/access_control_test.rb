@@ -218,6 +218,42 @@ class AccessControlTest < ActionDispatch::IntegrationTest
     assert_not_includes response.body, "captain@hayesyacht.test / password"
   end
 
+  test "authenticated users are redirected away from the login page" do
+    user = create_user(email: "authenticated-login-page@example.test", role: "admin")
+    sign_in_as user
+
+    get new_session_path
+
+    assert_redirected_to root_path
+  end
+
+  test "authenticated users cannot switch identities through the login endpoint" do
+    current_user = create_user(
+      email: "current-session@example.test",
+      role: "admin",
+      name: "Current Admin"
+    )
+    other_user = create_user(
+      email: "other-session@example.test",
+      role: "captain",
+      name: "Other Captain"
+    )
+    sign_in_as current_user
+
+    assert_no_difference -> { Session.count } do
+      post session_path, params: {
+        email_address: other_user.email_address,
+        password: "password"
+      }
+    end
+
+    assert_redirected_to root_path
+    follow_redirect!
+    assert_response :success
+    assert_includes response.body, current_user.name
+    assert_not_includes response.body, other_user.name
+  end
+
   test "inactive users see generic login failure and cannot sign in" do
     inactive_user = create_user(email: "inactive@example.test", active: false)
 
