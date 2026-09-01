@@ -1,0 +1,183 @@
+<% content_for :title, "Boat Binder | Your vessel records, organized" %>
+
+<div class="min-h-screen overflow-hidden">
+  <header class="border-b border-[#D7E4E7] bg-white/95">
+    <div class="mx-auto flex max-w-7xl items-center justify-between gap-4 px-5 py-4 md:px-8">
+      <a href="#top" class="flex items-center gap-3" aria-label="Boat Binder home">
+        <%= render "shared/brand_mark", class_name: "h-11 w-11" %>
+        <span>
+          <span class="block text-lg font-black leading-tight">Boat Binder</span>
+          <span class="block text-[0.68rem] font-bold uppercase tracking-wide text-[#1E5A7A]">Hayes Yacht Company</span>
+        </span>
+      </a>
+
+      <nav class="hidden items-center gap-1 md:flex" aria-label="Primary navigation">
+        <a href="#features" class="rounded-md px-4 py-2 text-sm font-bold transition hover:bg-[#E8F3F5]">Features</a>
+        <a href="#pricing" class="rounded-md px-4 py-2 text-sm font-bold transition hover:bg-[#E8F3F5]">Pricing</a>
+        <a href="#policies" class="rounded-md px-4 py-2 text-sm font-bold transition hover:bg-[#E8F3F5]">Policies</a>
+      </nav>
+
+      <a href="https://app.boat-binder.com/session/new" class="inline-flex min-h-11 items-center justify-center rounded-md border border-[#C9DEE2] bg-white px-4 py-2 text-sm font-black text-[#0B1F35] transition hover:border-[#7DAAB3] hover:bg-[#E8F3F5]">
+        Customer sign in
+      </a>
+    </div>
+  </header>
+
+  <main id="top">
+    <section class="relative isolate">
+      <div class="absolute inset-0 -z-10 bg-gradient-to-br from-[#E8F3F5] via-[#F7F5F2] to-white"></div>
+      <div class="mx-auto grid max-w-7xl items-center gap-12 px-5 py-16 md:px-8 md:py-24 lg:grid-cols-[1.05fr_0.95fr] lg:py-28">
+        <div>
+          <span class="inline-flex rounded-full bg-white px-3 py-1.5 text-xs font-black uppercase tracking-wide text-[#1E5A7A] ring-1 ring-[#C9DEE2]">Launching soon</span>
+          <h1 class="mt-6 max-w-3xl text-4xl font-black leading-tight tracking-tight sm:text-5xl lg:text-6xl">
+            Your vessel records, organized and ready when you need them.
+          </h1>
+          <p class="mt-6 max-w-2xl text-lg leading-8 text-slate-600">
+            Boat Binder gives boat owners one secure place for vessel details, documents, maintenance reminders, service history, and the notes that keep ownership running smoothly.
+          </p>
+          <div class="mt-8 flex flex-col gap-3 sm:flex-row">
+            <a href="mailto:support@boat-binder.com" class="inline-flex min-h-12 items-center justify-center rounded-md bg-[#1E5A7A] px-6 py-3 text-base font-black text-white shadow-sm transition hover:bg-[#174760]">
+              Contact Boat Binder
+            </a>
+            <a href="#features" class="inline-flex min-h-12 items-center justify-center rounded-md border border-[#C9DEE2] bg-white px-6 py-3 text-base font-black transition hover:border-[#7DAAB3] hover:bg-[#E8F3F5]">
+              Explore the product
+            </a>
+          </div>
+          <p class="mt-5 text-sm font-medium text-slate-500">Built by Hayes Yacht Company for practical, day-to-day vessel ownership.</p>
+        </div>
+
+        <div class="rounded-2xl bg-[#0B1F35] p-5 text-white shadow-2xl shadow-[#0B1F35]/20 sm:p-7" aria-label="Boat Binder product preview">
+          <div class="flex items-center justify-between border-b border-white/10 pb-5">
+            <div>
+              <p class="text-xs font-black uppercase tracking-wide text-[#B9D5DA]">Owner dashboard</p>
+              <p class="mt-1 text-2xl font-black">Good morning</p>
+            </div>
+            <span class="rounded-full bg-emerald-50 px-3 py-1 text-xs font-black text-emerald-700">All clear</span>
+          </div>
+          <div class="mt-5 grid grid-cols-2 gap-3">
+            <div class="rounded-lg bg-white/10 p-4">
+              <p class="text-xs font-bold uppercase tracking-wide text-[#B9D5DA]">Vessels</p>
+              <p class="mt-2 text-3xl font-black">1</p>
+            </div>
+            <div class="rounded-lg bg-white/10 p-4">
+              <p class="text-xs font-bold uppercase tracking-wide text-[#B9D5DA]">Documents</p>
+              <p class="mt-2 text-3xl font-black">12</p>
+            </div>
+          </div>
+          <div class="mt-3 rounded-lg bg-white p-5 text-[#0B1F35]">
+            <div class="flex items-start justify-between gap-4">
+              <div>
+                <p class="text-xs font-black uppercase tracking-wide text-[#1E5A7A]">Next service</p>
+                <p class="mt-2 text-lg font-black">Annual engine service</p>
+                <p class="mt-1 text-sm text-slate-500">Due in 18 days</p>
+              </div>
+              <span class="rounded-full bg-amber-50 px-2.5 py-1 text-xs font-black text-amber-800 ring-1 ring-amber-100">Upcoming</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="features" class="bg-white py-16 md:py-24">
+      <div class="mx-auto max-w-7xl px-5 md:px-8">
+        <div class="max-w-3xl">
+          <p class="text-sm font-black uppercase tracking-wide text-[#1E5A7A]">A calmer command center</p>
+          <h2 class="mt-3 text-3xl font-black tracking-tight sm:text-4xl">The important details stay together.</h2>
+          <p class="mt-4 text-lg leading-8 text-slate-600">Replace scattered folders, notes, and reminders with a clear record of the vessel you care for.</p>
+        </div>
+
+        <div class="mt-10 grid gap-5 md:grid-cols-2 lg:grid-cols-4">
+          <% [
+            ["Vessel profile", "Keep specifications, registration details, location, photos, and equipment information close at hand."],
+            ["Documents", "Organize owner and vessel files so the record you need is easy to find."],
+            ["Service history", "Capture completed visits, work performed, inspection checks, photos, and follow-up items."],
+            ["Reminders and notes", "Track upcoming maintenance, renewals, preferences, and the small details that are easy to lose."]
+          ].each do |title, description| %>
+            <article class="rounded-xl border border-[#E7DED2] bg-[#F7F5F2] p-6 shadow-sm shadow-[#0B1F35]/5">
+              <span class="grid h-10 w-10 place-items-center rounded-lg bg-[#E8F3F5] text-sm font-black text-[#1E5A7A]" aria-hidden="true">•</span>
+              <h3 class="mt-5 text-lg font-black"><%= title %></h3>
+              <p class="mt-3 text-sm leading-6 text-slate-600"><%= description %></p>
+            </article>
+          <% end %>
+        </div>
+      </div>
+    </section>
+
+    <section id="pricing" class="border-y border-[#D7E4E7] bg-[#E8F3F5] py-16 md:py-24">
+      <div class="mx-auto max-w-7xl px-5 md:px-8">
+        <div class="grid gap-10 lg:grid-cols-[0.9fr_1.1fr] lg:items-start">
+          <div>
+            <p class="text-sm font-black uppercase tracking-wide text-[#1E5A7A]">Straightforward pricing</p>
+            <h2 class="mt-3 text-3xl font-black tracking-tight sm:text-4xl">One complete Self Managed plan.</h2>
+            <p class="mt-4 max-w-xl text-lg leading-8 text-slate-600">Choose the billing schedule that fits you. Both options include the full Boat Binder experience and a 7-day free trial.</p>
+          </div>
+
+          <div class="grid gap-5 sm:grid-cols-2">
+            <article class="rounded-xl border border-[#C9DEE2] bg-white p-7 shadow-sm">
+              <p class="text-sm font-black uppercase tracking-wide text-[#1E5A7A]">Monthly</p>
+              <p class="mt-4 text-4xl font-black">$24 <span class="text-base font-bold text-slate-500">USD/month</span></p>
+              <p class="mt-4 text-sm leading-6 text-slate-600">Billed monthly after the 7-day free trial. Cancel anytime.</p>
+            </article>
+            <article class="rounded-xl border-2 border-[#1E5A7A] bg-white p-7 shadow-sm">
+              <div class="flex items-center justify-between gap-3">
+                <p class="text-sm font-black uppercase tracking-wide text-[#1E5A7A]">Annual</p>
+                <span class="rounded-full bg-[#E8F3F5] px-2.5 py-1 text-xs font-black text-[#1E5A7A]">Save $48</span>
+              </div>
+              <p class="mt-4 text-4xl font-black">$240 <span class="text-base font-bold text-slate-500">USD/year</span></p>
+              <p class="mt-4 text-sm leading-6 text-slate-600">Billed annually after the 7-day free trial. Cancel anytime.</p>
+            </article>
+          </div>
+        </div>
+        <p class="mt-6 text-sm leading-6 text-slate-600">Subscriptions renew automatically unless canceled. Online enrollment is not yet open.</p>
+      </div>
+    </section>
+
+    <section id="policies" class="bg-white py-16 md:py-24">
+      <div class="mx-auto max-w-7xl px-5 md:px-8">
+        <div class="max-w-3xl">
+          <p class="text-sm font-black uppercase tracking-wide text-[#1E5A7A]">Clear terms, human support</p>
+          <h2 class="mt-3 text-3xl font-black tracking-tight sm:text-4xl">What customers can expect.</h2>
+        </div>
+
+        <div class="mt-10 grid gap-5 lg:grid-cols-3">
+          <article class="rounded-xl border border-[#E7DED2] p-6">
+            <h3 class="text-lg font-black">Customer support</h3>
+            <p class="mt-3 text-sm leading-6 text-slate-600">Questions about Boat Binder, billing, or your account are welcome at <a class="font-bold text-[#1E5A7A] underline decoration-[#7DAAB3] underline-offset-4" href="mailto:support@boat-binder.com">support@boat-binder.com</a>.</p>
+          </article>
+          <article class="rounded-xl border border-[#E7DED2] p-6">
+            <h3 class="text-lg font-black">Cancellation and refunds</h3>
+            <p class="mt-3 text-sm leading-6 text-slate-600">Cancel before a trial ends to avoid a charge. Paid subscriptions may be canceled anytime and remain available through the current paid term. Payments are not prorated or refunded except where required by law.</p>
+          </article>
+          <article id="privacy" class="rounded-xl border border-[#E7DED2] p-6">
+            <h3 class="text-lg font-black">Privacy</h3>
+            <p class="mt-3 text-sm leading-6 text-slate-600">We use account, vessel, and service information to provide and secure Boat Binder. Stripe processes payment details; Boat Binder does not store full card numbers. We do not sell personal information.</p>
+          </article>
+        </div>
+
+        <div class="mt-5 rounded-xl border border-[#E7DED2] bg-[#F7F5F2] p-6">
+          <h3 class="text-lg font-black">Service terms and data requests</h3>
+          <p class="mt-3 text-sm leading-6 text-slate-600">Boat Binder is record-management software and is not a substitute for professional marine inspection, maintenance, safety, legal, or regulatory advice. Customers are responsible for the accuracy of their records. We retain information as needed to operate the service, support account recovery, meet legal obligations, and protect the service. To request access, correction, export, or deletion of personal information, email <a class="font-bold text-[#1E5A7A] underline decoration-[#7DAAB3] underline-offset-4" href="mailto:support@boat-binder.com">support@boat-binder.com</a>.</p>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="bg-[#0B1F35] text-white">
+    <div class="mx-auto flex max-w-7xl flex-col gap-6 px-5 py-10 md:flex-row md:items-center md:justify-between md:px-8">
+      <div class="flex items-center gap-3">
+        <%= render "shared/brand_mark", class_name: "h-10 w-10" %>
+        <div>
+          <p class="font-black">Boat Binder</p>
+          <p class="text-xs font-bold uppercase tracking-wide text-[#B9D5DA]">A Hayes Yacht Company product</p>
+        </div>
+      </div>
+      <div class="flex flex-wrap items-center gap-x-5 gap-y-2 text-sm font-bold text-[#D6E8EB]">
+        <a class="hover:text-white" href="#pricing">Pricing</a>
+        <a class="hover:text-white" href="#policies">Policies</a>
+        <a class="hover:text-white" href="mailto:support@boat-binder.com">Support</a>
+        <a class="hover:text-white" href="https://app.boat-binder.com/session/new">Sign in</a>
+      </div>
+      <p class="text-xs text-[#B9D5DA]">&copy; <%= Time.current.year %> Hayes Yacht Company. All rights reserved.</p>
+    </div>
+  </footer>
+</div>
