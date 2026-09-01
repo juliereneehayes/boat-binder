@@ -40,6 +40,32 @@ class PasswordResetTest < ActionDispatch::IntegrationTest
     assert_response :success
   end
 
+  test "authenticated password reset preserves the current session identity" do
+    signed_in_user = create_user(
+      email: "signed-in-reset@example.test",
+      role: "admin",
+      name: "Signed In Admin"
+    )
+    reset_user = create_user(email: "reset-target@example.test")
+    token = reset_user.password_reset_token
+    sign_in_as signed_in_user
+
+    assert_no_difference -> { Session.count } do
+      put password_path(token), params: {
+        password: "new-password",
+        password_confirmation: "new-password"
+      }
+    end
+
+    assert_redirected_to new_session_path
+    follow_redirect!
+    assert_redirected_to root_path
+    follow_redirect!
+    assert_response :success
+    assert_includes response.body, signed_in_user.name
+    assert reset_user.reload.authenticate("new-password")
+  end
+
   test "password reset request keeps generic messaging when email is unknown" do
     assert_no_difference -> { ActionMailer::Base.deliveries.size } do
       post passwords_path, params: { email_address: "missing@example.test" }
