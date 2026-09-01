@@ -1,7 +1,11 @@
 class PasswordsController < ApplicationController
   RESET_REQUEST_NOTICE = "If an account exists for that email, reset instructions will be sent shortly."
+  AUTHENTICATED_RESET_MESSAGE = "Sign out before resetting a password."
 
   allow_unauthenticated_access
+  # Password reset changes credentials, so require explicit sign-out before
+  # validating a token or rendering the form for another browser identity.
+  before_action :redirect_authenticated_user, only: %i[ edit update ]
   before_action :set_user_by_token, only: %i[ edit update ]
   rate_limit to: 10, within: 3.minutes, only: :create, with: -> { redirect_to new_password_path, alert: "Try again later." }
 
@@ -29,6 +33,10 @@ class PasswordsController < ApplicationController
   end
 
   private
+    def redirect_authenticated_user
+      redirect_to root_path, alert: AUTHENTICATED_RESET_MESSAGE if authenticated?
+    end
+
     def deliver_password_reset(user)
       PasswordsMailer.reset(user).deliver_now
       Rails.logger.info("Password reset email delivered for user_id=#{user.id}")
