@@ -9,6 +9,7 @@ class MarketingControllerTest < ActionDispatch::IntegrationTest
     assert_response :success
     assert_select "h1", text: /Your vessel records/
     assert_select "a[href='mailto:support@boat-binder.com']"
+    assert_select "a[href='https://app.boat-binder.com/']", count: 2
     assert_includes response.body, "$24"
     assert_includes response.body, "$240"
     assert_includes response.body, "7-day free trial"
