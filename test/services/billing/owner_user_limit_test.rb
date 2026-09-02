@@ -163,9 +163,12 @@ module Billing
       memberships.each { |membership| assert_instance_of AccountMembership, membership }
       memberships.each { |membership| remember(membership) }
       assert_equal 1, memberships.count(&:persisted?)
+      persisted = memberships.find(&:persisted?).reload
+      assert_equal @account.id, persisted.account_id
+      assert persisted.active?
+      assert persisted.user.owner?
       rejected = memberships.reject(&:persisted?).sole
       assert_includes rejected.errors.full_messages, OwnerUserLimit::ERROR_MESSAGE
-      assert_equal 1, OwnerUserLimit.active_owner_count(@account)
     ensure
       release_first_validation << true if first_thread&.alive?
       first_thread&.join(1)
