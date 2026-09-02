@@ -164,6 +164,7 @@ class BillingCheckoutTest < ActionDispatch::IntegrationTest
       post billing_checkout_path, params: { option_key: "self_managed_monthly" }
     end
     assert_access_denied_redirect
+    read_only_owner.account_memberships.update_all(active: false, updated_at: Time.current)
 
     delete session_path
     inactive_owner = create_user(email: "checkout-inactive-membership@example.test", role: "owner")
@@ -189,6 +190,21 @@ class BillingCheckoutTest < ActionDispatch::IntegrationTest
       post billing_checkout_path, params: { option_key: "self_managed_monthly" }
     end
     assert_access_denied_redirect
+  end
+
+  test "an over-limit legacy Account cannot begin a Self Managed Checkout" do
+    second_owner = create_user(email: "checkout-over-limit@example.test", role: "owner")
+    create_account_membership(user: second_owner, account: @account, access_level: "read_only")
+    sign_in_as @owner
+
+    get billing_checkout_path
+    assert_access_denied_redirect
+
+    assert_no_checkout_service_call do
+      post billing_checkout_path, params: { option_key: "self_managed_monthly" }
+    end
+    assert_access_denied_redirect
+    assert_equal "legacy", @account.subscription.reload.plan
   end
 
   test "unknown or malformed billing options fail safely" do

@@ -29,6 +29,36 @@ subscription. Price mappings referenced by outstanding Stripe lifecycle events m
 configured and recognizable even after an option is no longer offered for new purchase. Unknown
 option keys and Price IDs continue to fail closed.
 
+## Self Managed Owner User Limit
+
+The catalog's `owner_user_limit` entitlement is enforced as one active Owner user per Self Managed
+Account. Active Editor and Read-only memberships both consume the seat; inactive memberships and
+Admin or Captain users do not. The limit follows the Account's local `Subscription#plan`, including
+canceled and lapsed Self Managed records, so a second Owner cannot be staged during a lapse and gain
+access after reactivation.
+
+Membership changes, Owner role changes, and transitions to the Self Managed plan lock the Account
+row before validating the seat count. Admin multi-Account updates acquire Account locks in ascending
+ID order. This serializes concurrent seat changes without relying on a cross-table database check
+constraint. Initial Checkout also verifies the prospective Self Managed limit before contacting
+Stripe.
+
+An existing over-limit Self Managed Account fails closed for all Owner reads, writes, lifecycle
+actions, and Billing Portal sessions. Its Owners see only the generic manual-review recovery screen;
+Admin and Captain access remains available for investigation and correction. Boat Binder does not
+silently choose or remove an Owner membership.
+
+Run the read-only deployment audit before enabling live customer billing:
+
+```sh
+bin/rails billing:audit_owner_user_limits
+```
+
+The task exits nonzero when a violation exists and prints only the Account ID, active Owner count,
+and configured limit. Resolve each reported Account by deactivating the unintended Owner membership
+or changing the user to the correct internal role, then rerun the audit until it passes. Do not
+bypass model validation to repair production data.
+
 Webhook endpoint:
 
 ```text

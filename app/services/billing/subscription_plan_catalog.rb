@@ -85,6 +85,12 @@ module Billing
     ].map(&:freeze).freeze
 
     class << self
+      def entitlements_for_plan(plan_key)
+        return DEFAULT_ENTITLEMENTS if plan_key.to_s == SELF_MANAGED_PLAN_KEY
+
+        {}.freeze
+      end
+
       def enabled_options
         new.enabled_options
       end

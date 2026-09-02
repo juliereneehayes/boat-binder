@@ -15,7 +15,11 @@ module Billing
       @membership = membership
       @now = now
       entitlement = SelfManagedEntitlement.new(account:, now:)
-      @phase = entitlement.lifecycle_phase
+      @phase = if OwnerUserLimit.compliant?(account)
+        entitlement.lifecycle_phase
+      else
+        :manual_review
+      end
       @entitlement_ended_at = entitlement.entitlement_ended_at
       @entitlement_ends_at = entitlement.entitlement_ends_at
     end

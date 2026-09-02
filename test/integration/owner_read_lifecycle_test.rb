@@ -55,9 +55,8 @@ class OwnerReadLifecycleTest < ActionDispatch::IntegrationTest
       end
     end
 
-    read_only_owner = create_user(email: "lifecycle-read-only@example.test", role: "owner")
-    create_account_membership(user: read_only_owner, account: @account, access_level: "read_only")
-    sign_in_as read_only_owner
+    @membership.update!(access_level: "read_only")
+    sign_in_as @owner
 
     patch vessel_path(@vessel), params: { asset: { name: "Blocked Read Only Update" } }
     assert_access_denied_redirect

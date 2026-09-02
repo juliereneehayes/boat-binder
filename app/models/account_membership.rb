@@ -7,6 +7,7 @@ class AccountMembership < ApplicationRecord
 
   validates :access_level, inclusion: { in: ACCESS_LEVELS }
   validates :account_id, uniqueness: { scope: :user_id }
+  validate :within_owner_user_limit
 
   scope :active, -> { where(active: true) }
   scope :ordered, -> { joins(:account).order("accounts.name") }
@@ -17,5 +18,21 @@ class AccountMembership < ApplicationRecord
 
   def transactional_email_eligible?
     active? && user.owner? && user.active? && user.email_address.present?
+  end
+
+  private
+
+  def within_owner_user_limit
+    return unless active? && user&.owner? && account_id.present?
+
+    Account.transaction do
+      locked_account = Account.lock.includes(:subscription).find(account_id)
+      return if Billing::OwnerUserLimit.allows_owner?(
+        account: locked_account,
+        user_id: user_id || user.id
+      )
+
+      errors.add(:base, Billing::OwnerUserLimit::ERROR_MESSAGE)
+    end
   end
 end

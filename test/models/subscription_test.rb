@@ -1,6 +1,20 @@
 require "test_helper"
 
 class SubscriptionTest < ActiveSupport::TestCase
+  test "Self Managed plan transition rejects an existing over-limit Account" do
+    account = create_account(name: "Over-limit plan transition")
+    first = create_user(email: "plan-owner-one@example.test", role: "owner")
+    second = create_user(email: "plan-owner-two@example.test", role: "owner")
+    create_account_membership(user: first, account: account)
+    create_account_membership(user: second, account: account)
+
+    account.subscription.assign_attributes(plan: "self_managed")
+
+    assert_not account.subscription.save
+    assert_includes account.subscription.errors[:plan], Billing::OwnerUserLimit::ERROR_MESSAGE
+    assert_equal "legacy", account.subscription.reload.plan
+  end
+
   test "defines plan and status vocabularies centrally" do
     subscription = Subscription.new(plan: "legacy", status: "trialing", provider: "local")
 

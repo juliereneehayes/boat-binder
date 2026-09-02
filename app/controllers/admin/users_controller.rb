@@ -171,8 +171,9 @@ module Admin
       saved = false
 
       User.transaction do
-        user_valid = admin_managed_user_valid?
         account_access_valid = owner_account_access_valid?
+        lock_membership_accounts! if account_access_valid
+        user_valid = admin_managed_user_valid?
 
         if user_valid && account_access_valid && @user.save && sync_account_memberships
           saved = true
@@ -182,6 +183,15 @@ module Admin
       end
 
       saved
+    end
+
+    # Account locks make seat validation and membership writes one serialized operation.
+    # The stable ID order prevents two multi-Account Admin updates from deadlocking.
+    def lock_membership_accounts!
+      account_ids = @user.account_memberships.active.pluck(:account_id)
+      account_ids.concat(@submitted_account_ids || []) if @user.owner?
+
+      Account.where(id: account_ids.uniq).order(:id).lock.load
     end
 
     def admin_managed_user_valid?

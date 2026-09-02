@@ -114,6 +114,37 @@ module Billing
       end
     end
 
+    test "rejects an existing over-limit Account before Stripe is called" do
+      first = create_user(email: "portal-service-owner-one@example.test", role: "owner")
+      second = create_user(email: "portal-service-owner-two@example.test", role: "owner")
+      now = Time.current
+      AccountMembership.insert_all!([
+        {
+          account_id: @account.id,
+          user_id: first.id,
+          access_level: "editor",
+          active: true,
+          created_at: now,
+          updated_at: now
+        },
+        {
+          account_id: @account.id,
+          user_id: second.id,
+          access_level: "read_only",
+          active: true,
+          created_at: now,
+          updated_at: now
+        }
+      ])
+
+      travel_to @now do
+        with_portal_create(->(*) { flunk("over-limit accounts must not call Stripe") }) do
+          assert_not StripePortalSessionCreator.eligible_account?(@account.reload)
+          assert_raises(StripePortalSessionCreator::InvalidAccountError) { create_portal_session }
+        end
+      end
+    end
+
     test "requires explicit Portal configuration mode and API key before calling Stripe" do
       settings = [
         [ :billing_portal_configuration_id, nil ],

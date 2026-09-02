@@ -12,6 +12,7 @@ class Subscription < ApplicationRecord
   validates :status, inclusion: { in: STATUSES }
   validates :provider, inclusion: { in: PROVIDERS }
   validates :external_subscription_id, uniqueness: { scope: :provider }, allow_nil: true
+  validate :owner_user_limit_allows_plan
 
   scope :managed_externally, -> { where.not(provider: LOCAL_PROVIDER) }
 
@@ -69,5 +70,19 @@ class Subscription < ApplicationRecord
 
   def provider_label
     provider.to_s.humanize
+  end
+
+  private
+
+  def owner_user_limit_allows_plan
+    return unless will_save_change_to_plan?
+    return unless plan == Billing::SubscriptionPlanCatalog::SELF_MANAGED_PLAN_KEY && account_id.present?
+
+    Account.transaction do
+      locked_account = Account.lock.find(account_id)
+      return if Billing::OwnerUserLimit.compliant_for_plan?(locked_account, plan_key: plan)
+
+      errors.add(:plan, Billing::OwnerUserLimit::ERROR_MESSAGE)
+    end
   end
 end

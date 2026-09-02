@@ -55,6 +55,14 @@ module Billing
       assert_equal [ "self_managed" ], options.map(&:plan_key).uniq
     end
 
+    test "plan entitlement lookup exposes the enforced Owner limit without Stripe configuration" do
+      entitlements = SubscriptionPlanCatalog.entitlements_for_plan("self_managed")
+
+      assert_equal 1, entitlements.fetch(:owner_user_limit)
+      assert_predicate entitlements, :frozen?
+      assert_empty SubscriptionPlanCatalog.entitlements_for_plan("legacy")
+    end
+
     test "enabled options lists available billing options" do
       assert_equal %w[self_managed_monthly self_managed_annual], catalog.enabled_options.map(&:key)
     end

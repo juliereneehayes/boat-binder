@@ -34,6 +34,42 @@ class AdminOwnerAccessLevelTest < ActionDispatch::IntegrationTest
     assert_equal "editor", membership.access_level
   end
 
+  test "Self Managed rejects a second active Owner and rolls back the User" do
+    existing_owner = owner_with_membership(access_level: "read_only")
+    qualify_self_managed_subscription(@account)
+
+    assert_no_difference -> { User.count } do
+      assert_no_difference -> { AccountMembership.count } do
+        post admin_users_path, params: {
+          user: owner_params(
+            email_address: "blocked-second-owner@example.test",
+            account_access_levels: { @account.id.to_s => "editor" }
+          )
+        }
+      end
+    end
+
+    assert_response :unprocessable_entity
+    assert_includes response.body, Billing::OwnerUserLimit::ERROR_MESSAGE
+    assert existing_owner.account_memberships.find_by!(account: @account).active?
+  end
+
+  test "Self Managed rejects a direct role change that would consume a second Owner seat" do
+    owner_with_membership(access_level: "editor")
+    qualify_self_managed_subscription(@account)
+    captain = create_user(email: "blocked-owner-role@example.test", role: "captain", name: "Captain")
+    create_account_membership(user: captain, account: @account, active: true)
+
+    patch admin_user_path(captain), params: {
+      user: owner_update_params(captain, role: "owner", name: "Should Roll Back")
+    }
+
+    assert_response :unprocessable_entity
+    assert_includes response.body, Billing::OwnerUserLimit::ERROR_MESSAGE
+    assert captain.reload.captain?
+    assert_equal "Captain", captain.name
+  end
+
   test "inviting an owner preserves the selected editor access" do
     assert_difference -> { ActionMailer::Base.deliveries.size }, 1 do
       post admin_users_path, params: {
@@ -225,6 +261,7 @@ class AdminOwnerAccessLevelTest < ActionDispatch::IntegrationTest
 
     assert_response :success
     assert_includes response.body, "Read only"
+    assert_includes response.body, "Self Managed accounts allow one active Owner user"
     assert_includes response.body, "can view account and vessel records but cannot make owner-permitted changes"
     assert_includes response.body, "can make changes already authorized for owner editors"
     assert_select "input[name='user[account_ids][]'][value='#{@account.id}'][checked]"

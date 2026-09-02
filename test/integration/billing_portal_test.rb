@@ -41,6 +41,20 @@ class BillingPortalTest < ActionDispatch::IntegrationTest
     assert_select "a[href=?]", billing_checkout_path, text: "View Self Managed plans", count: 0
   end
 
+  test "an existing over-limit Account fails closed before Portal creation" do
+    second_owner = create_user(email: "portal-over-limit@example.test", role: "owner")
+    insert_membership_without_validation(second_owner, @account)
+    sign_in_as @owner
+
+    get root_path
+    assert_response :success
+    assert_includes response.body, "Your account needs review"
+    assert_select "form[action=?]", billing_portal_path, count: 0
+
+    assert_no_portal_creator_call { post billing_portal_path }
+    assert_access_denied_redirect
+  end
+
   test "Portal creation resolves Account and return URL server side and redirects with 303" do
     other_account = create_account(name: "Forged Portal Account")
     create_account_membership(user: @owner, account: other_account, access_level: "editor")
@@ -173,7 +187,7 @@ class BillingPortalTest < ActionDispatch::IntegrationTest
     assert_redirected_to new_session_path
 
     inactive_owner = create_user(email: "inactive-portal-owner@example.test", role: "owner")
-    create_account_membership(user: inactive_owner, account: @account, access_level: "editor")
+    create_account_membership(user: inactive_owner, account: @account, access_level: "editor", active: false)
     sign_in_as inactive_owner
     inactive_owner.update!(active: false)
 
@@ -270,6 +284,18 @@ class BillingPortalTest < ActionDispatch::IntegrationTest
       return_url: "http://example.com/",
       url: PORTAL_URL
     )
+  end
+
+  def insert_membership_without_validation(user, account)
+    now = Time.current
+    AccountMembership.insert_all!([ {
+      account_id: account.id,
+      user_id: user.id,
+      access_level: "editor",
+      active: true,
+      created_at: now,
+      updated_at: now
+    } ])
   end
 
   def with_portal_creator(replacement)

@@ -16,7 +16,12 @@ module Billing
 
       return referenced_account if account_reference
 
-      accounts = eligible_accounts.limit(2).to_a
+      accounts = eligible_accounts.includes(:subscription).select do |account|
+        OwnerUserLimit.compliant_for_plan?(
+          account,
+          plan_key: SubscriptionPlanCatalog::SELF_MANAGED_PLAN_KEY
+        )
+      end.first(2)
       return accounts.first if accounts.one?
 
       raise ResolutionError, "An eligible owner account could not be determined"
@@ -27,11 +32,17 @@ module Billing
     attr_reader :user, :account_reference
 
     def referenced_account
-      OwnerAccountAccessResolver.call(
+      account = OwnerAccountAccessResolver.call(
         user:,
         account_reference:,
         access_levels: [ "editor" ]
       ).account
+      return account if OwnerUserLimit.compliant_for_plan?(
+        account,
+        plan_key: SubscriptionPlanCatalog::SELF_MANAGED_PLAN_KEY
+      )
+
+      raise ResolutionError, "An eligible owner account could not be determined"
     rescue OwnerAccountAccessResolver::ResolutionError
       raise ResolutionError, "An eligible owner account could not be determined"
     end
