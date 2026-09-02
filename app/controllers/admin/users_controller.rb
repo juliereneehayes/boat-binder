@@ -171,9 +171,9 @@ module Admin
       saved = false
 
       User.transaction do
+        user_valid = admin_managed_user_valid?
         account_access_valid = owner_account_access_valid?
         lock_membership_accounts! if account_access_valid
-        user_valid = admin_managed_user_valid?
 
         if user_valid && account_access_valid && @user.save && sync_account_memberships
           saved = true

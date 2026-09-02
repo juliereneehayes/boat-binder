@@ -342,10 +342,10 @@ class OwnerWriteEntitlementTest < ActionDispatch::IntegrationTest
     assert_not_includes response.body, @vessel.name
 
     get vessel_path(@vessel)
-    assert_access_denied_redirect
+    assert_response :not_found
 
     patch vessel_path(@vessel), params: { asset: { name: "Blocked over-limit update" } }
-    assert_access_denied_redirect
+    assert_response :not_found
     assert_equal "Entitlement Vessel", @vessel.reload.name
   end
 

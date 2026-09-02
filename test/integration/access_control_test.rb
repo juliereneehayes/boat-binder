@@ -451,6 +451,7 @@ class AccessControlTest < ActionDispatch::IntegrationTest
 
   test "admin updates owner account access with blank password fields" do
     setup_access_records
+    replacement_account = create_account(name: "Replacement Owner Account")
     sign_in_as @admin
 
     patch admin_user_path(@owner_a_user), params: {
@@ -461,12 +462,12 @@ class AccessControlTest < ActionDispatch::IntegrationTest
         active: "1",
         password: "",
         password_confirmation: "",
-        account_ids: [ @owner_b_account.id ]
+        account_ids: [ replacement_account.id ]
       }
     }
 
     assert_redirected_to admin_users_path
-    assert_equal [ @owner_b_account.id ], @owner_a_user.account_memberships.reload.active.pluck(:account_id)
+    assert_equal [ replacement_account.id ], @owner_a_user.account_memberships.reload.active.pluck(:account_id)
 
     delete session_path
     sign_in_as @owner_a_user
@@ -533,6 +534,7 @@ class AccessControlTest < ActionDispatch::IntegrationTest
 
   test "admins can assign only valid roles" do
     setup_access_records
+    owner_target_account = create_account(name: "Valid Role Owner Account")
     sign_in_as @admin
 
     User::ROLES.each do |role|
@@ -545,7 +547,7 @@ class AccessControlTest < ActionDispatch::IntegrationTest
             active: "1",
             password: "password",
             password_confirmation: "password",
-            account_ids: [ @owner_a_account.id ]
+            account_ids: [ owner_target_account.id ]
           }
         }
       end
