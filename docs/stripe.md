@@ -38,10 +38,11 @@ canceled and lapsed Self Managed records, so a second Owner cannot be staged dur
 access after reactivation.
 
 Membership changes, Owner role changes, and transitions to the Self Managed plan lock the Account
-row before validating the seat count. Admin multi-Account updates acquire Account locks in ascending
-ID order. This serializes concurrent seat changes without relying on a cross-table database check
-constraint. Initial Checkout also verifies the prospective Self Managed limit before contacting
-Stripe.
+row before validating the seat count. Rails wraps validations and persistence in the same automatic
+`save` transaction, so these validation locks remain held through the corresponding insert or
+update. Admin multi-Account updates acquire Account locks in ascending ID order. This serializes
+concurrent seat changes without relying on a cross-table database check constraint. Initial
+Checkout also verifies the prospective Self Managed limit before contacting Stripe.
 
 An existing over-limit Self Managed Account fails closed for all Owner reads, writes, lifecycle
 actions, and Billing Portal sessions. Its Owners see only the generic manual-review recovery screen;

@@ -78,6 +78,8 @@ class Subscription < ApplicationRecord
     return unless will_save_change_to_plan?
     return unless plan == Billing::SubscriptionPlanCatalog::SELF_MANAGED_PLAN_KEY && account_id.present?
 
+    # Active Record's save transaction includes validations, so this lock remains
+    # held through the Subscription plan UPDATE.
     Account.transaction do
       locked_account = Account.lock.find(account_id)
       return if Billing::OwnerUserLimit.compliant_for_plan?(locked_account, plan_key: plan)

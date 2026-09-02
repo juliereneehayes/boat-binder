@@ -73,6 +73,9 @@ class User < ApplicationRecord
     account_ids = account_memberships.active.order(:account_id).pluck(:account_id)
     return if account_ids.empty?
 
+    # Active Record's save transaction covers validation and persistence. These
+    # locks therefore remain held through the role UPDATE; stable ordering avoids
+    # deadlocks when a user belongs to more than one Account.
     Account.transaction do
       Account.where(id: account_ids).order(:id).lock.includes(:subscription).each do |account|
         next if Billing::OwnerUserLimit.allows_owner?(account:, user_id: id)

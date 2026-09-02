@@ -104,50 +104,67 @@ module Billing
       )
     end
 
-    test "concurrent membership writes serialize on the Account and persist one Owner" do
+    test "ordinary concurrent membership saves hold the validation lock through the insert" do
       first = remember(create_user(email: unique_email("concurrent-first"), role: "owner"))
       second = remember(create_user(email: unique_email("concurrent-second"), role: "owner"))
-      account_locked = Queue.new
-      release_first = Queue.new
+      first_validated = Queue.new
+      release_first_validation = Queue.new
+      second_started = Queue.new
       results = Queue.new
+      pausing_membership_class = Class.new(AccountMembership) do
+        attr_accessor :first_validated, :release_first_validation
+
+        validate do
+          next unless first_validated && release_first_validation
+
+          first_validated << true
+          release_first_validation.pop
+        end
+      end
 
       first_thread = Thread.new do
         ActiveRecord::Base.connection_pool.with_connection do
-          Account.transaction do
-            locked_account = Account.lock.find(@account.id)
-            account_locked << true
-            release_first.pop
-            results << AccountMembership.create(user: first, account: locked_account)
-          end
+          membership = pausing_membership_class.new(user: first, account_id: @account.id)
+          membership.first_validated = first_validated
+          membership.release_first_validation = release_first_validation
+          membership.save
+          results << membership
         end
       rescue StandardError => error
         results << error
       end
-      Timeout.timeout(5) { account_locked.pop }
+      Timeout.timeout(5) { first_validated.pop }
 
       second_thread = Thread.new do
         ActiveRecord::Base.connection_pool.with_connection do
+          second_started << true
           results << AccountMembership.create(user: second, account: Account.find(@account.id))
         end
       rescue StandardError => error
         results << error
       end
+      Timeout.timeout(5) { second_started.pop }
       Timeout.timeout(5) do
         Thread.pass until second_thread.status == "sleep"
       end
 
-      release_first << true
+      assert first_thread.alive?, "first save must still be paused before its INSERT"
+      assert second_thread.alive?, "second save must wait for the first validation lock"
+      assert_equal 0, OwnerUserLimit.active_owner_count(@account)
+
+      release_first_validation << true
       assert first_thread.join(5), "first Owner membership write deadlocked"
       assert second_thread.join(5), "second Owner membership write deadlocked"
 
       memberships = 2.times.map { Timeout.timeout(5) { results.pop } }
-      memberships.each { |membership| assert_instance_of AccountMembership, membership }
+      memberships.each { |membership| assert_kind_of AccountMembership, membership }
+      memberships.each { |membership| remember(membership) }
       assert_equal 1, memberships.count(&:persisted?)
       rejected = memberships.reject(&:persisted?).sole
       assert_includes rejected.errors.full_messages, OwnerUserLimit::ERROR_MESSAGE
       assert_equal 1, OwnerUserLimit.active_owner_count(@account)
     ensure
-      release_first << true if first_thread&.alive?
+      release_first_validation << true if first_thread&.alive?
       first_thread&.join(1)
       second_thread&.join(1)
     end

@@ -25,6 +25,9 @@ class AccountMembership < ApplicationRecord
   def within_owner_user_limit
     return unless active? && user&.owner? && account_id.present?
 
+    # Active Record wraps validations and persistence in the same save transaction.
+    # This nested transaction joins it, so the Account lock remains held through
+    # the membership INSERT or UPDATE.
     Account.transaction do
       locked_account = Account.lock.includes(:subscription).find(account_id)
       return if Billing::OwnerUserLimit.allows_owner?(
