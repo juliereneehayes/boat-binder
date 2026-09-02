@@ -44,6 +44,12 @@ update. Admin multi-Account updates acquire Account locks in ascending ID order.
 concurrent seat changes without relying on a cross-table database check constraint. Initial
 Checkout also verifies the prospective Self Managed limit before contacting Stripe.
 
+This guarantee applies to ordinary validated Active Record writes. Validation-bypassing APIs and
+raw SQL—including `update_column`, `update_columns`, `update_all`, and `insert_all`—must not be used
+to create or activate Owner memberships, promote users to Owner, or transition an Account to Self
+Managed. They bypass both the seat validation and its Account lock. Operations that only remove
+access, such as deactivating memberships during an Admin role change, cannot allocate a second seat.
+
 An existing over-limit Self Managed Account fails closed for all Owner reads, writes, lifecycle
 actions, and Billing Portal sessions. Its Owners see only the generic manual-review recovery screen;
 Admin and Captain access remains available for investigation and correction. Boat Binder does not
