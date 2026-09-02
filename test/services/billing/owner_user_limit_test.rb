@@ -114,27 +114,27 @@ module Billing
       release_first_validation = Queue.new
       second_started = Queue.new
       results = Queue.new
-      pausing_membership_class = Class.new(AccountMembership) do
-        attr_accessor :first_validated, :release_first_validation
+      pause_after_validation = lambda do
+        queues = Thread.current[:owner_limit_validation_pause]
+        next unless queues
 
-        validate do
-          next unless first_validated && release_first_validation
-
-          first_validated << true
-          release_first_validation.pop
-        end
+        queues.fetch(:validated) << true
+        queues.fetch(:release).pop
       end
+      AccountMembership.set_callback(:validation, :after, pause_after_validation)
 
       first_thread = Thread.new do
         ActiveRecord::Base.connection_pool.with_connection do
-          membership = pausing_membership_class.new(user: first, account_id: @account.id)
-          membership.first_validated = first_validated
-          membership.release_first_validation = release_first_validation
-          membership.save
-          results << membership
+          Thread.current[:owner_limit_validation_pause] = {
+            validated: first_validated,
+            release: release_first_validation
+          }
+          results << AccountMembership.create(user: first, account_id: @account.id)
         end
       rescue StandardError => error
         results << error
+      ensure
+        Thread.current[:owner_limit_validation_pause] = nil
       end
       Timeout.timeout(5) { first_validated.pop }
 
@@ -160,7 +160,7 @@ module Billing
       assert second_thread.join(5), "second Owner membership write deadlocked"
 
       memberships = 2.times.map { Timeout.timeout(5) { results.pop } }
-      memberships.each { |membership| assert_kind_of AccountMembership, membership }
+      memberships.each { |membership| assert_instance_of AccountMembership, membership }
       memberships.each { |membership| remember(membership) }
       assert_equal 1, memberships.count(&:persisted?)
       rejected = memberships.reject(&:persisted?).sole
@@ -170,6 +170,7 @@ module Billing
       release_first_validation << true if first_thread&.alive?
       first_thread&.join(1)
       second_thread&.join(1)
+      AccountMembership.skip_callback(:validation, :after, pause_after_validation) if pause_after_validation
     end
 
     test "audit reports minimized identifiers for existing violations" do
