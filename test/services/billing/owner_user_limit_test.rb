@@ -74,7 +74,7 @@ module Billing
       replacement_membership.update!(active: true)
 
       assert current_membership.reload.active?
-      assert_equal 1, OwnerUserLimit.active_owner_count(@account)
+      assert_equal 1, OwnerUserLimit.active_owner_count(@account.reload)
       assert_equal replacement, @account.owner_user_memberships.active.sole.user
     end
 
