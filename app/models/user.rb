@@ -22,6 +22,7 @@ class User < ApplicationRecord
   validates :name, length: { maximum: 120 }
   validates :password, presence: true, confirmation: true, length: { maximum: 72 }, allow_nil: true
   validate :password_digest_required_unless_pending_invitation
+  validate :owner_user_limits_allow_role_change
 
   def email
     email_address
@@ -64,5 +65,24 @@ class User < ApplicationRecord
     return if invitation_pending?
 
     errors.add(:password, "can't be blank")
+  end
+
+  def owner_user_limits_allow_role_change
+    return unless owner? && will_save_change_to_role? && persisted?
+
+    account_ids = account_memberships.active.order(:account_id).pluck(:account_id)
+    return if account_ids.empty?
+
+    # Active Record's save transaction covers validation and persistence. These
+    # locks therefore remain held through the role UPDATE; stable ordering avoids
+    # deadlocks when a user belongs to more than one Account.
+    Account.transaction do
+      Account.where(id: account_ids).order(:id).lock.includes(:subscription).each do |account|
+        next if Billing::OwnerUserLimit.allows_owner?(account:, user_id: id)
+
+        errors.add(:role, Billing::OwnerUserLimit::ERROR_MESSAGE)
+        break
+      end
+    end
   end
 end

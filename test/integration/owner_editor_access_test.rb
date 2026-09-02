@@ -4,15 +4,18 @@ class OwnerEditorAccessTest < ActionDispatch::IntegrationTest
   setup do
     @account = create_account(name: "Elliott Family")
     @other_account = create_account(name: "Harbor North")
+    @read_only_account = create_account(name: "Read Only Harbor")
     qualify_self_managed_subscription(@account)
+    qualify_self_managed_subscription(@read_only_account)
     @vessel = create_vessel(account: @account, name: "Blue Meridian")
     @other_vessel = create_vessel(account: @other_account, name: "Tide Runner")
+    @read_only_vessel = create_vessel(account: @read_only_account, name: "Quiet Harbor")
 
     @editor_owner = create_user(email: "editor-owner@example.test", role: "owner", name: "Editor Owner")
     create_account_membership(user: @editor_owner, account: @account, access_level: "editor")
 
     @read_only_owner = create_user(email: "readonly-owner@example.test", role: "owner", name: "Read Only Owner")
-    create_account_membership(user: @read_only_owner, account: @account, access_level: "read_only")
+    create_account_membership(user: @read_only_owner, account: @read_only_account, access_level: "read_only")
   end
 
   test "internal users retain write access" do
@@ -114,22 +117,22 @@ class OwnerEditorAccessTest < ActionDispatch::IntegrationTest
   end
 
   test "read only owner cannot create or edit a note" do
-    note = @vessel.binder_notes.create!(
-      account: @account,
+    note = @read_only_vessel.binder_notes.create!(
+      account: @read_only_account,
       title: "Existing note",
       body: "Original body",
       note_type: "general"
     )
     sign_in_as @read_only_owner
 
-    assert_no_difference -> { @vessel.binder_notes.count } do
-      post vessel_binder_notes_path(@vessel), params: {
+    assert_no_difference -> { @read_only_vessel.binder_notes.count } do
+      post vessel_binder_notes_path(@read_only_vessel), params: {
         binder_note: { title: "Blocked note", body: "Nope", note_type: "general" }
       }
     end
     assert_access_denied_redirect
 
-    patch vessel_binder_note_path(@vessel, note), params: {
+    patch vessel_binder_note_path(@read_only_vessel, note), params: {
       binder_note: { title: "Blocked edit", body: note.body, note_type: note.note_type }
     }
     assert_access_denied_redirect
@@ -368,6 +371,12 @@ class OwnerEditorAccessTest < ActionDispatch::IntegrationTest
       body: "Original",
       note_type: "general"
     )
+    read_only_note = @read_only_vessel.binder_notes.create!(
+      account: @read_only_account,
+      title: "Read only visible note",
+      body: "Original",
+      note_type: "general"
+    )
 
     sign_in_as @editor_owner
     get vessel_path(@vessel)
@@ -389,13 +398,13 @@ class OwnerEditorAccessTest < ActionDispatch::IntegrationTest
     assert_select "a[href=?]", new_vessel_path, count: 0
 
     sign_in_as @read_only_owner
-    get vessel_path(@vessel)
+    get vessel_path(@read_only_vessel)
 
     assert_response :success
-    assert_select "a[href=?]", edit_vessel_path(@vessel), text: "Edit", count: 0
-    assert_select "a[href=?]", new_vessel_document_path(@vessel), count: 0
-    assert_select "form[action=?]", vessel_binder_notes_path(@vessel), count: 0
-    assert_select "a[href=?]", edit_vessel_binder_note_path(@vessel, note), count: 0
+    assert_select "a[href=?]", edit_vessel_path(@read_only_vessel), text: "Edit", count: 0
+    assert_select "a[href=?]", new_vessel_document_path(@read_only_vessel), count: 0
+    assert_select "form[action=?]", vessel_binder_notes_path(@read_only_vessel), count: 0
+    assert_select "a[href=?]", edit_vessel_binder_note_path(@read_only_vessel, read_only_note), count: 0
   end
 
   test "vessel form shows editable account selector only to internal users" do

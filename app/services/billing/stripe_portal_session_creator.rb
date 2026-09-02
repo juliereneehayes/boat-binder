@@ -14,6 +14,7 @@ module Billing
 
     def self.eligible_account?(account, now: Time.current)
       return false unless account&.persisted? && account.active? && account.account_type == "client"
+      return false unless OwnerUserLimit.compliant?(account)
 
       phase = SelfManagedEntitlement.new(account:, now:).lifecycle_phase
       SUPPORTED_LIFECYCLE_PHASES.include?(phase)

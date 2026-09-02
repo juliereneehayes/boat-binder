@@ -322,10 +322,65 @@ class OwnerWriteEntitlementTest < ActionDispatch::IntegrationTest
     assert_equal "Private Vessel", other_vessel.reload.name
   end
 
+  test "an existing over-limit Self Managed Account fails closed for reads and writes" do
+    qualify_self_managed_subscription(@account, now: @now)
+    second_owner = create_user(email: "entitled-over-limit@example.test", role: "owner")
+    now = Time.current
+    AccountMembership.insert_all!([ {
+      account_id: @account.id,
+      user_id: second_owner.id,
+      access_level: "read_only",
+      active: true,
+      created_at: now,
+      updated_at: now
+    } ])
+    sign_in_as @owner
+
+    get root_path
+    assert_response :success
+    assert_includes response.body, "Your account needs review"
+    assert_not_includes response.body, @vessel.name
+
+    get vessel_path(@vessel)
+    assert_response :not_found
+
+    patch vessel_path(@vessel), params: { asset: { name: "Blocked over-limit update" } }
+    assert_response :not_found
+    assert_equal "Entitlement Vessel", @vessel.reload.name
+  end
+
+  test "an existing over-limit Account does not restrict Admin or Captain access" do
+    qualify_self_managed_subscription(@account, now: @now)
+    second_owner = create_user(email: "internal-over-limit-owner@example.test", role: "owner")
+    now = Time.current
+    AccountMembership.insert_all!([ {
+      account_id: @account.id,
+      user_id: second_owner.id,
+      access_level: "editor",
+      active: true,
+      created_at: now,
+      updated_at: now
+    } ])
+
+    %w[admin captain].each do |role|
+      internal = create_user(email: "over-limit-#{role}@example.test", role:)
+      sign_in_as internal
+      new_name = "#{role.humanize} retained access"
+
+      patch vessel_path(@vessel), params: { asset: { name: new_name } }
+
+      assert_redirected_to vessel_path(@vessel.reload)
+      assert_equal new_name, @vessel.name
+    end
+  end
+
   test "read only and inactive editor memberships remain non writable with qualifying entitlement" do
     qualify_self_managed_subscription(@account, now: @now)
+    read_only_account = create_account(name: "Read Only Entitlement Account")
+    read_only_vessel = create_vessel(account: read_only_account, name: "Read Only Vessel")
     read_only_owner = create_user(email: "entitled-read-only@example.test", role: "owner")
-    create_account_membership(user: read_only_owner, account: @account, access_level: "read_only")
+    create_account_membership(user: read_only_owner, account: read_only_account, access_level: "read_only")
+    qualify_self_managed_subscription(read_only_account, now: @now)
     inactive_editor = create_user(email: "entitled-inactive-editor@example.test", role: "owner")
     create_account_membership(
       user: inactive_editor,
@@ -335,9 +390,9 @@ class OwnerWriteEntitlementTest < ActionDispatch::IntegrationTest
     )
 
     sign_in_as read_only_owner
-    patch vessel_path(@vessel), params: { asset: { name: "Blocked read only update" } }
+    patch vessel_path(read_only_vessel), params: { asset: { name: "Blocked read only update" } }
     assert_access_denied_redirect
-    assert_equal "Entitlement Vessel", @vessel.reload.name
+    assert_equal "Read Only Vessel", read_only_vessel.reload.name
 
     sign_in_as inactive_editor
     patch vessel_path(@vessel), params: { asset: { name: "Blocked inactive membership update" } }

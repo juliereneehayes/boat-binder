@@ -98,6 +98,8 @@ module Authorization
         .merge(eligible_memberships)
         .includes(:subscription)
         .filter_map do |account|
+          next unless Billing::OwnerUserLimit.compliant?(account)
+
           entitlement = Billing::SelfManagedEntitlement.new(account:, now: evaluated_at)
           account.id if entitlement.qualifying?
         end
@@ -151,6 +153,8 @@ module Authorization
       evaluated_at = Time.current
 
       owner_read_candidate_accounts.filter_map do |account|
+        next unless Billing::OwnerUserLimit.compliant?(account)
+
         phase = Billing::SelfManagedEntitlement.new(account:, now: evaluated_at).lifecycle_phase
         account.id if OWNER_READABLE_LIFECYCLE_PHASES.include?(phase)
       end
