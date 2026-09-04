@@ -30,7 +30,7 @@ Rails.application.routes.draw do
 
   resources :vessels do
     delete :primary_photo, on: :member, action: :destroy_primary_photo
-    resources :service_visits, only: %i[index new create show] do
+    resources :service_visits, only: %i[index new create show edit update] do
       get :report, on: :member
     end
     resources :documents, only: %i[new create destroy]

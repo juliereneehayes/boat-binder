@@ -12,7 +12,7 @@
           </div>
           <div class="mt-5 flex flex-wrap items-center gap-2 md:mt-0 md:justify-end lg:justify-start">
             <%= status_chip(@vessel.status_label, tone: @vessel.status_tone) %>
-            <% if internal_user? %>
+            <% if can_manage_vessel %>
               <%= link_to "Start Visit", new_vessel_service_visit_path(@vessel), class: primary_button_class("min-h-12 bg-[#7DAAB3] px-5 py-3 text-base text-[#0B1F35] hover:bg-[#B9D5DA]") %>
             <% end %>
             <% if can_manage_vessel %>
@@ -199,7 +199,7 @@
         <h2 class="text-xl font-black">Batteries</h2>
         <p class="mt-1 text-sm text-slate-600">Track the vessel batteries that should be checked during service visits.</p>
       </div>
-      <% if internal_user? %>
+      <% if can_manage_vessel %>
         <%= link_to "Add battery", new_vessel_battery_path(@vessel), class: "shrink-0 rounded-md px-3 py-2 text-sm font-bold text-cyan-700" %>
       <% end %>
     </div>
@@ -221,10 +221,12 @@
                 <p class="leading-6"><%= battery.notes %></p>
               <% end %>
             </div>
-            <% if internal_user? %>
+            <% if can_manage_vessel %>
               <div class="mt-4 flex flex-wrap gap-2">
                 <%= link_to "Edit", edit_vessel_battery_path(@vessel, battery), class: "inline-flex min-h-10 items-center rounded-md bg-slate-900 px-4 py-2 text-sm font-bold text-white" %>
-                <%= button_to "Delete", vessel_battery_path(@vessel, battery), method: :delete, form: { data: { turbo_confirm: "Delete #{battery.name}?" } }, class: "min-h-10 rounded-md border border-red-200 px-4 py-2 text-sm font-bold text-red-700", data: { turbo_submits_with: "Deleting..." } %>
+                <% if internal_user? %>
+                  <%= button_to "Delete", vessel_battery_path(@vessel, battery), method: :delete, form: { data: { turbo_confirm: "Delete #{battery.name}?" } }, class: "min-h-10 rounded-md border border-red-200 px-4 py-2 text-sm font-bold text-red-700", data: { turbo_submits_with: "Deleting..." } %>
+                <% end %>
               </div>
             <% end %>
           </div>
@@ -246,7 +248,7 @@
       </div>
       <div class="flex flex-wrap gap-2">
         <%= link_to "View all service visits", vessel_service_visits_path(@vessel), class: secondary_button_class("min-h-10") %>
-        <% if internal_user? %>
+        <% if can_manage_vessel %>
           <%= link_to "Add service visit", new_vessel_service_visit_path(@vessel), class: primary_button_class("min-h-10") %>
         <% end %>
       </div>
@@ -309,7 +311,7 @@
       <div class="<%= app_card_class("p-6") %>">
         <p class="text-lg font-black">No service visits recorded yet.</p>
         <p class="mt-2 text-sm leading-6 text-slate-600">Completed service visits and owner-ready reports will appear here.</p>
-        <% if internal_user? %>
+        <% if can_manage_vessel %>
           <%= link_to "Add Service Visit", new_vessel_service_visit_path(@vessel), class: primary_button_class("mt-4") %>
         <% end %>
       </div>
@@ -419,7 +421,7 @@
     </div>
   </section>
 
-  <% if internal_user? %>
+  <% if can_manage_vessel %>
     <div class="fixed inset-x-0 bottom-16 z-30 px-4 md:hidden">
       <%= link_to "Log Visit", new_vessel_service_visit_path(@vessel), class: "mx-auto flex min-h-14 max-w-6xl items-center justify-center rounded-md bg-cyan-700 px-5 py-4 text-base font-black text-white shadow-lg md:inline-flex md:min-h-12 md:shadow-sm" %>
     </div>

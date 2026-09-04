@@ -10,7 +10,7 @@ module Authorization
 
   included do
     helper_method :current_user, :admin_user?, :internal_user?, :owner_user?, :can_manage_records?,
-      :can_manage_account?, :owner_lifecycle_restricted?, :owner_lifecycle_recoveries
+      :can_manage_account?, :can_create_vessels?, :owner_lifecycle_restricted?, :owner_lifecycle_recoveries
   end
 
   private
@@ -42,6 +42,10 @@ module Authorization
     return false unless account.present?
 
     manageable_account_ids.include?(account.id)
+  end
+
+  def can_create_vessels?
+    internal_user? || manageable_account_ids.one?
   end
 
   def require_admin!

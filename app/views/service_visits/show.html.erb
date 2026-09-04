@@ -2,6 +2,9 @@
   <div class="flex flex-wrap gap-2">
     <%= link_to "Back to vessel", vessel_path(@vessel), class: secondary_button_class("min-h-10") %>
     <%= link_to "Back to service visits", service_visits_path, class: secondary_button_class("min-h-10") %>
+    <% if can_manage_account?(@vessel.account) %>
+      <%= link_to "Edit Visit", edit_vessel_service_visit_path(@vessel, @service_visit), class: secondary_button_class("min-h-10") %>
+    <% end %>
     <%= link_to "Preview Report", report_vessel_service_visit_path(@vessel, @service_visit), class: primary_button_class("min-h-10") %>
   </div>
 

@@ -1,6 +1,7 @@
 class AssetBatteriesController < ApplicationController
-  before_action :require_internal!
+  before_action :require_internal!, only: :destroy
   before_action :set_vessel
+  before_action :require_vessel_write_access!, only: %i[new create edit update]
   before_action :set_battery, only: %i[edit update destroy]
 
   def new
@@ -41,6 +42,10 @@ class AssetBatteriesController < ApplicationController
 
   def set_battery
     @battery = @vessel.asset_batteries.find(params[:id])
+  end
+
+  def require_vessel_write_access!
+    require_write_access!(@vessel.account)
   end
 
   def battery_params
