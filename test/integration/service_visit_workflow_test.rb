@@ -443,7 +443,7 @@ class ServiceVisitWorkflowTest < ActionDispatch::IntegrationTest
     assert_not_includes mail.text_part.body.decoded, "Follow-up was marked during this visit."
   end
 
-  test "service visit report does not show action label when follow up notes are blank" do
+  test "service visit report shows open follow up state when notes are blank" do
     account = create_account(name: "Harbor North")
     account.contacts.create!(name: "Harbor Owner", email: "harbor@example.test", role: "Owner")
     captain = create_user(email: "captain-empty-follow-up@example.test")
@@ -461,8 +461,8 @@ class ServiceVisitWorkflowTest < ActionDispatch::IntegrationTest
 
     assert_response :success
     assert_includes response.body, "No follow-up items noted."
-    assert_not_includes response.body, "Action needed"
-    assert_not_includes response.body, "Follow-up needed"
+    assert_includes response.body, "Action needed"
+    assert_includes response.body, "Follow-up needed"
 
     mail = ServiceVisitMailer.summary(visit, visit.summary_recipient_email)
 
@@ -542,6 +542,88 @@ class ServiceVisitWorkflowTest < ActionDispatch::IntegrationTest
     assert_includes response.body, "View all service visits"
     assert_includes response.body, "View visit details"
     assert_includes response.body, "Follow-up"
+  end
+
+  test "captain completes and reopens follow up without notifications or issue notes" do
+    captain = create_user(email: "captain-follow-up-action@example.test", name: "Jordan Captain")
+    sign_in_as captain
+    vessel = create_vessel(name: "Blue Meridian")
+    visit = vessel.service_visits.create!(
+      performed_by_user: captain,
+      visit_date: Date.current,
+      follow_up_needed: true,
+      follow_up_notes: "Replace the chafed spring line."
+    )
+
+    get vessel_path(vessel)
+    assert_response :success
+    assert_select "form[action=?]", complete_follow_up_vessel_service_visit_path(vessel, visit)
+
+    assert_no_difference -> { ActionMailer::Base.deliveries.size } do
+      assert_no_difference -> { vessel.binder_notes.count } do
+        assert_difference -> { ServiceVisitFollowUpEvent.count }, 1 do
+          patch complete_follow_up_vessel_service_visit_path(vessel, visit)
+        end
+      end
+    end
+
+    assert_redirected_to vessel_service_visit_path(vessel, visit)
+    visit.reload
+    assert visit.follow_up_completed?
+    assert_equal captain, visit.follow_up_completed_by_user
+    assert_equal "Replace the chafed spring line.", visit.follow_up_notes
+
+    follow_redirect!
+    assert_includes response.body, "Follow-up completed"
+    assert_includes response.body, "Jordan Captain"
+    assert_includes response.body, "Follow-up history"
+    assert_not_includes response.body, "Action needed"
+
+    get vessel_path(vessel)
+    assert_response :success
+    assert_select "form[action=?]", complete_follow_up_vessel_service_visit_path(vessel, visit), count: 0
+    assert_includes response.body, "Replace the chafed spring line."
+    assert_includes response.body, "Follow-up completed"
+
+    assert_no_difference -> { ServiceVisitFollowUpEvent.count } do
+      patch complete_follow_up_vessel_service_visit_path(vessel, visit)
+    end
+
+    assert_no_difference -> { ActionMailer::Base.deliveries.size } do
+      assert_no_difference -> { vessel.binder_notes.count } do
+        assert_difference -> { ServiceVisitFollowUpEvent.count }, 1 do
+          patch reopen_follow_up_vessel_service_visit_path(vessel, visit)
+        end
+      end
+    end
+
+    assert visit.reload.follow_up_open?
+    assert_equal [ "completed", "reopened" ], visit.follow_up_events.pluck(:action)
+  end
+
+  test "editing a visit cannot bypass audited follow up transitions" do
+    captain = create_user(email: "captain-follow-up-tamper@example.test")
+    sign_in_as captain
+    vessel = create_vessel
+    visit = vessel.service_visits.create!(
+      performed_by_user: captain,
+      visit_date: Date.current,
+      summary: "Original summary",
+      follow_up_needed: true
+    )
+
+    patch vessel_service_visit_path(vessel, visit), params: {
+      service_visit: {
+        visit_date: visit.visit_date,
+        summary: "Updated summary",
+        follow_up_needed: "0"
+      }
+    }
+
+    assert_redirected_to vessel_service_visit_path(vessel, visit)
+    assert visit.reload.follow_up_open?
+    assert_equal "Updated summary", visit.summary
+    assert_empty visit.follow_up_events
   end
 
   test "older service visit report without structured records renders" do

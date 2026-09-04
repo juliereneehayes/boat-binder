@@ -15,7 +15,7 @@ class DashboardController < ApplicationController
     @vessels = scoped_vessels.active.includes(:account, :reminders, :service_visits).with_attached_primary_photo.ordered
     @upcoming_reminders = scoped_reminders.includes(asset: :account).upcoming.limit(6)
     @recent_service_visits = scoped_service_visits.includes(:asset, :performed_by_user).recent.limit(5)
-    @follow_up_items = scoped_service_visits.includes(:asset).where(follow_up_needed: true).recent.limit(5)
+    @follow_up_items = scoped_service_visits.includes(:asset).with_open_follow_up.recent.limit(5)
     @recent_documents = scoped_documents.includes(:asset, :account).order(created_at: :desc).limit(5)
     @active_vessels_count = scoped_vessels.active.count
     @open_notes_count = scoped_binder_notes.where.not(note_type: "owner_preference").count

@@ -53,6 +53,57 @@ class ServiceVisitTest < ActiveSupport::TestCase
     assert_equal "linked-summary-owner@example.test", visit.summary_recipient_email
   end
 
+  test "completes and reopens follow up with an auditable history" do
+    actor = create_user(email: "follow-up-actor@example.test", name: "Follow Up Actor")
+    visit = ServiceVisit.create!(
+      asset: create_vessel,
+      performed_by_user: create_user(email: "visit-author@example.test"),
+      visit_date: Date.current,
+      follow_up_needed: true,
+      follow_up_notes: "Order a replacement impeller."
+    )
+
+    travel_to Time.zone.local(2026, 9, 4, 9, 30) do
+      assert visit.complete_follow_up!(by: actor)
+    end
+
+    visit.reload
+    assert visit.follow_up_completed?
+    assert_equal actor, visit.follow_up_completed_by_user
+    assert_equal Time.zone.local(2026, 9, 4, 9, 30), visit.follow_up_completed_at
+    assert_equal "Order a replacement impeller.", visit.follow_up_notes
+    assert_equal [ "completed" ], visit.follow_up_events.pluck(:action)
+
+    travel_to Time.zone.local(2026, 9, 4, 10, 15) do
+      assert visit.reopen_follow_up!(by: actor)
+    end
+
+    visit.reload
+    assert visit.follow_up_open?
+    assert_nil visit.follow_up_completed_at
+    assert_nil visit.follow_up_completed_by_user
+    assert_equal "Order a replacement impeller.", visit.follow_up_notes
+    assert_equal [ "completed", "reopened" ], visit.follow_up_events.pluck(:action)
+  end
+
+  test "follow up transitions are idempotent" do
+    actor = create_user(email: "idempotent-follow-up@example.test")
+    visit = ServiceVisit.create!(
+      asset: create_vessel,
+      performed_by_user: actor,
+      visit_date: Date.current,
+      follow_up_needed: true
+    )
+
+    assert visit.complete_follow_up!(by: actor)
+    assert_not visit.complete_follow_up!(by: actor)
+    assert_equal 1, visit.follow_up_events.where(action: "completed").count
+
+    assert visit.reopen_follow_up!(by: actor)
+    assert_not visit.reopen_follow_up!(by: actor)
+    assert_equal 1, visit.follow_up_events.where(action: "reopened").count
+  end
+
   test "one invalid photo adds one validation error and purges the attachment" do
     visit = create_service_visit
     visit.photos.attach(uploaded_photo("sample.pdf", "application/pdf"))

@@ -520,13 +520,14 @@ class OwnerEditorAccessTest < ActionDispatch::IntegrationTest
     get new_document_path
 
     assert_response :success
-    assert_select "select[name='document[account_id]'] option[value=?]", @account.id.to_s
-    assert_select "select[name='document[account_id]'] option[value=?]", @other_account.id.to_s, count: 0
+    assert_select "select[name='document[account_id]']", count: 0
+    assert_select "p", text: @account.name
+    assert_select "select[name='document[asset_id]'] option[value=?]", @vessel.id.to_s
+    assert_select "select[name='document[asset_id]'] option[value=?]", @other_vessel.id.to_s, count: 0
 
     assert_difference -> { @account.documents.count }, 1 do
       post documents_path, params: {
         document: {
-          account_id: @account.id,
           title: "Owner insurance policy",
           document_type: "insurance",
           file: fixture_file_upload("sample.pdf", "application/pdf")
@@ -538,6 +539,111 @@ class OwnerEditorAccessTest < ActionDispatch::IntegrationTest
     assert_redirected_to documents_path
     assert_nil document.asset
     assert document.file.attached?
+  end
+
+  test "editor owner can associate a global document only with a vessel in the resolved account" do
+    sign_in_as @editor_owner
+
+    assert_difference -> { @vessel.documents.count }, 1 do
+      post documents_path, params: {
+        document: {
+          asset_id: @vessel.id,
+          title: "Owner vessel policy",
+          document_type: "insurance",
+          file: fixture_file_upload("sample.pdf", "application/pdf")
+        }
+      }
+    end
+
+    document = @vessel.documents.find_by!(title: "Owner vessel policy")
+    assert_equal @account, document.account
+    assert_equal @vessel, document.asset
+    assert_redirected_to vessel_path(@vessel, anchor: "documents")
+  end
+
+  test "editor owner cannot forge account or vessel while uploading a document" do
+    sign_in_as @editor_owner
+
+    assert_no_difference -> { Document.count } do
+      post documents_path, params: {
+        document: {
+          account_id: @other_account.id,
+          title: "Forged owner document",
+          document_type: "insurance",
+          file: fixture_file_upload("sample.pdf", "application/pdf")
+        }
+      }
+    end
+    assert_access_denied_redirect
+
+    assert_no_difference -> { Document.count } do
+      post documents_path, params: {
+        document: {
+          asset_id: @other_vessel.id,
+          title: "Forged vessel document",
+          document_type: "insurance",
+          file: fixture_file_upload("sample.pdf", "application/pdf")
+        }
+      }
+    end
+    assert_response :not_found
+  end
+
+  test "editor owner with multiple manageable accounts cannot use unscoped document upload" do
+    qualify_self_managed_subscription(@other_account)
+    create_account_membership(user: @editor_owner, account: @other_account, access_level: "editor")
+    sign_in_as @editor_owner
+
+    get new_document_path
+    assert_access_denied_redirect
+
+    assert_no_difference -> { Document.count } do
+      post documents_path, params: {
+        document: {
+          title: "Ambiguous document",
+          document_type: "insurance",
+          file: fixture_file_upload("sample.pdf", "application/pdf")
+        }
+      }
+    end
+    assert_access_denied_redirect
+  end
+
+  test "editor owner completes and reopens follow up while read only and cross account access fail closed" do
+    visit = @vessel.service_visits.create!(
+      performed_by_user: @editor_owner,
+      visit_date: Date.current,
+      follow_up_needed: true,
+      follow_up_notes: "Replace dock line."
+    )
+    restricted_visit = @other_vessel.service_visits.create!(
+      performed_by_user: create_user(email: "restricted-follow-up-author@example.test"),
+      visit_date: Date.current,
+      follow_up_needed: true
+    )
+    read_only_visit = @read_only_vessel.service_visits.create!(
+      performed_by_user: create_user(email: "read-only-follow-up-author@example.test"),
+      visit_date: Date.current,
+      follow_up_needed: true
+    )
+
+    sign_in_as @editor_owner
+    patch complete_follow_up_vessel_service_visit_path(@vessel, visit)
+    assert_redirected_to vessel_service_visit_path(@vessel, visit)
+    assert_equal @editor_owner, visit.reload.follow_up_completed_by_user
+
+    patch reopen_follow_up_vessel_service_visit_path(@vessel, visit)
+    assert_redirected_to vessel_service_visit_path(@vessel, visit)
+    assert visit.reload.follow_up_open?
+
+    patch complete_follow_up_vessel_service_visit_path(@other_vessel, restricted_visit)
+    assert_response :not_found
+    assert restricted_visit.reload.follow_up_open?
+
+    sign_in_as @read_only_owner
+    patch complete_follow_up_vessel_service_visit_path(@read_only_vessel, read_only_visit)
+    assert_access_denied_redirect
+    assert read_only_visit.reload.follow_up_open?
   end
 
   test "editor membership for one account does not allow modifying a read only account" do

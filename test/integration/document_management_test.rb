@@ -88,6 +88,12 @@ class DocumentManagementTest < ActionDispatch::IntegrationTest
     assert_includes response.body, "No file is currently attached."
     assert_select "a[href=?]", edit_document_path(document), text: "Edit / Add file"
 
+    get edit_document_path(document)
+    assert_response :success
+    assert_select "select[name='document[account_id]']", count: 0
+    assert_select "p", text: account.name
+    assert_select "select[name='document[asset_id]'] option[value=?]", vessel.id.to_s
+
     patch document_path(document), params: {
       document: {
         account_id: account.id,

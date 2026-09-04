@@ -32,6 +32,8 @@ Rails.application.routes.draw do
     delete :primary_photo, on: :member, action: :destroy_primary_photo
     resources :service_visits, only: %i[index new create show edit update] do
       get :report, on: :member
+      patch :complete_follow_up, on: :member
+      patch :reopen_follow_up, on: :member
     end
     resources :documents, only: %i[new create destroy]
     resources :binder_notes, only: %i[create edit update destroy]

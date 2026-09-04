@@ -84,7 +84,7 @@ class Asset < ApplicationRecord
   end
 
   def open_follow_up_visits
-    service_visits.where(follow_up_needed: true).recent
+    service_visits.with_open_follow_up.recent
   end
 
   def display_model

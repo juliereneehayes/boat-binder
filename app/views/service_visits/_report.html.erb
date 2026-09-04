@@ -1,7 +1,8 @@
 <% issue_notes = local_assigns.fetch(:issue_notes, []) %>
 <% show_photos = local_assigns.fetch(:show_photos, true) %>
 <% follow_up_notes = service_visit.follow_up_notes.to_s.strip %>
-<% follow_up_items_present = follow_up_notes.present? %>
+<% follow_up_open = service_visit.follow_up_open? %>
+<% follow_up_completed = service_visit.follow_up_completed? %>
 
 <article class="overflow-hidden rounded-md border border-[#E7DED2] bg-white shadow-sm shadow-[#0B1F35]/5">
   <header class="bg-[#0B1F35] p-5 text-white md:p-8">
@@ -14,7 +15,13 @@
         </p>
       </div>
       <div class="flex flex-wrap gap-2">
-        <%= status_chip(follow_up_items_present ? "Follow-up needed" : "No follow-up", tone: follow_up_items_present ? :urgent : :success) %>
+        <% if follow_up_open %>
+          <%= status_chip("Follow-up needed", tone: :urgent) %>
+        <% elsif follow_up_completed %>
+          <%= status_chip("Follow-up completed", tone: :success) %>
+        <% else %>
+          <%= status_chip("No follow-up", tone: :neutral) %>
+        <% end %>
       </div>
     </div>
   </header>
@@ -151,13 +158,33 @@
     <section class="space-y-3">
       <div class="flex items-center justify-between gap-3">
         <h2 class="text-xl font-black">Follow-up items</h2>
-        <% if follow_up_items_present %>
+        <% if follow_up_open %>
           <%= status_chip("Action needed", tone: :urgent) %>
+        <% elsif follow_up_completed %>
+          <%= status_chip("Completed", tone: :success) %>
         <% end %>
       </div>
-      <div class="rounded-md border <%= follow_up_items_present ? "border-amber-100 bg-amber-50" : "border-emerald-100 bg-emerald-50" %> p-4">
-        <p class="leading-7 text-slate-700"><%= follow_up_items_present ? follow_up_notes : "No follow-up items noted." %></p>
+      <div class="rounded-md border <%= follow_up_open ? "border-amber-100 bg-amber-50" : follow_up_completed ? "border-emerald-100 bg-emerald-50" : "border-slate-200 bg-slate-50" %> p-4">
+        <p class="leading-7 text-slate-700"><%= follow_up_notes.presence || "No follow-up items noted." %></p>
+        <% if follow_up_completed %>
+          <p class="mt-3 text-sm font-semibold text-emerald-900">
+            Completed <%= local_datetime(service_visit.follow_up_completed_at, account: vessel.account) %>
+            by <%= user_display_name(service_visit.follow_up_completed_by_user) %>
+          </p>
+        <% end %>
       </div>
+      <% if service_visit.follow_up_events.any? %>
+        <div class="space-y-2 rounded-md border border-slate-200 bg-white p-4">
+          <p class="text-sm font-black text-slate-800">Follow-up history</p>
+          <% service_visit.follow_up_events.reverse_each do |event| %>
+            <p class="text-sm leading-6 text-slate-600">
+              <span class="font-bold text-slate-800"><%= event.action.humanize %></span>
+              <%= local_datetime(event.created_at, account: vessel.account) %>
+              by <%= user_display_name(event.actor_user) %>
+            </p>
+          <% end %>
+        </div>
+      <% end %>
     </section>
 
     <% if issue_notes.any? %>
