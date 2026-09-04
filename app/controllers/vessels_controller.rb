@@ -156,6 +156,10 @@ class VesselsController < ApplicationController
       return true
     end
 
+    # Owner updates retain their existing Account. account_id is not permitted,
+    # so a crafted reassignment cannot transfer the vessel to another Account.
+    return true if vessel.persisted?
+
     account = owner_vessel_account
     return false unless account
 
