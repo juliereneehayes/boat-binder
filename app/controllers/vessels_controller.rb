@@ -1,7 +1,8 @@
 class VesselsController < ApplicationController
   PrimaryPhotoAttachmentError = Class.new(StandardError)
 
-  before_action :require_internal!, only: %i[new create destroy]
+  before_action :require_internal!, only: :destroy
+  before_action :require_vessel_creation_access!, only: %i[new create]
   before_action :require_owner_read_access!, only: :index
   before_action :set_vessel, only: %i[show edit update destroy destroy_primary_photo]
   before_action :require_vessel_write_access!, only: %i[edit update destroy_primary_photo]
@@ -36,6 +37,8 @@ class VesselsController < ApplicationController
 
   def new
     @vessel = Asset.new(asset_type: "vessel")
+    return unless assign_vessel_account(@vessel)
+
     @accounts = manageable_accounts.active.ordered
   end
 
@@ -146,18 +149,44 @@ class VesselsController < ApplicationController
   end
 
   def assign_vessel_account(vessel)
-    return true if vessel_account_id.blank?
-    return true unless internal_user?
+    if internal_user?
+      return true if vessel_account_id.blank?
 
-    vessel.account = manageable_accounts.find(vessel_account_id)
+      vessel.account = manageable_accounts.find(vessel_account_id)
+      return true
+    end
+
+    account = owner_vessel_account
+    return false unless account
+
+    if vessel_account_id.present? && vessel_account_id.to_s != account.id.to_s
+      deny_access!
+      return false
+    end
+
+    vessel.account = account
     true
   end
 
   def vessel_account_id
-    params.require(:asset)[:account_id]
+    params.dig(:asset, :account_id)
+  end
+
+  def owner_vessel_account
+    # The unscoped creation route must never guess which Account owns the vessel.
+    # Refuse an ambiguous multi-Account context until creation is Account-scoped.
+    accounts = manageable_accounts.active.limit(2).to_a
+    return accounts.first if accounts.one?
+
+    deny_access!
+    nil
   end
 
   def require_vessel_write_access!
     require_write_access!(@vessel.account)
+  end
+
+  def require_vessel_creation_access!
+    deny_access! unless can_create_vessels?
   end
 end

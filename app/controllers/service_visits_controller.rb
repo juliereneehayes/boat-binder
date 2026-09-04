@@ -1,8 +1,8 @@
 class ServiceVisitsController < ApplicationController
   before_action :require_owner_read_access!, only: :index
-  before_action :require_internal!, only: %i[new create]
   before_action :set_vessel, if: -> { params[:vessel_id].present? }
-  before_action :set_service_visit, only: %i[show report]
+  before_action :require_vessel_write_access!, only: %i[new create edit update]
+  before_action :set_service_visit, only: %i[show edit update report]
 
   def index
     service_visits = if @vessel
@@ -40,6 +40,26 @@ class ServiceVisitsController < ApplicationController
     end
   end
 
+  def edit
+    render :new
+  end
+
+  def update
+    submitted_attributes = service_visit_params
+    photo_uploads = submitted_attributes.delete(:photos)
+    @service_visit.assign_attributes(submitted_attributes)
+    append_photo_uploads(photo_uploads)
+    assign_engine_readings
+    assign_inspection_checks
+    assign_battery_checks
+
+    if @service_visit.save
+      redirect_to vessel_service_visit_path(@vessel, @service_visit), notice: "Visit report updated."
+    else
+      render :new, status: :unprocessable_entity
+    end
+  end
+
   def show
   end
 
@@ -70,6 +90,10 @@ class ServiceVisitsController < ApplicationController
 
   def set_vessel
     @vessel = scoped_vessels.find_by!(slug: params[:vessel_id])
+  end
+
+  def require_vessel_write_access!
+    require_write_access!(@vessel.account)
   end
 
   def service_visit_params
@@ -113,6 +137,13 @@ class ServiceVisitsController < ApplicationController
       check.voltage = attrs[:voltage]
       check.notes = attrs[:notes]
     end
+  end
+
+  def append_photo_uploads(photo_uploads)
+    uploads = Array(photo_uploads).compact_blank
+    return if uploads.empty?
+
+    @service_visit.photos = @service_visit.photos.blobs + uploads
   end
 
   def issue_note_present?

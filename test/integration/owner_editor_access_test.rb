@@ -46,7 +46,60 @@ class OwnerEditorAccessTest < ActionDispatch::IntegrationTest
     assert_equal "Blue Meridian II", @vessel.name
   end
 
-  test "editor owner cannot access vessel creation" do
+  test "active self managed editor owner creates a vessel in the server resolved account" do
+    sign_in_as @editor_owner
+
+    get new_vessel_path
+    assert_response :success
+    assert_includes response.body, @account.name
+    assert_select "select[name='asset[account_id]']", count: 0
+
+    assert_difference -> { @account.assets.vessels.count }, 1 do
+      post vessels_path, params: {
+        asset: {
+          name: "Owner Created Vessel"
+        }
+      }
+    end
+
+    vessel = Asset.find_by!(name: "Owner Created Vessel")
+    assert_redirected_to vessel_path(vessel)
+    assert_equal @account, vessel.account
+  end
+
+  test "trialing self managed editor owner creates a vessel" do
+    qualify_self_managed_subscription(@account, status: "trialing")
+    sign_in_as @editor_owner
+
+    assert_difference -> { @account.assets.vessels.count }, 1 do
+      post vessels_path, params: {
+        asset: { name: "Trial Vessel" }
+      }
+    end
+
+    vessel = Asset.find_by!(name: "Trial Vessel")
+    assert_redirected_to vessel_path(vessel)
+    assert_equal @account, vessel.account
+  end
+
+  test "editor owner cannot choose another account while creating a vessel" do
+    sign_in_as @editor_owner
+
+    assert_no_difference -> { Asset.vessels.count } do
+      post vessels_path, params: {
+        asset: {
+          account_id: @other_account.id,
+          name: "Cross Account Vessel"
+        }
+      }
+    end
+
+    assert_access_denied_redirect
+  end
+
+  test "editor owner with multiple manageable accounts cannot use unscoped vessel creation" do
+    qualify_self_managed_subscription(@other_account)
+    create_account_membership(user: @editor_owner, account: @other_account, access_level: "editor")
     sign_in_as @editor_owner
 
     get new_vessel_path
@@ -54,10 +107,7 @@ class OwnerEditorAccessTest < ActionDispatch::IntegrationTest
 
     assert_no_difference -> { Asset.vessels.count } do
       post vessels_path, params: {
-        asset: {
-          account_id: @account.id,
-          name: "Owner Created Vessel"
-        }
+        asset: { account_id: @account.id, name: "Ambiguous Account Vessel" }
       }
     end
     assert_access_denied_redirect
@@ -75,6 +125,16 @@ class OwnerEditorAccessTest < ActionDispatch::IntegrationTest
           account_id: @account.id,
           name: "Read Only Created Vessel"
         }
+      }
+    end
+    assert_access_denied_redirect
+
+    get new_vessel_service_visit_path(@read_only_vessel)
+    assert_access_denied_redirect
+
+    assert_no_difference -> { ServiceVisit.count } do
+      post vessel_service_visits_path(@read_only_vessel), params: {
+        service_visit: { visit_date: Date.current, summary: "Read only visit" }
       }
     end
     assert_access_denied_redirect
@@ -175,6 +235,126 @@ class OwnerEditorAccessTest < ActionDispatch::IntegrationTest
 
     assert_redirected_to reminders_path
     assert_equal "completed", reminder.reload.status
+  end
+
+  test "editor owner creates and edits a service visit in their account" do
+    battery = create_battery(asset: @vessel, name: "House Battery")
+    sign_in_as @editor_owner
+
+    get new_vessel_service_visit_path(@vessel)
+
+    assert_response :success
+    assert_includes response.body, "Recorded by"
+    assert_includes response.body, battery.name
+
+    assert_difference -> { @vessel.service_visits.count }, 1 do
+      post vessel_service_visits_path(@vessel), params: {
+        service_visit: {
+          visit_date: Date.current,
+          summary: "Owner completed the dock check.",
+          condition_notes: "All systems normal."
+        }
+      }
+    end
+
+    visit = @vessel.service_visits.find_by!(summary: "Owner completed the dock check.")
+    assert_redirected_to vessel_service_visit_path(@vessel, visit)
+    assert_equal @editor_owner, visit.performed_by_user
+    visit.photos.attach(fixture_file_upload("sample.jpg", "image/jpeg"))
+
+    get vessel_service_visit_path(@vessel, visit)
+    assert_response :success
+    assert_select "a[href=?]", edit_vessel_service_visit_path(@vessel, visit), text: "Edit Visit"
+
+    get edit_vessel_service_visit_path(@vessel, visit)
+
+    assert_response :success
+    assert_select "form[action=?]", vessel_service_visit_path(@vessel, visit)
+    assert_select "input[name=issue_title]", count: 0
+
+    patch vessel_service_visit_path(@vessel, visit), params: {
+      service_visit: {
+        visit_date: Date.current,
+        summary: "Owner updated the dock check.",
+        condition_notes: "Battery reading added.",
+        photos: [ fixture_file_upload("sample.png", "image/png") ]
+      }
+    }
+
+    assert_redirected_to vessel_service_visit_path(@vessel, visit)
+    assert_equal "Owner updated the dock check.", visit.reload.summary
+    assert_equal @editor_owner, visit.performed_by_user
+    assert_equal [ "image/jpeg", "image/png" ], visit.photos.map { |photo| photo.blob.content_type }.sort
+  end
+
+  test "editor owner cannot create or edit service visits outside their account" do
+    restricted_visit = @other_vessel.service_visits.create!(
+      performed_by_user: create_user(email: "visit-author@example.test"),
+      visit_date: Date.current,
+      summary: "Restricted visit"
+    )
+    sign_in_as @editor_owner
+
+    get new_vessel_service_visit_path(@other_vessel)
+    assert_response :not_found
+
+    assert_no_difference -> { ServiceVisit.count } do
+      post vessel_service_visits_path(@other_vessel), params: {
+        service_visit: { visit_date: Date.current, summary: "Unauthorized visit" }
+      }
+    end
+    assert_response :not_found
+
+    patch vessel_service_visit_path(@other_vessel, restricted_visit), params: {
+      service_visit: { visit_date: Date.current, summary: "Unauthorized update" }
+    }
+    assert_response :not_found
+    assert_equal "Restricted visit", restricted_visit.reload.summary
+  end
+
+  test "editor owner creates and edits vessel battery configuration without delete access" do
+    sign_in_as @editor_owner
+
+    assert_difference -> { @vessel.asset_batteries.count }, 1 do
+      post vessel_batteries_path(@vessel), params: {
+        asset_battery: {
+          name: "Owner House Battery",
+          location: "Aft lazarette",
+          battery_type: "AGM",
+          active: "1"
+        }
+      }
+    end
+
+    battery = @vessel.asset_batteries.find_by!(name: "Owner House Battery")
+    assert_redirected_to vessel_path(@vessel, anchor: "batteries")
+
+    patch vessel_battery_path(@vessel, battery), params: {
+      asset_battery: {
+        name: "Owner House Bank",
+        location: "Aft lazarette",
+        battery_type: "Lithium",
+        active: "1"
+      }
+    }
+
+    assert_redirected_to vessel_path(@vessel, anchor: "batteries")
+    assert_equal "Owner House Bank", battery.reload.name
+
+    assert_no_difference -> { AssetBattery.count } do
+      delete vessel_battery_path(@vessel, battery)
+    end
+    assert_access_denied_redirect
+
+    get new_vessel_battery_path(@other_vessel)
+    assert_response :not_found
+
+    assert_no_difference -> { AssetBattery.count } do
+      post vessel_batteries_path(@other_vessel), params: {
+        asset_battery: { name: "Unauthorized Battery", active: "1" }
+      }
+    end
+    assert_response :not_found
   end
 
   test "editor owner can edit permitted vessel fields" do
@@ -334,6 +514,32 @@ class OwnerEditorAccessTest < ActionDispatch::IntegrationTest
     assert_redirected_to vessel_path(@vessel, anchor: "documents")
   end
 
+  test "editor owner creates an account level document only in their manageable account" do
+    sign_in_as @editor_owner
+
+    get new_document_path
+
+    assert_response :success
+    assert_select "select[name='document[account_id]'] option[value=?]", @account.id.to_s
+    assert_select "select[name='document[account_id]'] option[value=?]", @other_account.id.to_s, count: 0
+
+    assert_difference -> { @account.documents.count }, 1 do
+      post documents_path, params: {
+        document: {
+          account_id: @account.id,
+          title: "Owner insurance policy",
+          document_type: "insurance",
+          file: fixture_file_upload("sample.pdf", "application/pdf")
+        }
+      }
+    end
+
+    document = @account.documents.find_by!(title: "Owner insurance policy")
+    assert_redirected_to documents_path
+    assert_nil document.asset
+    assert document.file.attached?
+  end
+
   test "editor membership for one account does not allow modifying a read only account" do
     qualify_self_managed_subscription(@other_account)
     create_account_membership(user: @editor_owner, account: @other_account, access_level: "read_only")
@@ -386,16 +592,16 @@ class OwnerEditorAccessTest < ActionDispatch::IntegrationTest
     assert_select "a[href=?]", new_vessel_document_path(@vessel), text: "Upload"
     assert_select "form[action=?]", vessel_binder_notes_path(@vessel)
     assert_select "a[href=?]", edit_vessel_binder_note_path(@vessel, note), text: "Edit"
-    assert_select "a[href=?]", new_vessel_path, count: 0
-    assert_select "a[href=?]", new_vessel_service_visit_path(@vessel), count: 0
+    assert_select "a[href=?]", new_vessel_service_visit_path(@vessel)
+    assert_select "a[href=?]", new_vessel_battery_path(@vessel)
 
     get vessels_path
     assert_response :success
-    assert_select "a[href=?]", new_vessel_path, count: 0
+    assert_select "a[href=?]", new_vessel_path
 
     get root_path
     assert_response :success
-    assert_select "a[href=?]", new_vessel_path, count: 0
+    assert_select "a[href=?]", new_vessel_path
 
     sign_in_as @read_only_owner
     get vessel_path(@read_only_vessel)
@@ -405,6 +611,8 @@ class OwnerEditorAccessTest < ActionDispatch::IntegrationTest
     assert_select "a[href=?]", new_vessel_document_path(@read_only_vessel), count: 0
     assert_select "form[action=?]", vessel_binder_notes_path(@read_only_vessel), count: 0
     assert_select "a[href=?]", edit_vessel_binder_note_path(@read_only_vessel, read_only_note), count: 0
+    assert_select "a[href=?]", new_vessel_service_visit_path(@read_only_vessel), count: 0
+    assert_select "a[href=?]", new_vessel_battery_path(@read_only_vessel), count: 0
   end
 
   test "vessel form shows editable account selector only to internal users" do

@@ -1,14 +1,16 @@
 <section class="mx-auto max-w-3xl space-y-5">
   <div>
     <%= link_to "Back to #{@vessel.name}", vessel_path(@vessel), class: "inline-flex min-h-10 items-center rounded-md py-2 text-sm font-bold text-cyan-700" %>
-    <p class="mt-3 text-sm font-bold uppercase tracking-normal text-cyan-700">Start visit</p>
+    <p class="mt-3 text-sm font-bold uppercase tracking-normal text-cyan-700"><%= @service_visit.persisted? ? "Edit visit" : "Start visit" %></p>
     <h1 class="mt-1 text-3xl font-black tracking-normal"><%= @vessel.name %></h1>
     <p class="mt-2 text-sm text-slate-600"><%= [@vessel.marina, @vessel.slip.presence && "Slip #{@vessel.slip}"].compact.join(" - ") %></p>
   </div>
 
   <%= field_error_messages(@service_visit) %>
 
-  <%= form_with model: @service_visit, url: vessel_service_visits_path(@vessel), class: "space-y-5" do |form| %>
+  <%= form_with model: @service_visit,
+    url: @service_visit.persisted? ? vessel_service_visit_path(@vessel, @service_visit) : vessel_service_visits_path(@vessel),
+    class: "space-y-5" do |form| %>
     <section class="space-y-4 rounded-md border border-slate-200 bg-white p-4 shadow-sm">
       <h2 class="text-lg font-black">Visit details</h2>
       <div class="grid gap-4 sm:grid-cols-2">
@@ -17,8 +19,8 @@
           <%= form.date_field :visit_date, class: "mt-2 min-h-12 w-full rounded-md border border-slate-300 px-4 py-3 text-base" %>
         </div>
         <div>
-          <label class="text-sm font-semibold text-slate-700">Captain</label>
-          <div class="mt-2 flex min-h-12 items-center rounded-md border border-slate-200 bg-slate-50 px-4 py-3 text-base font-bold text-slate-700"><%= Current.user.email %></div>
+          <label class="text-sm font-semibold text-slate-700">Recorded by</label>
+          <div class="mt-2 flex min-h-12 items-center rounded-md border border-slate-200 bg-slate-50 px-4 py-3 text-base font-bold text-slate-700"><%= @service_visit.performed_by_user.email %></div>
         </div>
       </div>
       <div>
@@ -101,15 +103,17 @@
     </section>
 
     <section class="space-y-4 rounded-md border border-slate-200 bg-white p-4 shadow-sm">
-      <h2 class="text-lg font-black">Issues and follow-up</h2>
-      <div>
-        <label for="issue_title" class="text-sm font-semibold text-slate-700">Issue title</label>
-        <input type="text" name="issue_title" id="issue_title" placeholder="Optional issue found" class="mt-2 min-h-12 w-full rounded-md border border-slate-300 px-4 py-3 text-base">
-      </div>
-      <div>
-        <label for="issue_body" class="text-sm font-semibold text-slate-700">Issue details</label>
-        <textarea name="issue_body" id="issue_body" rows="4" placeholder="Describe the issue and what should happen next." class="mt-2 w-full rounded-md border border-slate-300 px-4 py-3 text-base"></textarea>
-      </div>
+      <h2 class="text-lg font-black">Follow-up</h2>
+      <% unless @service_visit.persisted? %>
+        <div>
+          <label for="issue_title" class="text-sm font-semibold text-slate-700">Issue title</label>
+          <input type="text" name="issue_title" id="issue_title" placeholder="Optional issue found" class="mt-2 min-h-12 w-full rounded-md border border-slate-300 px-4 py-3 text-base">
+        </div>
+        <div>
+          <label for="issue_body" class="text-sm font-semibold text-slate-700">Issue details</label>
+          <textarea name="issue_body" id="issue_body" rows="4" placeholder="Describe the issue and what should happen next." class="mt-2 w-full rounded-md border border-slate-300 px-4 py-3 text-base"></textarea>
+        </div>
+      <% end %>
       <label class="flex min-h-12 items-center gap-3 rounded-md border border-slate-300 px-4 py-3">
         <%= form.check_box :follow_up_needed, class: "h-5 w-5 rounded border-slate-300 text-cyan-700" %>
         <span class="text-sm font-bold text-slate-700">Follow-up needed</span>
@@ -122,6 +126,9 @@
 
     <section class="space-y-4 rounded-md border border-slate-200 bg-white p-4 shadow-sm">
       <h2 class="text-lg font-black">Photos</h2>
+      <% if @service_visit.persisted? && @service_visit.photos.attached? %>
+        <p class="text-sm leading-6 text-slate-600"><%= pluralize(@service_visit.photos.count, "existing photo") %> will be kept. New uploads are added to this visit.</p>
+      <% end %>
       <div>
         <%= form.label :photos, "Choose or take photos", class: "text-sm font-semibold text-slate-700" %>
         <%= form.file_field :photos, multiple: true, accept: ServiceVisit::ALLOWED_PHOTO_CONTENT_TYPES.join(","), class: "mt-2 block min-h-12 w-full rounded-md border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-base file:mr-3 file:rounded-md file:border-0 file:bg-cyan-700 file:px-4 file:py-2 file:font-bold file:text-white" %>
@@ -130,7 +137,7 @@
     </section>
 
     <div class="sticky bottom-16 z-20 -mx-4 bg-slate-50/95 px-4 py-3 backdrop-blur md:static md:mx-0 md:bg-transparent md:px-0">
-      <%= form.submit "Save visit report", class: "min-h-14 w-full rounded-md bg-cyan-700 px-5 py-4 text-base font-black text-white shadow-lg md:shadow-sm", data: { turbo_submits_with: "Saving..." } %>
+      <%= form.submit @service_visit.persisted? ? "Save visit changes" : "Save visit report", class: "min-h-14 w-full rounded-md bg-cyan-700 px-5 py-4 text-base font-black text-white shadow-lg md:shadow-sm", data: { turbo_submits_with: "Saving..." } %>
     </div>
   <% end %>
 </section>
