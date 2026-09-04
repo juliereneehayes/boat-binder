@@ -114,10 +114,26 @@
           <textarea name="issue_body" id="issue_body" rows="4" placeholder="Describe the issue and what should happen next." class="mt-2 w-full rounded-md border border-slate-300 px-4 py-3 text-base"></textarea>
         </div>
       <% end %>
-      <label class="flex min-h-12 items-center gap-3 rounded-md border border-slate-300 px-4 py-3">
-        <%= form.check_box :follow_up_needed, class: "h-5 w-5 rounded border-slate-300 text-cyan-700" %>
-        <span class="text-sm font-bold text-slate-700">Follow-up needed</span>
-      </label>
+      <% if @service_visit.persisted? %>
+        <div class="rounded-md border border-slate-200 bg-slate-50 p-4">
+          <div class="flex flex-wrap items-center justify-between gap-3">
+            <p class="text-sm font-bold text-slate-700">Follow-up status</p>
+            <% if @service_visit.follow_up_open? %>
+              <%= status_chip("Open", tone: :urgent) %>
+            <% elsif @service_visit.follow_up_completed? %>
+              <%= status_chip("Completed", tone: :success) %>
+            <% else %>
+              <%= status_chip("Not needed", tone: :neutral) %>
+            <% end %>
+          </div>
+          <p class="mt-2 text-sm leading-6 text-slate-600">Use the visit report or priority board to complete or reopen a follow-up so the change is recorded in its history.</p>
+        </div>
+      <% else %>
+        <label class="flex min-h-12 items-center gap-3 rounded-md border border-slate-300 px-4 py-3">
+          <%= form.check_box :follow_up_needed, class: "h-5 w-5 rounded border-slate-300 text-cyan-700" %>
+          <span class="text-sm font-bold text-slate-700">Follow-up needed</span>
+        </label>
+      <% end %>
       <div>
         <%= form.label :follow_up_notes, class: "text-sm font-semibold text-slate-700" %>
         <%= form.text_area :follow_up_notes, rows: 4, placeholder: "Recommendations, parts, vendor, timing.", class: "mt-2 w-full rounded-md border border-slate-300 px-4 py-3 text-base" %>

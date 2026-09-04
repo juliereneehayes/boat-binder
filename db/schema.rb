@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_08_30_100000) do
+ActiveRecord::Schema[8.1].define(version: 2026_09_04_160000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -267,6 +267,18 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_30_100000) do
     t.check_constraint "hours IS NULL OR hours >= 0::numeric", name: "chk_service_visit_engine_readings_hours_non_negative"
   end
 
+  create_table "service_visit_follow_up_events", force: :cascade do |t|
+    t.string "action", null: false
+    t.bigint "actor_user_id", null: false
+    t.datetime "created_at", null: false
+    t.bigint "service_visit_id", null: false
+    t.datetime "updated_at", null: false
+    t.index ["actor_user_id"], name: "index_service_visit_follow_up_events_on_actor_user_id"
+    t.index ["service_visit_id", "created_at"], name: "index_follow_up_events_on_visit_and_created_at"
+    t.index ["service_visit_id"], name: "index_service_visit_follow_up_events_on_service_visit_id"
+    t.check_constraint "action::text = ANY (ARRAY['completed'::character varying, 'reopened'::character varying]::text[])", name: "chk_service_visit_follow_up_events_action"
+  end
+
   create_table "service_visit_inspection_checks", force: :cascade do |t|
     t.boolean "checked", default: false, null: false
     t.datetime "created_at", null: false
@@ -284,6 +296,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_30_100000) do
     t.text "condition_notes"
     t.datetime "created_at", null: false
     t.decimal "engine_hours", precision: 8, scale: 1
+    t.datetime "follow_up_completed_at"
+    t.bigint "follow_up_completed_by_user_id"
     t.boolean "follow_up_needed", default: false, null: false
     t.text "follow_up_notes"
     t.string "location"
@@ -292,9 +306,13 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_30_100000) do
     t.datetime "updated_at", null: false
     t.date "visit_date", null: false
     t.index ["asset_id"], name: "index_service_visits_on_asset_id"
+    t.index ["follow_up_completed_by_user_id"], name: "index_service_visits_on_follow_up_completed_by_user_id"
+    t.index ["follow_up_needed", "follow_up_completed_at"], name: "index_service_visits_on_open_follow_up"
     t.index ["performed_by_user_id"], name: "index_service_visits_on_performed_by_user_id"
     t.index ["visit_date"], name: "index_service_visits_on_visit_date"
     t.check_constraint "engine_hours IS NULL OR engine_hours >= 0::numeric", name: "chk_service_visits_engine_hours_non_negative"
+    t.check_constraint "follow_up_completed_at IS NULL OR follow_up_needed", name: "chk_service_visits_follow_up_completion_needed"
+    t.check_constraint "(follow_up_completed_at IS NULL) = (follow_up_completed_by_user_id IS NULL)", name: "chk_service_visits_follow_up_completion_pair"
   end
 
   create_table "sessions", force: :cascade do |t|
@@ -511,8 +529,11 @@ ActiveRecord::Schema[8.1].define(version: 2026_08_30_100000) do
   add_foreign_key "service_visit_battery_checks", "service_visits"
   add_foreign_key "service_visit_engine_readings", "asset_engines"
   add_foreign_key "service_visit_engine_readings", "service_visits"
+  add_foreign_key "service_visit_follow_up_events", "service_visits"
+  add_foreign_key "service_visit_follow_up_events", "users", column: "actor_user_id"
   add_foreign_key "service_visit_inspection_checks", "service_visits"
   add_foreign_key "service_visits", "assets"
+  add_foreign_key "service_visits", "users", column: "follow_up_completed_by_user_id"
   add_foreign_key "service_visits", "users", column: "performed_by_user_id"
   add_foreign_key "sessions", "users"
   add_foreign_key "solid_queue_blocked_executions", "solid_queue_jobs", column: "job_id", on_delete: :cascade

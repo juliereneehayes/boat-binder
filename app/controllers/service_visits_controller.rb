@@ -1,8 +1,8 @@
 class ServiceVisitsController < ApplicationController
   before_action :require_owner_read_access!, only: :index
   before_action :set_vessel, if: -> { params[:vessel_id].present? }
-  before_action :require_vessel_write_access!, only: %i[new create edit update]
-  before_action :set_service_visit, only: %i[show edit update report]
+  before_action :require_vessel_write_access!, only: %i[new create edit update complete_follow_up reopen_follow_up]
+  before_action :set_service_visit, only: %i[show edit update report complete_follow_up reopen_follow_up]
 
   def index
     service_visits = if @vessel
@@ -66,12 +66,34 @@ class ServiceVisitsController < ApplicationController
   def report
   end
 
+  def complete_follow_up
+    if @service_visit.complete_follow_up!(by: Current.user)
+      redirect_back fallback_location: vessel_service_visit_path(@vessel, @service_visit),
+        notice: "Follow-up completed."
+    else
+      redirect_back fallback_location: vessel_service_visit_path(@vessel, @service_visit),
+        alert: "That follow-up is not open."
+    end
+  end
+
+  def reopen_follow_up
+    if @service_visit.reopen_follow_up!(by: Current.user)
+      redirect_back fallback_location: vessel_service_visit_path(@vessel, @service_visit),
+        notice: "Follow-up reopened."
+    else
+      redirect_back fallback_location: vessel_service_visit_path(@vessel, @service_visit),
+        alert: "That follow-up is not complete."
+    end
+  end
+
   private
 
   def set_service_visit
     @service_visit = @vessel.service_visits.includes(
       :performed_by_user,
+      :follow_up_completed_by_user,
       :service_visit_inspection_checks,
+      follow_up_events: :actor_user,
       service_visit_engine_readings: :asset_engine,
       service_visit_battery_checks: :asset_battery,
       photos_attachments: :blob
@@ -82,7 +104,9 @@ class ServiceVisitsController < ApplicationController
   def service_visit_includes
     [
       :performed_by_user,
+      :follow_up_completed_by_user,
       :service_visit_inspection_checks,
+      follow_up_events: :actor_user,
       asset: :account,
       service_visit_engine_readings: :asset_engine
     ]
@@ -97,7 +121,7 @@ class ServiceVisitsController < ApplicationController
   end
 
   def service_visit_params
-    params.require(:service_visit).permit(
+    permitted = params.require(:service_visit).permit(
       :visit_date,
       :engine_hours,
       :location,
@@ -107,6 +131,8 @@ class ServiceVisitsController < ApplicationController
       :follow_up_notes,
       photos: []
     )
+    permitted.delete(:follow_up_needed) if @service_visit&.persisted?
+    permitted
   end
 
   def assign_engine_readings

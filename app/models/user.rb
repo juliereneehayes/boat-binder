@@ -13,6 +13,10 @@ class User < ApplicationRecord
   has_many :accounts, through: :account_memberships
   has_many :account_export_requests, foreign_key: :requester_id, dependent: :restrict_with_exception
   has_many :service_visits, foreign_key: :performed_by_user_id, inverse_of: :performed_by_user, dependent: :restrict_with_exception
+  has_many :completed_service_visit_follow_ups, foreign_key: :follow_up_completed_by_user_id,
+    class_name: "ServiceVisit", dependent: :restrict_with_exception
+  has_many :service_visit_follow_up_events, foreign_key: :actor_user_id,
+    dependent: :restrict_with_exception
 
   normalizes :name, with: ->(value) { value.squish.presence }
   normalizes :email_address, with: ->(e) { e.strip.downcase }

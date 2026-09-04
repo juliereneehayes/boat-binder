@@ -20,6 +20,8 @@ class DocumentsController < ApplicationController
   def new
     @document = if @vessel
       @vessel.documents.new(account: @vessel.account, document_type: "photo")
+    elsif owner_user?
+      @document_account.documents.new(document_type: "registration")
     else
       Document.new(document_type: "registration")
     end
@@ -119,8 +121,17 @@ class DocumentsController < ApplicationController
   end
 
   def set_form_collections
-    @accounts = manageable_accounts.active.includes(:vessel_assets).ordered
-    @vessels = manageable_vessels.active.includes(:account).ordered
+    if internal_user?
+      @accounts = manageable_accounts.active.includes(:vessel_assets).ordered
+      @vessels = manageable_vessels.active.includes(:account).ordered
+      return
+    end
+
+    @document_account = @vessel&.account || @document&.account || owner_document_account
+    return unless @document_account
+
+    @accounts = Account.where(id: @document_account.id).includes(:vessel_assets)
+    @vessels = manageable_vessels.active.where(account_id: @document_account.id).ordered
   end
 
   def assign_document_relationships(document, template:)
@@ -128,6 +139,8 @@ class DocumentsController < ApplicationController
       document.account = @vessel.account
       return true
     end
+
+    return assign_owner_document_relationships(document) unless internal_user?
 
     return true if document_account_id.blank? && document_asset_id.blank?
 
@@ -151,6 +164,33 @@ class DocumentsController < ApplicationController
     end
 
     true
+  end
+
+  def assign_owner_document_relationships(document)
+    account = @document_account
+    return false unless account
+
+    if document_relationship_params.key?(:asset_id)
+      document.asset = if document_asset_id.present?
+        manageable_vessels.where(account_id: account.id).find(document_asset_id)
+      end
+    end
+
+    if document_account_id.present? && document_account_id.to_s != account.id.to_s
+      deny_access!
+      return false
+    end
+
+    document.account = account
+    true
+  end
+
+  def owner_document_account
+    accounts = manageable_accounts.active.limit(2).to_a
+    return accounts.first if accounts.one?
+
+    deny_access!
+    nil
   end
 
   def attach_document_file!(document, upload)

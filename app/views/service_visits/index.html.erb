@@ -36,7 +36,7 @@
       </div>
       <div class="rounded-md bg-white/10 p-4 ring-1 ring-white/10">
         <p class="text-xs font-bold uppercase tracking-normal text-[#B9D5DA]">Follow-ups</p>
-        <p class="mt-2 text-2xl font-black"><%= @service_visits.count(&:follow_up_needed?) %></p>
+        <p class="mt-2 text-2xl font-black"><%= @service_visits.count(&:follow_up_open?) %></p>
       </div>
     </div>
   </div>
@@ -53,7 +53,13 @@
               <p class="mt-1 text-sm font-semibold text-slate-600"><%= vessel.account.name %></p>
             </div>
             <div class="flex flex-wrap gap-2">
-              <%= status_chip(visit.follow_up_needed? ? "Follow-up needed" : "Report filed", tone: visit.follow_up_needed? ? :urgent : :success) %>
+              <% if visit.follow_up_open? %>
+                <%= status_chip("Follow-up needed", tone: :urgent) %>
+              <% elsif visit.follow_up_completed? %>
+                <%= status_chip("Follow-up completed", tone: :success) %>
+              <% else %>
+                <%= status_chip("Report filed", tone: :neutral) %>
+              <% end %>
             </div>
           </div>
 
@@ -84,16 +90,21 @@
             </div>
           </dl>
 
-          <% if visit.follow_up_notes.present? %>
-            <div class="mt-4 rounded-md border border-amber-100 bg-amber-50 p-4 text-sm text-amber-900">
+          <% if visit.follow_up_needed? %>
+            <div class="mt-4 rounded-md border <%= visit.follow_up_open? ? "border-amber-100 bg-amber-50 text-amber-900" : "border-emerald-100 bg-emerald-50 text-emerald-900" %> p-4 text-sm">
               <p class="font-black">Follow-up</p>
-              <p class="mt-1 leading-6"><%= visit.follow_up_notes %></p>
+              <p class="mt-1 leading-6"><%= visit.follow_up_notes.presence || "Follow-up was marked during this visit." %></p>
             </div>
           <% end %>
 
           <div class="mt-5 flex flex-wrap gap-2">
             <%= link_to "View visit details", vessel_service_visit_path(vessel, visit), class: primary_button_class("min-h-10") %>
             <%= link_to "View vessel", vessel_path(vessel), class: secondary_button_class("min-h-10") %>
+            <% if can_manage_account?(vessel.account) && visit.follow_up_open? %>
+              <%= button_to "Done", complete_follow_up_vessel_service_visit_path(vessel, visit), method: :patch, class: "min-h-10 rounded-md bg-emerald-700 px-4 py-2 text-sm font-bold text-white", data: { turbo_submits_with: "Saving..." } %>
+            <% elsif can_manage_account?(vessel.account) && visit.follow_up_completed? %>
+              <%= button_to "Reopen", reopen_follow_up_vessel_service_visit_path(vessel, visit), method: :patch, class: secondary_button_class("min-h-10"), data: { turbo_submits_with: "Saving..." } %>
+            <% end %>
           </div>
         </article>
       <% end %>

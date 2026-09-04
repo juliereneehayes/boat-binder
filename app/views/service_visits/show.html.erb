@@ -4,6 +4,11 @@
     <%= link_to "Back to service visits", service_visits_path, class: secondary_button_class("min-h-10") %>
     <% if can_manage_account?(@vessel.account) %>
       <%= link_to "Edit Visit", edit_vessel_service_visit_path(@vessel, @service_visit), class: secondary_button_class("min-h-10") %>
+      <% if @service_visit.follow_up_open? %>
+        <%= button_to "Mark follow-up done", complete_follow_up_vessel_service_visit_path(@vessel, @service_visit), method: :patch, class: primary_button_class("min-h-10 bg-emerald-700 hover:bg-emerald-800"), data: { turbo_submits_with: "Saving..." } %>
+      <% elsif @service_visit.follow_up_completed? %>
+        <%= button_to "Reopen follow-up", reopen_follow_up_vessel_service_visit_path(@vessel, @service_visit), method: :patch, class: secondary_button_class("min-h-10"), data: { turbo_submits_with: "Saving..." } %>
+      <% end %>
     <% end %>
     <%= link_to "Preview Report", report_vessel_service_visit_path(@vessel, @service_visit), class: primary_button_class("min-h-10") %>
   </div>
