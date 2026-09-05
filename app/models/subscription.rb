@@ -3,7 +3,8 @@ class Subscription < ApplicationRecord
   STRIPE_PROVIDER = "stripe"
   PROVIDERS = [ LOCAL_PROVIDER, STRIPE_PROVIDER ].freeze
   PLANS = %w[legacy self_managed starter professional].freeze
-  STATUSES = %w[legacy trialing active past_due canceled expired suspended].freeze
+  PENDING_CHECKOUT_STATUS = "pending_checkout"
+  STATUSES = [ "legacy", PENDING_CHECKOUT_STATUS, "trialing", "active", "past_due", "canceled", "expired", "suspended" ].freeze
 
   belongs_to :account
 
@@ -22,6 +23,20 @@ class Subscription < ApplicationRecord
       status: "active",
       provider: LOCAL_PROVIDER
     }
+  end
+
+  def self.pending_checkout_attributes
+    {
+      provider: LOCAL_PROVIDER,
+      plan: Billing::SubscriptionPlanCatalog::SELF_MANAGED_PLAN_KEY,
+      status: PENDING_CHECKOUT_STATUS
+    }
+  end
+
+  def pending_checkout?
+    self.class.pending_checkout_attributes.all? do |attribute, expected_value|
+      public_send(attribute) == expected_value
+    end
   end
 
   def active?

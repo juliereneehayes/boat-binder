@@ -4,7 +4,7 @@ class BillingCheckoutTest < ActionDispatch::IntegrationTest
   setup do
     @account = create_account(name: "Self Managed Checkout")
     @owner = create_user(email: "checkout-owner@example.test", role: "owner", name: "Checkout Owner")
-    create_account_membership(user: @owner, account: @account, access_level: "editor")
+    @membership = create_account_membership(user: @owner, account: @account, access_level: "editor")
 
     @previous_monthly_price_id = Rails.configuration.x.stripe.self_managed_monthly_price_id
     @previous_annual_price_id = Rails.configuration.x.stripe.self_managed_annual_price_id
@@ -103,14 +103,20 @@ class BillingCheckoutTest < ActionDispatch::IntegrationTest
     assert_select "input[name=option_key][value=self_managed_annual]", count: 1
   end
 
-  test "Checkout creation resolves the account and URLs server side" do
+  test "pending Checkout creation resolves the account and URLs server side" do
+    @account.subscription.update!(Subscription.pending_checkout_attributes)
     other_account = create_account(name: "Crafted Checkout Target")
+    original_subscription_state = subscription_state(@account.subscription)
     captured_arguments = nil
     checkout_session = Stripe::Checkout::Session.construct_from(
       id: "cs_controller",
       url: "https://checkout.stripe.com/c/pay/cs_controller"
     )
     sign_in_as @owner
+
+    get billing_checkout_path
+    assert_response :success
+    assert_includes response.body, @account.name
 
     with_singleton_method(Billing::StripeCheckoutSessionCreator, :call, ->(**arguments) {
       captured_arguments = arguments
@@ -135,6 +141,7 @@ class BillingCheckoutTest < ActionDispatch::IntegrationTest
     assert_not_includes captured_arguments.values, "price_attacker"
     assert_not_includes captured_arguments.values, "cus_attacker"
     assert_not_includes captured_arguments.values, "sub_attacker"
+    assert_equal original_subscription_state, subscription_state(@account.subscription.reload)
   end
 
   test "unauthenticated and non-owner users cannot start Checkout" do
@@ -156,33 +163,43 @@ class BillingCheckoutTest < ActionDispatch::IntegrationTest
   end
 
   test "read only inactive and ambiguous owner memberships cannot start Checkout" do
-    read_only_owner = create_user(email: "checkout-read-only@example.test", role: "owner")
-    create_account_membership(user: read_only_owner, account: @account, access_level: "read_only")
-    sign_in_as read_only_owner
-
-    assert_no_checkout_service_call do
-      post billing_checkout_path, params: { option_key: "self_managed_monthly" }
-    end
-    assert_access_denied_redirect
-    read_only_owner.account_memberships.update_all(active: false, updated_at: Time.current)
-
-    delete session_path
-    inactive_owner = create_user(email: "checkout-inactive-membership@example.test", role: "owner")
-    create_account_membership(
-      user: inactive_owner,
-      account: @account,
-      access_level: "editor",
-      active: false
-    )
-    sign_in_as inactive_owner
+    @account.subscription.update!(Subscription.pending_checkout_attributes)
+    @membership.update!(access_level: "read_only")
+    sign_in_as @owner
 
     assert_no_checkout_service_call do
       post billing_checkout_path, params: { option_key: "self_managed_monthly" }
     end
     assert_access_denied_redirect
 
-    delete session_path
+    @membership.update!(access_level: "editor", active: false)
+    sign_in_as @owner
+
+    assert_no_checkout_service_call do
+      post billing_checkout_path, params: { option_key: "self_managed_monthly" }
+    end
+    assert_access_denied_redirect
+
+    @membership.update!(active: true)
+    @account.update!(active: false)
+    sign_in_as @owner
+
+    assert_no_checkout_service_call do
+      post billing_checkout_path, params: { option_key: "self_managed_monthly" }
+    end
+    assert_access_denied_redirect
+
+    @account.update!(active: true)
+    @owner.update!(active: false)
+
+    assert_no_checkout_service_call do
+      post billing_checkout_path, params: { option_key: "self_managed_monthly" }
+    end
+    assert_redirected_to new_session_path
+
+    @owner.update!(active: true)
     second_account = create_account(name: "Second Eligible Checkout Account")
+    second_account.subscription.update!(Subscription.pending_checkout_attributes)
     create_account_membership(user: @owner, account: second_account, access_level: "editor")
     sign_in_as @owner
 
@@ -243,6 +260,7 @@ class BillingCheckoutTest < ActionDispatch::IntegrationTest
   end
 
   test "success and cancel pages are refresh safe and do not mutate subscription" do
+    @account.subscription.update!(Subscription.pending_checkout_attributes)
     sign_in_as @owner
     original_attributes = subscription_state(@account.subscription)
 
@@ -262,6 +280,7 @@ class BillingCheckoutTest < ActionDispatch::IntegrationTest
   test "creating Checkout and then visiting cancel leaves the local Subscription unchanged" do
     previous_secret_key = Rails.configuration.x.stripe.secret_key
     Rails.configuration.x.stripe.secret_key = "sk_test_create_then_cancel"
+    @account.subscription.update!(Subscription.pending_checkout_attributes)
     original_attributes = subscription_state(@account.subscription)
     checkout_session = Stripe::Checkout::Session.construct_from(
       id: "cs_create_then_cancel",
@@ -295,6 +314,32 @@ class BillingCheckoutTest < ActionDispatch::IntegrationTest
     assert_equal "open", attempt.reload.status
   ensure
     Rails.configuration.x.stripe.secret_key = previous_secret_key
+  end
+
+  test "existing Stripe subscription cannot start duplicate Checkout" do
+    @account.subscription.update!(
+      provider: Subscription::STRIPE_PROVIDER,
+      plan: "self_managed",
+      status: "active",
+      external_customer_id: "cus_existing_checkout",
+      external_subscription_id: "sub_existing_checkout",
+      current_period_ends_at: 1.month.from_now,
+      last_synced_at: 1.minute.ago
+    )
+    original_subscription_state = subscription_state(@account.subscription)
+    sign_in_as @owner
+
+    with_singleton_method(Stripe::Customer, :create, ->(*) { flunk("Stripe Customer should not be created") }) do
+      with_singleton_method(Stripe::Checkout::Session, :create, ->(*) {
+        flunk("Stripe Checkout Session should not be created")
+      }) do
+        post billing_checkout_path, params: { option_key: "self_managed_monthly" }
+      end
+    end
+
+    assert_response :unprocessable_entity
+    assert_select "div", text: /We couldn't start Checkout right now/
+    assert_equal original_subscription_state, subscription_state(@account.subscription.reload)
   end
 
   private

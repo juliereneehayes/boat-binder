@@ -74,6 +74,19 @@ POST https://app.boat-binder.com/webhooks/stripe
 
 The endpoint verifies the raw request body with `Stripe::Webhook.construct_event`, stores event metadata in `billing_webhook_events`, and uses a unique `[provider, external_event_id]` index for idempotency. Full raw payloads, API keys, and signing secrets are not stored.
 
+## Pending Checkout State
+
+A registered Self Managed customer who has not completed Checkout is represented locally as
+`provider: local`, `plan: self_managed`, and `status: pending_checkout`. This state is not an
+entitlement: it requires no Stripe identifiers or entitlement dates, grants no binder read or write
+access, and provides only the server-authorized plan-selection path for an eligible active Owner
+Editor. It is distinct from legacy Account defaults and from billing recovery or exceptional states.
+
+Opening plan selection, starting Checkout, and visiting Checkout success or cancellation pages do
+not change `pending_checkout`. Only a verified, fully correlated Stripe webhook may replace the local
+state with canonical Stripe provider, identifier, and `trialing` or `active` subscription data.
+Normal authorization and onboarding presentation read local state only and do not contact Stripe.
+
 ## Checkout Architecture
 
 Authenticated owner editors with exactly one active client account can choose either Self Managed

@@ -442,6 +442,19 @@ module Billing
       assert_equal :unavailable, entitlement.lifecycle_phase
     end
 
+    test "local pending Checkout is a deliberate non-entitled onboarding phase" do
+      account = create_account(name: unique_name("Pending Checkout"))
+      account.subscription.update!(Subscription.pending_checkout_attributes)
+      entitlement = entitlement_for(account)
+
+      assert_not entitlement.qualifying?
+      assert_equal :awaiting_checkout, entitlement.reason
+      assert_nil entitlement.entitlement_ends_at
+      assert_nil entitlement.entitlement_ended_at
+      assert_equal :awaiting_checkout, entitlement.entitlement_end_reason
+      assert_equal :awaiting_checkout, entitlement.lifecycle_phase
+    end
+
     test "non Stripe provider fails closed" do
       account = verified_account(status: "active", current_period_ends_at: @now + 1.month)
       account.subscription.update!(provider: Subscription::LOCAL_PROVIDER)

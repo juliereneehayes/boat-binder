@@ -1,13 +1,14 @@
 <% visible_recoveries = recoveries.select(&:visible?) %>
 <% if visible_recoveries.any? %>
-  <section class="space-y-4" aria-label="Account recovery options">
+  <% onboarding_only = visible_recoveries.all?(&:onboarding?) %>
+  <section class="space-y-4" aria-label="<%= onboarding_only ? "Account setup" : "Account recovery options" %>">
     <% visible_recoveries.each do |recovery| %>
       <article class="<%= app_card_class("p-5 md:p-6") %>">
         <div class="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
           <div class="max-w-2xl">
             <div class="flex flex-wrap items-center gap-2">
               <p class="text-sm font-black text-[#1E5A7A]"><%= recovery.account.name %></p>
-              <%= status_chip(recovery.status_label, tone: :warning) %>
+              <%= status_chip(recovery.status_label, tone: recovery.onboarding? ? :info : :warning) %>
             </div>
             <h2 class="mt-3 text-2xl font-black tracking-normal"><%= recovery.title %></h2>
             <p class="mt-2 text-sm leading-6 text-slate-600"><%= recovery.description %></p>

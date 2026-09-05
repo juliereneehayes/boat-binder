@@ -54,6 +54,7 @@ module Billing
 
     def evaluate_subscription
       return result(:missing_subscription) unless subscription
+      return result(:awaiting_checkout) if subscription.pending_checkout?
       return result(:wrong_provider) unless subscription.provider == Subscription::STRIPE_PROVIDER
       return result(:wrong_plan) unless subscription.plan == "self_managed"
       return result(:missing_verification) unless verified?(subscription)
@@ -83,6 +84,8 @@ module Billing
       case subscription_result.fetch(:reason)
       when *QUALIFYING_REASONS
         lifecycle_result(:current_entitlement)
+      when :awaiting_checkout
+        lifecycle_result(:awaiting_checkout)
       when :trial_expired
         lifecycle_result(:verified_trial_end, subscription_result[:entitlement_ends_at])
       when :entitlement_expired
@@ -119,6 +122,8 @@ module Billing
       case lifecycle.fetch(:reason)
       when :current_entitlement
         :current_entitlement
+      when :awaiting_checkout
+        :awaiting_checkout
       when :past_due_policy_pending
         :payment_recovery_pending
       when :suspended_policy_pending

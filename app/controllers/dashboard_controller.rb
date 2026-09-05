@@ -6,6 +6,8 @@ class DashboardController < ApplicationController
 
     if owner_lifecycle_restricted?
       @self_managed_plans_available = self_managed_plans_available?
+      visible_recoveries = @owner_lifecycle_recoveries.select(&:visible?)
+      @owner_onboarding_only = visible_recoveries.any? && visible_recoveries.all?(&:onboarding?)
       render :restricted_owner
       return
     end

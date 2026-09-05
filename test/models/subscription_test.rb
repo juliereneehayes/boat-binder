@@ -22,11 +22,44 @@ class SubscriptionTest < ActiveSupport::TestCase
     assert_includes Subscription::PROVIDERS, "stripe"
     assert_includes Subscription::PLANS, "legacy"
     assert_includes Subscription::PLANS, "self_managed"
+    assert_includes Subscription::STATUSES, "pending_checkout"
     assert_includes Subscription::STATUSES, "past_due"
     assert subscription.trialing?
 
     subscription.status = "active"
     assert subscription.active?
+  end
+
+  test "pending Checkout attributes define a valid non-Stripe Self Managed state" do
+    attributes = Subscription.pending_checkout_attributes
+    subscription = Subscription.new(
+      account: bare_account(name: "Pending Checkout Attributes"),
+      **attributes
+    )
+
+    assert_equal Subscription::LOCAL_PROVIDER, attributes.fetch(:provider)
+    assert_equal "self_managed", attributes.fetch(:plan)
+    assert_equal Subscription::PENDING_CHECKOUT_STATUS, attributes.fetch(:status)
+    assert subscription.pending_checkout?
+    assert subscription.save
+    assert_nil subscription.external_customer_id
+    assert_nil subscription.external_subscription_id
+  end
+
+  test "pending Checkout predicate requires the exact local plan and status" do
+    subscription = Subscription.new(Subscription.pending_checkout_attributes)
+    assert subscription.pending_checkout?
+
+    {
+      provider: Subscription::STRIPE_PROVIDER,
+      plan: "legacy",
+      status: "active"
+    }.each do |attribute, value|
+      candidate = subscription.dup
+      candidate.public_send("#{attribute}=", value)
+
+      assert_not candidate.pending_checkout?, "#{attribute} should be part of the pending state"
+    end
   end
 
   test "status and provider predicates describe local and external subscriptions" do
@@ -182,6 +215,20 @@ class SubscriptionTest < ActiveSupport::TestCase
     end
   end
 
+  test "database status constraint accepts pending Checkout and rejects unknown statuses" do
+    pending_subscription = Subscription.create!(
+      account: bare_account(name: "Pending Checkout Database Constraint"),
+      **Subscription.pending_checkout_attributes
+    )
+    assert_equal Subscription::PENDING_CHECKOUT_STATUS, pending_subscription.reload.status
+
+    assert_raises(ActiveRecord::StatementInvalid) do
+      Subscription.transaction(requires_new: true) do
+        pending_subscription.update_columns(status: "unknown_checkout_status")
+      end
+    end
+  end
+
   test "database rejects duplicate subscriptions for an account" do
     account = create_account
     timestamp = Time.current
@@ -318,6 +365,35 @@ class SubscriptionTest < ActiveSupport::TestCase
     migration&.migrate(:up) unless subscription_plan_constraint.expression.match?(/self_managed/)
   end
 
+  test "pending Checkout status rollback is refused before changing the constraint when records exist" do
+    subscription = Subscription.create!(
+      account: bare_account(name: "Pending Checkout Rollback Protection"),
+      **Subscription.pending_checkout_attributes
+    )
+    migration = pending_checkout_status_migration
+
+    error = assert_raises(ActiveRecord::IrreversibleMigration) do
+      migration.migrate(:down)
+    end
+
+    assert_includes error.message, "subscriptions still use that status"
+    assert_equal Subscription::PENDING_CHECKOUT_STATUS, subscription.reload.status
+    assert_match(/pending_checkout/, subscription_status_constraint.expression)
+  end
+
+  test "pending Checkout status migration rolls back without altering existing rows when unused" do
+    assert_not Subscription.exists?(status: Subscription::PENDING_CHECKOUT_STATUS)
+    existing_subscription = create_account(name: "Existing Status Migration Account").subscription
+    migration = pending_checkout_status_migration
+
+    migration.migrate(:down)
+
+    assert_no_match(/pending_checkout/, subscription_status_constraint.expression)
+    assert_equal "active", existing_subscription.reload.status
+  ensure
+    migration&.migrate(:up) unless subscription_status_constraint.expression.match?(/pending_checkout/)
+  end
+
   private
 
   def bare_account(name:)
@@ -344,9 +420,25 @@ class SubscriptionTest < ActiveSupport::TestCase
     AddCancelAtToSubscriptions.new
   end
 
+  def pending_checkout_status_migration
+    migration_paths = Dir.glob(
+      Rails.root.join("db/migrate/*_add_pending_checkout_to_subscription_statuses.rb").to_s
+    )
+    assert_equal 1, migration_paths.length, "Expected exactly one pending Checkout status migration"
+    require migration_paths.fetch(0)
+
+    AddPendingCheckoutToSubscriptionStatuses.new
+  end
+
   def subscription_plan_constraint
     ActiveRecord::Base.connection.check_constraints(:subscriptions).find do |constraint|
       constraint.name == "chk_subscriptions_plan"
+    end
+  end
+
+  def subscription_status_constraint
+    ActiveRecord::Base.connection.check_constraints(:subscriptions).find do |constraint|
+      constraint.name == "chk_subscriptions_status"
     end
   end
 end

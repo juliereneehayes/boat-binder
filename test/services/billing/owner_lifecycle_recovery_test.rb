@@ -37,6 +37,24 @@ module Billing
       assert_not recovery.reactivation_available?
     end
 
+    test "pending Checkout presents ordinary onboarding without recovery actions" do
+      @account.subscription.update!(Subscription.pending_checkout_attributes)
+      recovery = build_recovery
+
+      assert recovery.visible?
+      assert recovery.onboarding?
+      assert_equal :awaiting_checkout, recovery.phase
+      assert_equal "Setup ready", recovery.status_label
+      assert_equal "Choose your Self Managed plan", recovery.title
+      assert_includes recovery.description, "finish setting up your account"
+      assert_nil recovery.date
+      assert_nil recovery.date_label
+      assert_not recovery.billing_portal_available?
+      assert_not recovery.reactivation_available?
+      assert_not recovery.export_available?
+      assert_nil recovery.export_context
+    end
+
     test "payment recovery allows portal and export but not terminal reactivation" do
       configure_subscription(status: "past_due")
       recovery = build_recovery
