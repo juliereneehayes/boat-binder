@@ -1,11 +1,15 @@
 class User < ApplicationRecord
   ROLES = %w[admin captain owner].freeze
   INVITATION_EXPIRES_IN = 7.days
+  EMAIL_VERIFICATION_EXPIRES_IN = 24.hours
   PASSWORD_RESET_EXPIRES_IN = 15.minutes
 
   has_secure_password validations: false, reset_token: { expires_in: PASSWORD_RESET_EXPIRES_IN }
   generates_token_for :invitation, expires_in: INVITATION_EXPIRES_IN do
     [ invitation_sent_at&.to_f, invitation_accepted_at&.to_f, active? ]
+  end
+  generates_token_for :email_verification, expires_in: EMAIL_VERIFICATION_EXPIRES_IN do
+    [ email_verification_sent_at&.to_f, email_verified_at&.to_f, active? ]
   end
 
   has_many :sessions, dependent: :destroy
@@ -26,6 +30,7 @@ class User < ApplicationRecord
   validates :name, length: { maximum: 120 }
   validates :password, presence: true, confirmation: true, length: { maximum: 72 }, allow_nil: true
   validate :password_digest_required_unless_pending_invitation
+  validate :email_verification_lifecycle_is_consistent
   validate :owner_user_limits_allow_role_change
 
   def email
@@ -62,6 +67,10 @@ class User < ApplicationRecord
     invitation_accepted_at.present?
   end
 
+  def email_verification_pending?
+    email_verification_sent_at.present? && email_verified_at.blank? && !active?
+  end
+
   private
 
   def password_digest_required_unless_pending_invitation
@@ -69,6 +78,12 @@ class User < ApplicationRecord
     return if invitation_pending?
 
     errors.add(:password, "can't be blank")
+  end
+
+  def email_verification_lifecycle_is_consistent
+    return if email_verified_at.blank? || email_verification_sent_at.present?
+
+    errors.add(:email_verified_at, "requires a verification email timestamp")
   end
 
   def owner_user_limits_allow_role_change

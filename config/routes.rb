@@ -1,5 +1,6 @@
 Rails.application.routes.draw do
   resource :session
+  resource :registration, only: %i[new create]
   resources :passwords, param: :token
   resources :invitations, only: %i[edit update], param: :token
   namespace :webhooks do
