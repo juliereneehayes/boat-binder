@@ -45,6 +45,46 @@ class OwnerLifecycleRecoveryIntegrationTest < ActionDispatch::IntegrationTest
     assert_not_includes response.body, "Request an account export"
   end
 
+  test "pending Checkout shows ordinary setup without binder access or recovery actions" do
+    @account.subscription.update!(Subscription.pending_checkout_attributes)
+    original_subscription_state = @account.subscription.attributes
+
+    travel_to @now do
+      without_stripe_calls { get root_path }
+    end
+
+    assert_response :success
+    assert_includes response.body, "Account setup"
+    assert_includes response.body, "Set up your Boat Binder account"
+    assert_includes response.body, "Choose your Self Managed plan"
+    assert_includes response.body, "View Self Managed plans"
+    assert_not_includes response.body, "Account recovery"
+    assert_not_includes response.body, @vessel.name
+    assert_not_includes response.body, @document.title
+    assert_not_includes response.body, @note.title
+    assert_not_includes response.body, @note.body
+    assert_select "a[href=?]", billing_checkout_path,
+      text: "View Self Managed plans",
+      count: 1
+    assert_select "form[action=?]", billing_portal_path, count: 0
+    assert_select "form[action=?]", billing_reactivation_path, count: 0
+    assert_select "form[action=?]", account_export_requests_path, count: 0
+
+    get vessel_path(@vessel)
+    assert_response :not_found
+    patch vessel_path(@vessel), params: { asset: { name: "Unauthorized Pending Update" } }
+    assert_response :not_found
+    assert_equal "Private Recovery Vessel", @vessel.reload.name
+
+    assert_no_difference -> { AccountExportRequest.count } do
+      post account_export_requests_path, params: {
+        account_reference: Billing::OwnerAccountReference.generate(@account)
+      }
+    end
+    assert_access_denied_redirect
+    assert_equal original_subscription_state, @account.subscription.reload.attributes
+  end
+
   test "canonical cancel at shows exact paid through recovery while preserving writes until the boundary" do
     cancel_at = @now + 2.weeks
     configure_subscription(
@@ -262,11 +302,17 @@ class OwnerLifecycleRecoveryIntegrationTest < ActionDispatch::IntegrationTest
   def without_stripe_calls
     original_subscription_retrieve = Stripe::Subscription.method(:retrieve)
     original_portal_create = Stripe::BillingPortal::Session.method(:create)
+    original_customer_create = Stripe::Customer.method(:create)
+    original_checkout_create = Stripe::Checkout::Session.method(:create)
     Stripe::Subscription.define_singleton_method(:retrieve) { |*| raise "rendering called Stripe" }
     Stripe::BillingPortal::Session.define_singleton_method(:create) { |*| raise "rendering called Stripe" }
+    Stripe::Customer.define_singleton_method(:create) { |*| raise "rendering called Stripe" }
+    Stripe::Checkout::Session.define_singleton_method(:create) { |*| raise "rendering called Stripe" }
     yield
   ensure
     Stripe::Subscription.define_singleton_method(:retrieve, original_subscription_retrieve)
     Stripe::BillingPortal::Session.define_singleton_method(:create, original_portal_create)
+    Stripe::Customer.define_singleton_method(:create, original_customer_create)
+    Stripe::Checkout::Session.define_singleton_method(:create, original_checkout_create)
   end
 end

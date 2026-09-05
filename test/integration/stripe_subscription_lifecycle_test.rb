@@ -53,6 +53,39 @@ class StripeSubscriptionLifecycleTest < ActionDispatch::IntegrationTest
     end
   end
 
+  test "verified lifecycle webhook is the authority that activates pending Checkout" do
+    state = create_stripe_state("pending_checkout_activation")
+    subscription = state.fetch(:subscription)
+    subscription.update!(
+      Subscription.pending_checkout_attributes.merge(
+        external_customer_id: nil,
+        external_subscription_id: nil,
+        trial_ends_at: nil,
+        current_period_ends_at: nil,
+        last_synced_at: nil
+      )
+    )
+    canonical = subscription_data(state:, status: "trialing")
+
+    post_lifecycle_event(
+      event_id: "evt_pending_checkout_activation",
+      event_type: "customer.subscription.created",
+      data_object: canonical,
+      canonical_subscription: canonical
+    )
+
+    assert_response :success
+    subscription.reload
+    assert_equal Subscription::STRIPE_PROVIDER, subscription.provider
+    assert_equal "self_managed", subscription.plan
+    assert_equal "trialing", subscription.status
+    assert_equal state.fetch(:customer_id), subscription.external_customer_id
+    assert_equal state.fetch(:subscription_id), subscription.external_subscription_id
+    assert subscription.trial_ends_at.present?
+    assert subscription.last_synced_at.present?
+    assert_equal "processed", receipt("evt_pending_checkout_activation").status
+  end
+
   test "invoice paid renews the existing subscription and payment failure and recovery use canonical state" do
     state = create_stripe_state("invoice_lifecycle", status: "trialing")
     subscription_id = state.fetch(:subscription_id)

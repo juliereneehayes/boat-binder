@@ -1,14 +1,23 @@
 <% visible_recoveries = recoveries.select(&:visible?) %>
 <% if visible_recoveries.any? %>
+  <% onboarding_only = visible_recoveries.all?(&:onboarding?) %>
   <section class="mb-5 rounded-md border border-amber-200 bg-amber-50 px-4 py-3" aria-label="Account status">
     <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
       <div>
-        <p class="text-sm font-black text-amber-900">Account options are available</p>
+        <p class="text-sm font-black text-amber-900">
+          <%= onboarding_only ? "Account setup is ready" : "Account options are available" %>
+        </p>
         <p class="mt-1 text-sm text-amber-800">
-          Review billing, reactivation, or export-request options for your Account.
+          <% if onboarding_only %>
+            Choose a Self Managed billing option to continue.
+          <% else %>
+            Review billing, reactivation, or export-request options for your Account.
+          <% end %>
         </p>
       </div>
-      <%= link_to "Review account options", root_path, class: subtle_link_class("self-start bg-white sm:self-auto") %>
+      <%= link_to onboarding_only ? "Continue setup" : "Review account options",
+        root_path,
+        class: subtle_link_class("self-start bg-white sm:self-auto") %>
     </div>
   </section>
 <% end %>

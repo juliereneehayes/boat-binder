@@ -28,6 +28,10 @@ module Billing
       phase != :current_entitlement || scheduled_cancellation?
     end
 
+    def onboarding?
+      phase == :awaiting_checkout
+    end
+
     def scheduled_cancellation?
       phase == :current_entitlement && account.subscription&.scheduled_cancellation?(now:)
     end
@@ -36,6 +40,7 @@ module Billing
       return "Cancellation scheduled" if scheduled_cancellation?
 
       {
+        awaiting_checkout: "Setup ready",
         payment_recovery_pending: "Billing needs attention",
         read_only_grace: "Read-only access",
         retained_inactive: "Account retained",
@@ -49,6 +54,7 @@ module Billing
       return "Your plan is scheduled to end" if scheduled_cancellation?
 
       {
+        awaiting_checkout: "Choose your Self Managed plan",
         payment_recovery_pending: "Please update your billing details",
         read_only_grace: "Your binder is read-only",
         retained_inactive: "Your binder is currently unavailable",
@@ -62,6 +68,7 @@ module Billing
       return "Your normal access remains available through the paid-through date below." if scheduled_cancellation?
 
       {
+        awaiting_checkout: "Choose monthly or annual billing to finish setting up your account.",
         payment_recovery_pending: "There is a billing problem to resolve. Your existing authorized records remain viewable while billing is being addressed.",
         read_only_grace: "Your Self Managed access ended. Existing authorized records remain viewable during the 90-day read-only period, but changes are unavailable.",
         retained_inactive: "Your account and data are being retained for potential reactivation. Normal binder access is unavailable.",

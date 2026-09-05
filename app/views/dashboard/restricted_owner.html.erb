@@ -1,10 +1,18 @@
 <section class="space-y-6 py-4 md:py-8">
   <div class="mx-auto max-w-3xl text-center">
     <%= render "shared/brand_mark", class_name: "mx-auto h-16 w-16" %>
-    <p class="mt-5 text-sm font-black uppercase tracking-normal text-[#1E5A7A]">Account recovery</p>
-    <h1 class="mt-2 text-3xl font-black tracking-normal">Review your Boat Binder options</h1>
+    <p class="mt-5 text-sm font-black uppercase tracking-normal text-[#1E5A7A]">
+      <%= @owner_onboarding_only ? "Account setup" : "Account recovery" %>
+    </p>
+    <h1 class="mt-2 text-3xl font-black tracking-normal">
+      <%= @owner_onboarding_only ? "Set up your Boat Binder account" : "Review your Boat Binder options" %>
+    </h1>
     <p class="mx-auto mt-3 max-w-xl text-sm leading-6 text-slate-600">
-      Your account remains secure. The options below are based on its current billing and retention stage.
+      <% if @owner_onboarding_only %>
+        Choose a Self Managed billing option to continue setting up your account.
+      <% else %>
+        Your account remains secure. The options below are based on its current billing and retention stage.
+      <% end %>
     </p>
   </div>
 
