@@ -1,0 +1,9 @@
+Hello<%= " #{@user.name}" if @user.name.present? %>,
+
+Verify your email address to continue setting up your Boat Binder account.
+
+<%= @verification_url %>
+
+This link expires in <%= distance_of_time_in_words(0, User::EMAIL_VERIFICATION_EXPIRES_IN) %>.
+
+If you did not request this account, you can ignore this message.
