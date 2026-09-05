@@ -60,7 +60,7 @@ class UserEmailVerificationTest < ActiveSupport::TestCase
 
     assert_raises(ActiveRecord::StatementInvalid) do
       User.transaction(requires_new: true) do
-        User.insert_all!([{
+        User.insert_all!([ {
           active: false,
           created_at: Time.current,
           email_address: "invalid-verification-db@example.test",
@@ -69,7 +69,7 @@ class UserEmailVerificationTest < ActiveSupport::TestCase
           password_digest: BCrypt::Password.create("password"),
           role: "owner",
           updated_at: Time.current
-        }])
+        } ])
       end
     end
   end
