@@ -66,7 +66,6 @@ class UserEmailVerificationTest < ActiveSupport::TestCase
           email_address: "invalid-verification-db@example.test",
           email_verified_at: Time.current,
           name: "Invalid Verification DB",
-          password_digest: BCrypt::Password.create("password"),
           role: "owner",
           updated_at: Time.current
         } ])
