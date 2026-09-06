@@ -135,7 +135,7 @@ class SelfServiceRegistrationTest < ActiveSupport::TestCase
     previous_logger = Rails.logger
     Rails.logger = ActiveSupport::Logger.new(output)
 
-    EmailVerificationsMailer.stub(:verify, ->(_user) { failed_delivery }) do
+    with_singleton_method(EmailVerificationsMailer, :verify, ->(_user) { failed_delivery }) do
       registration.call
     end
 
@@ -164,5 +164,14 @@ class SelfServiceRegistrationTest < ActiveSupport::TestCase
       password: "correct horse battery staple",
       password_confirmation: "correct horse battery staple"
     }.merge(overrides))
+  end
+
+  def with_singleton_method(receiver, method_name, replacement)
+    original_method = receiver.method(method_name)
+    receiver.define_singleton_method(method_name, replacement)
+
+    yield
+  ensure
+    receiver.define_singleton_method(method_name, original_method)
   end
 end
