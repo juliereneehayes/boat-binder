@@ -50,7 +50,11 @@ class SelfServiceRegistrationIntegrationTest < ActionDispatch::IntegrationTest
       trial_ends_at: 7.days.from_now
     )
 
-    Stripe::Checkout::Session.stub(:create, ->(*) { flunk "Registration must not call Stripe" }) do
+    with_singleton_method(
+      Stripe::Checkout::Session,
+      :create,
+      ->(*) { flunk "Registration must not call Stripe" }
+    ) do
       assert_difference -> { User.count }, 1 do
         assert_difference -> { Account.count }, 1 do
           assert_difference -> { AccountMembership.count }, 1 do
@@ -220,7 +224,7 @@ class SelfServiceRegistrationIntegrationTest < ActionDispatch::IntegrationTest
     assert_equal user, User.find_by_token_for!(:email_verification, token)
     assert_not_includes output.string, token
     assert_includes body, "http://example.com/email-verifications/"
-    assert_includes body, "24 hours"
+    assert_includes body, "1 day"
   ensure
     Rails.logger = previous_logger if previous_logger
   end
@@ -249,7 +253,7 @@ class SelfServiceRegistrationIntegrationTest < ActionDispatch::IntegrationTest
       raise Errno::ECONNREFUSED, "connect(2) for localhost port 25"
     end
 
-    EmailVerificationsMailer.stub(:verify, ->(_user) { failed_delivery }) do
+    with_singleton_method(EmailVerificationsMailer, :verify, ->(_user) { failed_delivery }) do
       post registration_path, params: {
         registration: registration_params(email_address: "delivery-failure-public@example.test")
       }
@@ -298,5 +302,14 @@ class SelfServiceRegistrationIntegrationTest < ActionDispatch::IntegrationTest
       response.body.include?("Check your email"),
       response.body.include?(RegistrationsController::CHECK_EMAIL_NOTICE)
     ]
+  end
+
+  def with_singleton_method(receiver, method_name, replacement)
+    original_method = receiver.method(method_name)
+    receiver.define_singleton_method(method_name, replacement)
+
+    yield
+  ensure
+    receiver.define_singleton_method(method_name, original_method)
   end
 end
