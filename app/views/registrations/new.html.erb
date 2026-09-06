@@ -40,12 +40,23 @@
 
     <div>
       <%= form.label :password, class: "text-sm font-semibold text-slate-700" %>
-      <%= form.password_field :password, required: true, autocomplete: "new-password", maxlength: 72, class: "mt-2 block min-h-12 w-full rounded-md border border-slate-300 bg-white px-4 py-3 text-base shadow-sm focus:border-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-700/20" %>
+      <%= form.password_field :password,
+        required: true,
+        autocomplete: "new-password",
+        minlength: SelfServiceRegistration::PASSWORD_LENGTH.begin,
+        maxlength: SelfServiceRegistration::PASSWORD_LENGTH.end,
+        class: "mt-2 block min-h-12 w-full rounded-md border border-slate-300 bg-white px-4 py-3 text-base shadow-sm focus:border-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-700/20" %>
+      <p class="mt-2 text-xs text-slate-500">Use at least <%= SelfServiceRegistration::PASSWORD_LENGTH.begin %> characters.</p>
     </div>
 
     <div>
       <%= form.label :password_confirmation, "Confirm password", class: "text-sm font-semibold text-slate-700" %>
-      <%= form.password_field :password_confirmation, required: true, autocomplete: "new-password", maxlength: 72, class: "mt-2 block min-h-12 w-full rounded-md border border-slate-300 bg-white px-4 py-3 text-base shadow-sm focus:border-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-700/20" %>
+      <%= form.password_field :password_confirmation,
+        required: true,
+        autocomplete: "new-password",
+        minlength: SelfServiceRegistration::PASSWORD_LENGTH.begin,
+        maxlength: SelfServiceRegistration::PASSWORD_LENGTH.end,
+        class: "mt-2 block min-h-12 w-full rounded-md border border-slate-300 bg-white px-4 py-3 text-base shadow-sm focus:border-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-700/20" %>
     </div>
 
     <%= form.submit "Create account", class: "min-h-12 w-full rounded-md bg-cyan-700 px-4 py-3 text-base font-bold text-white shadow-sm", data: { turbo_submits_with: "Creating account..." } %>

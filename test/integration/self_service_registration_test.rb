@@ -20,8 +20,9 @@ class SelfServiceRegistrationIntegrationTest < ActionDispatch::IntegrationTest
     assert_select "form[action='#{registration_path}'][method='post']"
     assert_select "input[name='registration[name]']"
     assert_select "input[name='registration[email_address]']"
-    assert_select "input[name='registration[password]']"
-    assert_select "input[name='registration[password_confirmation]']"
+    assert_select "input[name='registration[password]'][required][autocomplete='new-password'][minlength='15'][maxlength='72']"
+    assert_select "input[name='registration[password_confirmation]'][required][autocomplete='new-password'][minlength='15'][maxlength='72']"
+    assert_includes response.body, "Use at least 15 characters."
     assert_select "input[name='registration[role]']", count: 0
     assert_select "input[name='registration[active]']", count: 0
     assert_select "input[name='registration[account_id]']", count: 0
@@ -129,16 +130,22 @@ class SelfServiceRegistrationIntegrationTest < ActionDispatch::IntegrationTest
     ActionMailer::Base.deliveries.clear
 
     [ active_user, inactive_user, invited_user, pending ].each do |existing_user|
+      existing_user_state = existing_user.attributes
+
       assert_no_difference -> { User.count } do
         assert_no_difference -> { Account.count } do
           assert_no_difference -> { AccountMembership.count } do
             assert_no_difference -> { Subscription.count } do
-              assert_no_difference -> { ActionMailer::Base.deliveries.size } do
-                post registration_path, params: {
-                  registration: registration_params(
-                    email_address: "  #{existing_user.email_address.upcase}  "
-                  )
-                }
+              assert_no_difference -> { Session.count } do
+                assert_no_difference -> { BillingCheckoutAttempt.count } do
+                  assert_difference -> { ActionMailer::Base.deliveries.size }, 1 do
+                    post registration_path, params: {
+                      registration: registration_params(
+                        email_address: "  #{existing_user.email_address.upcase}  "
+                      )
+                    }
+                  end
+                end
               end
             end
           end
@@ -147,7 +154,68 @@ class SelfServiceRegistrationIntegrationTest < ActionDispatch::IntegrationTest
 
       assert_equal new_response, public_response
       assert_not_includes response.body, existing_user.email_address
+      assert_equal existing_user_state, existing_user.reload.attributes
+
+      mail = ActionMailer::Base.deliveries.last
+      assert mail.multipart?
+      assert_equal [ existing_user.email_address ], mail.to
+      assert_equal "Boat Binder account request", mail.subject
+      assert_includes mail_body(mail), "http://example.com/session/new"
+      assert_includes mail_body(mail), "http://example.com/passwords/new"
+      assert_not_includes mail_body(mail), "/email-verifications/"
+      assert_not_includes mail_body(mail), "/invitations/"
     end
+  end
+
+  test "passwords shorter than 15 characters are rejected without persistence or email" do
+    short_password = "a" * 14
+
+    assert_no_difference -> { User.count } do
+      assert_no_difference -> { Account.count } do
+        assert_no_difference -> { AccountMembership.count } do
+          assert_no_difference -> { Subscription.count } do
+            assert_no_difference -> { Session.count } do
+              assert_no_difference -> { ActionMailer::Base.deliveries.size } do
+                post registration_path, params: {
+                  registration: registration_params(
+                    password: short_password,
+                    password_confirmation: short_password
+                  )
+                }
+              end
+            end
+          end
+        end
+      end
+    end
+
+    assert_response :unprocessable_entity
+    assert_select "li", text: "Password is too short (minimum is 15 characters)"
+  end
+
+  test "a 15 character password is accepted" do
+    minimum_password = "a" * 15
+
+    assert_difference -> { User.count }, 1 do
+      assert_difference -> { Account.count }, 1 do
+        assert_difference -> { AccountMembership.count }, 1 do
+          assert_difference -> { Subscription.count }, 1 do
+            assert_difference -> { ActionMailer::Base.deliveries.size }, 1 do
+              post registration_path, params: {
+                registration: registration_params(
+                  email_address: "minimum-password@example.test",
+                  password: minimum_password,
+                  password_confirmation: minimum_password
+                )
+              }
+            end
+          end
+        end
+      end
+    end
+
+    assert_response :see_other
+    assert User.find_by!(email_address: "minimum-password@example.test").authenticate(minimum_password)
   end
 
   test "invalid registration rolls back and returns correctable validation errors" do
@@ -155,9 +223,13 @@ class SelfServiceRegistrationIntegrationTest < ActionDispatch::IntegrationTest
       assert_no_difference -> { Account.count } do
         assert_no_difference -> { AccountMembership.count } do
           assert_no_difference -> { Subscription.count } do
-            post registration_path, params: {
-              registration: registration_params(password_confirmation: "different")
-            }
+            assert_no_difference -> { Session.count } do
+              assert_no_difference -> { ActionMailer::Base.deliveries.size } do
+                post registration_path, params: {
+                  registration: registration_params(password_confirmation: "different")
+                }
+              end
+            end
           end
         end
       end
@@ -168,7 +240,7 @@ class SelfServiceRegistrationIntegrationTest < ActionDispatch::IntegrationTest
     assert_select "input[name='registration[role]']", count: 0
   end
 
-  test "registration is rate limited" do
+  test "registration retains the existing IP rate limit" do
     5.times do
       post registration_path, params: {
         registration: registration_params(email_address: "rate-limit@example.test")
@@ -178,14 +250,65 @@ class SelfServiceRegistrationIntegrationTest < ActionDispatch::IntegrationTest
     end
 
     assert_no_difference -> { User.count } do
-      post registration_path, params: {
-        registration: registration_params(email_address: "another-rate-limit@example.test")
-      }
+      assert_no_difference -> { ActionMailer::Base.deliveries.size } do
+        post registration_path, params: {
+          registration: registration_params(email_address: "another-rate-limit@example.test")
+        }
+      end
     end
 
     assert_redirected_to new_registration_path
     assert_equal "Try again later.", flash[:alert]
     assert_nil User.find_by(email_address: "another-rate-limit@example.test")
+  end
+
+  test "normalized email is rate limited across different IP addresses with a private cache key" do
+    target_email = "email-limit@example.test"
+    rate_limit_events = []
+    subscriber = ActiveSupport::Notifications.subscribe("rate_limit.action_controller") do |*args|
+      rate_limit_events << ActiveSupport::Notifications::Event.new(*args).payload
+    end
+
+    5.times do |index|
+      submitted_email = index.even? ? "  EMAIL-LIMIT@EXAMPLE.TEST  " : target_email
+      post registration_path,
+        params: { registration: registration_params(email_address: submitted_email) },
+        headers: { "REMOTE_ADDR" => "198.51.100.#{index + 1}" }
+
+      assert_response :see_other
+      assert flash[:registration_submitted]
+    end
+
+    assert_equal 5, ActionMailer::Base.deliveries.size
+    assert_no_difference -> { User.count } do
+      assert_no_difference -> { ActionMailer::Base.deliveries.size } do
+        post registration_path,
+          params: { registration: registration_params(email_address: target_email) },
+          headers: { "REMOTE_ADDR" => "198.51.100.6" }
+      end
+    end
+
+    assert_redirected_to new_registration_path
+    assert_equal "Try again later.", flash[:alert]
+    event = rate_limit_events.last
+    assert_equal "email", event.fetch(:name)
+    assert_match(/\A[0-9a-f]{64}\z/, event.fetch(:by))
+    assert_not_includes event.fetch(:cache_key), target_email
+    assert_not_includes event.fetch(:cache_key), "EMAIL-LIMIT"
+  ensure
+    ActiveSupport::Notifications.unsubscribe(subscriber) if subscriber
+  end
+
+  test "email rate limiter handles missing and malformed registration parameters safely" do
+    assert_no_difference -> { User.count } do
+      post registration_path, params: {}
+    end
+    assert_response :bad_request
+
+    assert_no_difference -> { User.count } do
+      post registration_path, params: { registration: "malformed" }
+    end
+    assert_response :bad_request
   end
 
   test "CSRF protection remains enabled for registration" do
@@ -270,6 +393,43 @@ class SelfServiceRegistrationIntegrationTest < ActionDispatch::IntegrationTest
     assert_equal 0, Session.where(user:).count
   end
 
+  test "duplicate notification delivery failure returns generic success without changing state" do
+    existing_user = create_user(email: "duplicate-public-failure@example.test", active: false)
+    existing_user_state = existing_user.attributes
+    failed_delivery = Object.new
+    failed_delivery.define_singleton_method(:deliver_now) do
+      raise Errno::ECONNREFUSED,
+        "recipient=duplicate-public-failure@example.test token=private-delivery-value"
+    end
+
+    assert_no_difference -> { User.count } do
+      assert_no_difference -> { Account.count } do
+        assert_no_difference -> { AccountMembership.count } do
+          assert_no_difference -> { Subscription.count } do
+            assert_no_difference -> { Session.count } do
+              with_singleton_method(RegistrationMailer, :existing_address, ->(_email_address) { failed_delivery }) do
+                post registration_path, params: {
+                  registration: registration_params(
+                    email_address: " DUPLICATE-PUBLIC-FAILURE@EXAMPLE.TEST "
+                  )
+                }
+              end
+            end
+          end
+        end
+      end
+    end
+
+    assert_response :see_other
+    assert_redirected_to new_registration_path
+    assert flash[:registration_submitted]
+    follow_redirect!
+    assert_select "h1", text: "Check your email"
+    assert_includes response.body, RegistrationsController::CHECK_EMAIL_NOTICE
+    assert_not_includes response.body, existing_user.email_address
+    assert_equal existing_user_state, existing_user.reload.attributes
+  end
+
   test "authenticated users cannot replace their identity through registration" do
     admin = create_user(email: "signed-in-registration@example.test", role: "admin")
     sign_in_as admin
@@ -311,5 +471,9 @@ class SelfServiceRegistrationIntegrationTest < ActionDispatch::IntegrationTest
     yield
   ensure
     receiver.define_singleton_method(method_name, original_method)
+  end
+
+  def mail_body(mail)
+    [ mail.text_part&.body&.decoded, mail.html_part&.body&.decoded, mail.body.decoded ].compact.join("\n")
   end
 end

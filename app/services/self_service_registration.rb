@@ -2,13 +2,14 @@ class SelfServiceRegistration
   include ActiveModel::Model
 
   GENERIC_FAILURE_MESSAGE = "Registration could not be completed. Please try again."
+  PASSWORD_LENGTH = 15..72
 
   attr_accessor :name, :email_address, :password, :password_confirmation
   attr_reader :account, :membership, :subscription, :user
 
   validates :name, presence: true, length: { maximum: 120 }
   validates :email_address, presence: true, format: { with: URI::MailTo::EMAIL_REGEXP }
-  validates :password, presence: true, confirmation: true, length: { maximum: 72 }
+  validates :password, presence: true, confirmation: true, length: { in: PASSWORD_LENGTH }
 
   def name=(value)
     @name = value.to_s.squish.presence
@@ -91,13 +92,28 @@ class SelfServiceRegistration
   end
 
   def deliver_verification_email
-    EmailVerificationsMailer.verify(user).deliver_now
+    deliver_registration_email(EmailVerificationsMailer.verify(user))
   rescue *ApplicationMailer::DELIVERY_ERRORS => error
     @delivery_failed = true
     Rails.logger.error(
       "Registration verification email delivery failed for " \
-      "user_id=#{user.id} account_id=#{account.id}: #{error.class}: #{error.message}"
+      "user_id=#{user.id} account_id=#{account.id} exception_class=#{error.class}"
     )
+  end
+
+  def deliver_existing_address_notification
+    deliver_registration_email(RegistrationMailer.existing_address(email_address))
+  rescue *ApplicationMailer::DELIVERY_ERRORS => error
+    @delivery_failed = true
+    Rails.logger.error(
+      "Registration existing-address notification delivery failed " \
+      "exception_class=#{error.class}"
+    )
+  end
+
+  def deliver_registration_email(message)
+    # Action Mailer logs raw exception messages; registration emits its sanitized failure event instead.
+    ActionMailer::Base.logger.silence(Logger::FATAL) { message.deliver_now }
   end
 
   def duplicate_email?(record)
@@ -107,6 +123,7 @@ class SelfServiceRegistration
   def accept_duplicate
     @duplicate = true
     errors.clear
+    deliver_existing_address_notification
     self
   end
 

@@ -99,15 +99,16 @@ class SelfServiceRegistrationTest < ActiveSupport::TestCase
     end
   end
 
-  test "normalizes email consistently and treats an existing address as accepted without creating records" do
+  test "normalizes email and sends a token-free notification for an existing address" do
     existing_user = create_user(email: "existing@example.test")
+    existing_user_state = existing_user.attributes
     registration = build_registration(email_address: "  EXISTING@EXAMPLE.TEST  ")
 
     assert_no_difference -> { User.count } do
       assert_no_difference -> { Account.count } do
         assert_no_difference -> { AccountMembership.count } do
           assert_no_difference -> { Subscription.count } do
-            assert_no_difference -> { ActionMailer::Base.deliveries.size } do
+            assert_difference -> { ActionMailer::Base.deliveries.size }, 1 do
               registration.call
             end
           end
@@ -118,8 +119,18 @@ class SelfServiceRegistrationTest < ActiveSupport::TestCase
     assert registration.accepted?
     assert registration.duplicate?
     assert_not registration.created?
+    assert_not registration.delivery_failed?
     assert_empty registration.errors
-    assert_equal existing_user, User.find_by!(email_address: "existing@example.test")
+    assert registration.user.authenticate("correct horse battery staple")
+    assert_equal existing_user_state, existing_user.reload.attributes
+
+    mail = ActionMailer::Base.deliveries.last
+    assert_equal [ "existing@example.test" ], mail.to
+    assert_equal "Boat Binder account request", mail.subject
+    assert_includes mail_body(mail), "http://example.com/session/new"
+    assert_includes mail_body(mail), "http://example.com/passwords/new"
+    assert_not_includes mail_body(mail), "/email-verifications/"
+    assert_not_includes mail_body(mail), "/invitations/"
   end
 
   test "delivery failure preserves a safe recoverable registration" do
@@ -129,11 +140,17 @@ class SelfServiceRegistrationTest < ActiveSupport::TestCase
     failed_delivery = Object.new
     failed_delivery.define_singleton_method(:deliver_now) do
       delivery_open_transactions = ActiveRecord::Base.connection.open_transactions
-      raise Errno::ECONNREFUSED, "connect(2) for localhost port 25"
+      ActionMailer::Base.logger.error(
+        "Failed delivery recipient=delivery-failure@example.test token=verification-secret-value"
+      )
+      raise Errno::ECONNREFUSED,
+        "recipient=delivery-failure@example.test token=verification-secret-value"
     end
     output = StringIO.new
     previous_logger = Rails.logger
     Rails.logger = ActiveSupport::Logger.new(output)
+    previous_mailer_logger = ActionMailer::Base.logger
+    ActionMailer::Base.logger = Rails.logger
 
     with_singleton_method(EmailVerificationsMailer, :verify, ->(_user) { failed_delivery }) do
       registration.call
@@ -149,9 +166,67 @@ class SelfServiceRegistrationTest < ActiveSupport::TestCase
     assert_equal 0, Session.where(user: registration.user).count
     assert_includes output.string, "user_id=#{registration.user.id}"
     assert_includes output.string, "account_id=#{registration.account.id}"
+    assert_includes output.string, "Registration verification email delivery failed"
     assert_includes output.string, "Errno::ECONNREFUSED"
     assert_not_includes output.string, registration.user.email_address
+    assert_not_includes output.string, "verification-secret-value"
+    assert_not_includes output.string, "recipient="
   ensure
+    ActionMailer::Base.logger = previous_mailer_logger if previous_mailer_logger
+    Rails.logger = previous_logger if previous_logger
+  end
+
+  test "duplicate notification delivery failure is accepted without changing the existing user or logging PII" do
+    existing_user = create_user(email: "duplicate-delivery@example.test")
+    existing_user_state = existing_user.attributes
+    registration = build_registration(email_address: " DUPLICATE-DELIVERY@EXAMPLE.TEST ")
+    baseline_open_transactions = ActiveRecord::Base.connection.open_transactions
+    delivery_open_transactions = nil
+    failed_delivery = Object.new
+    failed_delivery.define_singleton_method(:deliver_now) do
+      ActionMailer::Base.logger.error(
+        "Failed delivery recipient=duplicate-delivery@example.test token=duplicate-secret-value"
+      )
+      delivery_open_transactions = ActiveRecord::Base.connection.open_transactions
+      raise Errno::ECONNREFUSED,
+        "recipient=duplicate-delivery@example.test token=duplicate-secret-value"
+    end
+    output = StringIO.new
+    previous_logger = Rails.logger
+    Rails.logger = ActiveSupport::Logger.new(output)
+    previous_mailer_logger = ActionMailer::Base.logger
+    ActionMailer::Base.logger = Rails.logger
+    delivered_to = nil
+
+    assert_no_difference -> { User.count } do
+      assert_no_difference -> { Account.count } do
+        assert_no_difference -> { AccountMembership.count } do
+          assert_no_difference -> { Subscription.count } do
+            with_singleton_method(RegistrationMailer, :existing_address, ->(email_address) {
+              delivered_to = email_address
+              failed_delivery
+            }) do
+              registration.call
+            end
+          end
+        end
+      end
+    end
+
+    assert registration.accepted?
+    assert registration.duplicate?
+    assert_not registration.created?
+    assert registration.delivery_failed?
+    assert_equal "duplicate-delivery@example.test", delivered_to
+    assert_equal baseline_open_transactions, delivery_open_transactions
+    assert_equal existing_user_state, existing_user.reload.attributes
+    assert_includes output.string, "Registration existing-address notification delivery failed"
+    assert_includes output.string, "Errno::ECONNREFUSED"
+    assert_not_includes output.string, "duplicate-delivery@example.test"
+    assert_not_includes output.string, "duplicate-secret-value"
+    assert_not_includes output.string, "recipient="
+  ensure
+    ActionMailer::Base.logger = previous_mailer_logger if previous_mailer_logger
     Rails.logger = previous_logger if previous_logger
   end
 
@@ -173,5 +248,9 @@ class SelfServiceRegistrationTest < ActiveSupport::TestCase
     yield
   ensure
     receiver.define_singleton_method(method_name, original_method)
+  end
+
+  def mail_body(mail)
+    [ mail.text_part&.body&.decoded, mail.html_part&.body&.decoded, mail.body.decoded ].compact.join("\n")
   end
 end
