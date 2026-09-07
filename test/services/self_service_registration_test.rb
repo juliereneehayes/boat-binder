@@ -2,6 +2,33 @@ require "test_helper"
 require "stringio"
 
 class SelfServiceRegistrationTest < ActiveSupport::TestCase
+  class ControlledSmtpDelivery
+    class << self
+      attr_accessor :attempts, :open_transactions, :server_busy_failures
+
+      def reset!(server_busy_failures: 0)
+        self.attempts = 0
+        self.open_transactions = []
+        self.server_busy_failures = server_busy_failures
+      end
+    end
+
+    def initialize(*)
+    end
+
+    def deliver!(mail)
+      self.class.attempts += 1
+      self.class.open_transactions << ActiveRecord::Base.connection.open_transactions
+
+      if self.class.attempts <= self.class.server_busy_failures
+        raise Net::SMTPServerBusy,
+          "recipient=smtp-test@example.test token=raw-smtp-response"
+      end
+
+      ActionMailer::Base.deliveries << mail
+    end
+  end
+
   setup do
     ActionMailer::Base.deliveries.clear
   end
@@ -133,33 +160,60 @@ class SelfServiceRegistrationTest < ActiveSupport::TestCase
     assert_not_includes mail_body(mail), "/invitations/"
   end
 
-  test "delivery failure preserves a safe recoverable registration" do
-    registration = build_registration(email_address: "delivery-failure@example.test")
+  test "retries one transient SMTP busy response through Action Mailer" do
+    registration = build_registration(email_address: "transient-delivery@example.test")
     baseline_open_transactions = ActiveRecord::Base.connection.open_transactions
-    delivery_open_transactions = nil
-    failed_delivery = Object.new
-    failed_delivery.define_singleton_method(:deliver_now) do
-      delivery_open_transactions = ActiveRecord::Base.connection.open_transactions
-      ActionMailer::Base.logger.error(
-        "Failed delivery recipient=delivery-failure@example.test token=verification-secret-value"
-      )
-      raise Errno::ECONNREFUSED,
-        "recipient=delivery-failure@example.test token=verification-secret-value"
-    end
     output = StringIO.new
     previous_logger = Rails.logger
     Rails.logger = ActiveSupport::Logger.new(output)
     previous_mailer_logger = ActionMailer::Base.logger
     ActionMailer::Base.logger = Rails.logger
+    ControlledSmtpDelivery.reset!(server_busy_failures: 1)
 
-    with_singleton_method(EmailVerificationsMailer, :verify, ->(_user) { failed_delivery }) do
-      registration.call
+    assert_difference -> { ActionMailer::Base.deliveries.size }, 1 do
+      with_verification_delivery_method(ControlledSmtpDelivery) do
+        registration.call
+      end
+    end
+
+    assert registration.created?
+    assert_not registration.delivery_failed?
+    assert_equal 2, ControlledSmtpDelivery.attempts
+    assert_equal [ baseline_open_transactions, baseline_open_transactions ], ControlledSmtpDelivery.open_transactions
+
+    mail = ActionMailer::Base.deliveries.last
+    assert_equal [ "transient-delivery@example.test" ], mail.to
+    assert_equal "Verify your Boat Binder email", mail.subject
+    assert_includes mail_body(mail), "http://example.com/email-verifications/"
+    assert_not_includes output.string, "Registration verification email delivery failed"
+    assert_not_includes output.string, "transient-delivery@example.test"
+    assert_not_includes output.string, "raw-smtp-response"
+  ensure
+    ActionMailer::Base.logger = previous_mailer_logger if previous_mailer_logger
+    Rails.logger = previous_logger if previous_logger
+  end
+
+  test "delivery failure preserves a safe recoverable registration" do
+    registration = build_registration(email_address: "delivery-failure@example.test")
+    baseline_open_transactions = ActiveRecord::Base.connection.open_transactions
+    output = StringIO.new
+    previous_logger = Rails.logger
+    Rails.logger = ActiveSupport::Logger.new(output)
+    previous_mailer_logger = ActionMailer::Base.logger
+    ActionMailer::Base.logger = Rails.logger
+    ControlledSmtpDelivery.reset!(server_busy_failures: 2)
+
+    assert_no_difference -> { ActionMailer::Base.deliveries.size } do
+      with_verification_delivery_method(ControlledSmtpDelivery) do
+        registration.call
+      end
     end
 
     assert registration.accepted?
     assert registration.created?
     assert registration.delivery_failed?
-    assert_equal baseline_open_transactions, delivery_open_transactions
+    assert_equal 2, ControlledSmtpDelivery.attempts
+    assert_equal [ baseline_open_transactions, baseline_open_transactions ], ControlledSmtpDelivery.open_transactions
     assert registration.user.reload.email_verification_pending?
     assert_not registration.user.active?
     assert registration.subscription.reload.pending_checkout?
@@ -167,9 +221,9 @@ class SelfServiceRegistrationTest < ActiveSupport::TestCase
     assert_includes output.string, "user_id=#{registration.user.id}"
     assert_includes output.string, "account_id=#{registration.account.id}"
     assert_includes output.string, "Registration verification email delivery failed"
-    assert_includes output.string, "Errno::ECONNREFUSED"
+    assert_includes output.string, "Net::SMTPServerBusy"
     assert_not_includes output.string, registration.user.email_address
-    assert_not_includes output.string, "verification-secret-value"
+    assert_not_includes output.string, "raw-smtp-response"
     assert_not_includes output.string, "recipient="
   ensure
     ActionMailer::Base.logger = previous_mailer_logger if previous_mailer_logger
@@ -248,6 +302,15 @@ class SelfServiceRegistrationTest < ActiveSupport::TestCase
     yield
   ensure
     receiver.define_singleton_method(method_name, original_method)
+  end
+
+  def with_verification_delivery_method(delivery_method)
+    previous_delivery_method = EmailVerificationsMailer.delivery_method
+    EmailVerificationsMailer.delivery_method = delivery_method
+
+    yield
+  ensure
+    EmailVerificationsMailer.delivery_method = previous_delivery_method
   end
 
   def mail_body(mail)
