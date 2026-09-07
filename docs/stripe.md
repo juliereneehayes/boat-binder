@@ -87,6 +87,27 @@ not change `pending_checkout`. Only a verified, fully correlated Stripe webhook 
 state with canonical Stripe provider, identifier, and `trialing` or `active` subscription data.
 Normal authorization and onboarding presentation read local state only and do not contact Stripe.
 
+## Self-Service Registration Foundation
+
+Public registration accepts only a customer name, normalized email address, password, and password
+confirmation. A dedicated service creates one inactive Owner user, one active client Account, one
+active Editor membership, and one local Self Managed `pending_checkout` Subscription in a single
+database transaction. The Account name initially follows the customer name; privileged role,
+membership, Account, and Subscription attributes are always assigned by the server. Registration
+does not create a Session, vessel, Contact, Stripe object, trial, or product entitlement.
+
+The inactive user records `email_verification_sent_at` and receives an independent, purpose-bound
+email-verification token that expires after 24 hours. Raw tokens are present only in the verification
+message and are not stored or written by application logging. The endpoint that consumes this token,
+activates the user, and hands off to Checkout belongs to the next registration slice. Until that
+slice is deployed, do not advertise the registration route as a live customer entry point.
+
+New and duplicate normalized emails use the same public redirect and generic check-email response;
+duplicates create no records and disclose no existing user state. Mail is delivered synchronously
+after the database transaction commits. A delivery error leaves the inactive pending-verification
+graph intact for later recovery and logs only the new User and Account IDs plus the exception class
+and message. Registration submissions are rate-limited and retain normal Rails CSRF protection.
+
 ## Checkout Architecture
 
 Authenticated owner editors with exactly one active client account can choose either Self Managed
