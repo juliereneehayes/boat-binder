@@ -3,6 +3,7 @@ class SelfServiceRegistration
 
   GENERIC_FAILURE_MESSAGE = "Registration could not be completed. Please try again."
   PASSWORD_LENGTH = 15..72
+  SMTP_SERVER_BUSY_RETRIES = 1
 
   attr_accessor :name, :email_address, :password, :password_confirmation
   attr_reader :account, :membership, :subscription, :user
@@ -113,7 +114,16 @@ class SelfServiceRegistration
 
   def deliver_registration_email(message)
     # Action Mailer logs raw exception messages; registration emits its sanitized failure event instead.
-    ActionMailer::Base.logger.silence(Logger::FATAL) { message.deliver_now }
+    attempts = 0
+
+    begin
+      attempts += 1
+      ActionMailer::Base.logger.silence(Logger::FATAL) { message.deliver_now }
+    rescue Net::SMTPServerBusy
+      retry if attempts <= SMTP_SERVER_BUSY_RETRIES
+
+      raise
+    end
   end
 
   def duplicate_email?(record)

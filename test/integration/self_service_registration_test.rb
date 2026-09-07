@@ -335,6 +335,7 @@ class SelfServiceRegistrationIntegrationTest < ActionDispatch::IntegrationTest
 
     post registration_path, params: { registration: registration_params }
 
+    assert_equal 1, ActionMailer::Base.deliveries.size
     mail = ActionMailer::Base.deliveries.last
     assert_not_nil mail
     assert_equal [ "new-registration@example.test" ], mail.to
@@ -346,6 +347,7 @@ class SelfServiceRegistrationIntegrationTest < ActionDispatch::IntegrationTest
 
     assert_equal user, User.find_by_token_for!(:email_verification, token)
     assert_not_includes output.string, token
+    assert_not_includes output.string, "Registration verification email delivery failed"
     assert_includes body, "http://example.com/email-verifications/"
     assert_includes body, "1 day"
   ensure
