@@ -1,0 +1,30 @@
+<section class="mx-auto max-w-md pt-10 text-center" data-controller="email-verification">
+  <div class="mx-auto mb-6 flex justify-center">
+    <%= render "shared/brand_mark", class_name: "h-16 w-16" %>
+  </div>
+
+  <div data-email-verification-target="working" aria-live="polite">
+    <p class="text-sm font-bold uppercase tracking-normal text-cyan-700">Account setup</p>
+    <h1 class="mt-2 text-3xl font-black tracking-normal text-slate-950">Verifying your email</h1>
+    <p class="mt-4 text-base leading-7 text-slate-600">Please wait while Boat Binder completes your account setup.</p>
+  </div>
+
+  <div class="hidden" data-email-verification-target="failure" aria-live="polite">
+    <p class="text-sm font-bold uppercase tracking-normal text-cyan-700">Account setup</p>
+    <h1 class="mt-2 text-3xl font-black tracking-normal text-slate-950">Verification link unavailable</h1>
+    <p class="mt-4 text-base leading-7 text-slate-600"><%= EmailVerificationsController::VERIFICATION_FAILURE_MESSAGE %></p>
+    <%= link_to "Request a new verification email", new_email_verification_path,
+      class: "mt-6 inline-block rounded-md bg-cyan-700 px-5 py-3 text-sm font-bold text-white shadow-sm" %>
+  </div>
+
+  <%= form_with url: email_verification_path, method: :post,
+    data: { turbo: false, email_verification_target: "form" }, class: "hidden" do |form| %>
+    <%= form.hidden_field :token, value: nil, data: { email_verification_target: "token" } %>
+  <% end %>
+
+  <noscript>
+    <p class="mt-4 text-base leading-7 text-slate-600"><%= EmailVerificationsController::VERIFICATION_FAILURE_MESSAGE %></p>
+    <%= link_to "Request a new verification email", new_email_verification_path,
+      class: "mt-6 inline-block rounded-md bg-cyan-700 px-5 py-3 text-sm font-bold text-white shadow-sm" %>
+  </noscript>
+</section>

@@ -6,6 +6,7 @@
     <p class="text-sm font-bold uppercase tracking-normal text-cyan-700">Account setup</p>
     <h1 class="mt-2 text-3xl font-black tracking-normal text-slate-950">Check your email</h1>
     <p class="mt-4 text-base leading-7 text-slate-600"><%= RegistrationsController::CHECK_EMAIL_NOTICE %></p>
+    <%= link_to "Request a new verification email", new_email_verification_path, class: "mt-4 block py-2 text-sm font-semibold text-cyan-700 underline" %>
     <%= link_to "Return to sign in", new_session_path, class: "mt-6 inline-block py-2 text-sm font-semibold text-slate-600 underline" %>
   </section>
 <% else %>

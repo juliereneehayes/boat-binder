@@ -342,13 +342,14 @@ class SelfServiceRegistrationIntegrationTest < ActionDispatch::IntegrationTest
     assert_equal "Verify your Boat Binder email", mail.subject
 
     body = mail.text_part&.body&.decoded || mail.body.decoded
-    token = CGI.unescape(body.match(%r{/email-verifications/([^\s<]+)})[1])
+    token = verification_token_from(mail)
     user = User.find_by!(email_address: "new-registration@example.test")
 
     assert_equal user, User.find_by_token_for!(:email_verification, token)
     assert_not_includes output.string, token
     assert_not_includes output.string, "Registration verification email delivery failed"
-    assert_includes body, "http://example.com/email-verifications/"
+    assert_includes body, "http://example.com/email-verifications#token="
+    assert_not_includes body, "http://example.com/email-verifications/"
     assert_includes body, "1 day"
   ensure
     Rails.logger = previous_logger if previous_logger
@@ -367,7 +368,7 @@ class SelfServiceRegistrationIntegrationTest < ActionDispatch::IntegrationTest
     body = mail.text_part&.body&.decoded || mail.body.decoded
 
     assert_equal [ user.email_address ], mail.to
-    assert_includes body, "https://app.boat-binder.com/email-verifications/"
+    assert_includes body, "https://app.boat-binder.com/email-verifications#token="
   ensure
     EmailVerificationsMailer.default_url_options = previous_options if previous_options
   end
@@ -477,5 +478,10 @@ class SelfServiceRegistrationIntegrationTest < ActionDispatch::IntegrationTest
 
   def mail_body(mail)
     [ mail.text_part&.body&.decoded, mail.html_part&.body&.decoded, mail.body.decoded ].compact.join("\n")
+  end
+
+  def verification_token_from(mail)
+    body = mail.text_part&.body&.decoded || mail.body.decoded
+    CGI.unescape(body.match(/#token=([^\s<]+)/)[1])
   end
 end

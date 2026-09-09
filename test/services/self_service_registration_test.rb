@@ -184,7 +184,7 @@ class SelfServiceRegistrationTest < ActiveSupport::TestCase
     mail = ActionMailer::Base.deliveries.last
     assert_equal [ "transient-delivery@example.test" ], mail.to
     assert_equal "Verify your Boat Binder email", mail.subject
-    assert_includes mail_body(mail), "http://example.com/email-verifications/"
+    assert_includes mail_body(mail), "http://example.com/email-verifications#token="
     assert_not_includes output.string, "Registration verification email delivery failed"
     assert_not_includes output.string, "transient-delivery@example.test"
     assert_not_includes output.string, "raw-smtp-response"
