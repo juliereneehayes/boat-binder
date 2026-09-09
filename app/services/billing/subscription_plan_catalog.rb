@@ -10,6 +10,7 @@ module Billing
     SUPPORTED_INTERVALS = %w[month year].freeze
     SUPPORTED_CURRENCIES = %w[usd].freeze
     MAX_TRIAL_DAYS = 730
+    REQUIRED_SELF_MANAGED_ENTITLEMENTS = %i[unlimited_vessels owner_user_limit].freeze
 
     PRICE_ID_ENV_KEYS = {
       SELF_MANAGED_MONTHLY_KEY => "STRIPE_SELF_MANAGED_MONTHLY_PRICE_ID",
@@ -235,6 +236,25 @@ module Billing
         errors << "#{option.key} trial days must be an integer between 0 and #{MAX_TRIAL_DAYS}"
       end
       errors << "#{option.key} enabled must be true or false" unless [ true, false ].include?(option.enabled)
+      errors.concat(entitlement_errors(option))
+      errors
+    end
+
+    def entitlement_errors(option)
+      return [] unless option.plan_key == SELF_MANAGED_PLAN_KEY
+
+      missing = REQUIRED_SELF_MANAGED_ENTITLEMENTS.reject { |key| option.entitlements.key?(key) }
+      errors = missing.map { |key| "#{option.key} entitlement #{key} is required" }
+
+      if option.entitlements.key?(:unlimited_vessels) &&
+          ![ true, false ].include?(option.entitlements[:unlimited_vessels])
+        errors << "#{option.key} entitlement unlimited_vessels must be true or false"
+      end
+      if option.entitlements.key?(:owner_user_limit) &&
+          !positive_integer?(option.entitlements[:owner_user_limit])
+        errors << "#{option.key} entitlement owner_user_limit must be a positive integer"
+      end
+
       errors
     end
 

@@ -257,6 +257,25 @@ module Billing
       assert_includes error.message, "self_managed_monthly enabled must be true or false"
     end
 
+    test "required Self Managed disclosure entitlements are validated" do
+      {
+        {} => "entitlement unlimited_vessels is required",
+        { unlimited_vessels: true } => "entitlement owner_user_limit is required",
+        { unlimited_vessels: "yes", owner_user_limit: 1 } =>
+          "entitlement unlimited_vessels must be true or false",
+        { unlimited_vessels: true, owner_user_limit: 0 } =>
+          "entitlement owner_user_limit must be a positive integer"
+      }.each do |entitlements, expected_message|
+        bad_definition = definition_for("self_managed_monthly").merge(entitlements:)
+
+        error = assert_raises(SubscriptionPlanCatalog::ConfigurationError) do
+          build_catalog(definitions: [ bad_definition, definition_for("self_managed_annual") ])
+        end
+
+        assert_includes error.message, "self_managed_monthly #{expected_message}"
+      end
+    end
+
     test "missing required attributes fail with a catalog configuration error" do
       bad_definition = definition_for("self_managed_monthly").except(:name)
 
@@ -300,10 +319,10 @@ module Billing
     def mutable_definitions
       monthly_definition = definition_for("self_managed_monthly").merge(
         name: +"Self Managed",
-        entitlements: {
+        entitlements: SubscriptionPlanCatalog::DEFAULT_ENTITLEMENTS.merge(
           features: [ "service_history" ],
           labels: [ +"Original" ]
-        }
+        )
       )
 
       [ monthly_definition, definition_for("self_managed_annual") ]

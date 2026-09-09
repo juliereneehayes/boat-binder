@@ -182,7 +182,7 @@ class BillingPortalTest < ActionDispatch::IntegrationTest
     assert_access_denied_redirect
   end
 
-  test "unauthenticated inactive and unsupported roles cannot create Portal sessions" do
+  test "unauthenticated inactive and unsupported roles cannot see or create Portal sessions" do
     assert_no_portal_creator_call { post billing_portal_path }
     assert_redirected_to new_session_path
 
@@ -197,6 +197,10 @@ class BillingPortalTest < ActionDispatch::IntegrationTest
     %w[admin captain].each do |role|
       user = create_user(email: "portal-#{role}@example.test", role:)
       sign_in_as user
+
+      get root_path
+      assert_response :success
+      assert_select "form[action=?]", billing_portal_path, count: 0
 
       assert_no_portal_creator_call { post billing_portal_path }
       assert_access_denied_redirect
