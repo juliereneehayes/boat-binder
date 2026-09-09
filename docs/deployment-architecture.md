@@ -7,6 +7,7 @@ This review documents the current Boat Binder deployment shape and the work requ
 Boat Binder is a Rails 8.1 application deployed with Heroku-oriented process files. The production process model in `Procfile` defines:
 
 - `web: bundle exec puma -C config/puma.rb`
+- `worker: bin/jobs --mode async`
 - `release: bin/rails db:migrate`
 
 Local development uses `Procfile.dev` with Rails and Tailwind watchers through `bin/dev`.
@@ -103,7 +104,7 @@ The Build Week demo setup is implemented by `BuildWeek::DemoAccountSetup` and `d
 - Production Active Storage uses one generic `:amazon` service. Staging needs a distinct bucket or prefix to avoid mixing user uploads with production files.
 - The Stripe documentation currently names the production webhook URL directly. Staging will need its own endpoint, webhook signing secret, and test-mode Price IDs once Checkout is introduced.
 - The repository documents Stripe plan Price ID environment variables, but this checkout does not yet contain an application plan catalog implementation. Staging work should reconcile the docs with the eventual billing-plan code before Checkout.
-- Solid Queue can run inside Puma only when `SOLID_QUEUE_IN_PUMA` is set; otherwise production needs a worker process such as `bin/jobs`. The current `Procfile` only declares `web` and `release`.
+- The dedicated Solid Queue worker must be scaled explicitly in each Heroku formation; deploying the `Procfile` alone does not start it.
 - `db/seeds.rb` is destructive and should remain a local/demo seed only. Staging demo data should use a scoped script or task.
 
 ## Production Assumptions Discovered
@@ -162,8 +163,8 @@ Running staging with `RAILS_ENV=production` keeps Rails behavior close to produc
 Recommended staging process types:
 
 - keep `web` and `release`
-- decide whether to set `SOLID_QUEUE_IN_PUMA=true` for small MVP staging deployments
-- or add a dedicated worker process for `bin/jobs` before relying on queued jobs
+- run exactly one `worker` process from the `Procfile`
+- do not enable a Solid Queue executor inside Puma
 
 ### Production
 
@@ -176,7 +177,102 @@ Keep the current Heroku production app as the live environment:
 - production `APP_HOST`
 - production Stripe live-mode keys and webhook signing secret when billing goes live
 - production Stripe live-mode Price IDs and `STRIPE_LIVEMODE=true`
+- one explicitly scaled Solid Queue `worker` process before queued transactional work is enabled
 - no demo-data refresh unless intentionally run by an operator
+
+## Solid Queue Runtime
+
+### Selected executor
+
+Boat Binder uses one dedicated Heroku worker process:
+
+```text
+worker: bin/jobs --mode async
+```
+
+`bin/jobs` is the executable supplied by the installed Solid Queue gem. Async supervisor mode keeps
+the dispatcher, scheduler, and one three-thread worker in a single Heroku process. The process is
+separate from Puma, so customer-critical jobs do not compete directly with request handling or stop
+whenever the web process restarts.
+
+Do not set `SOLID_QUEUE_IN_PUMA`. Puma is intentionally not a second executor path. Running both
+would add unnecessary polling and resource use and would make process ownership harder to observe.
+
+The Puma plugin was considered because it avoids another Heroku process charge, but it couples job
+availability and restarts to the web dyno. The default forked `bin/jobs` mode was also considered,
+but it starts separate supervised processes and can multiply memory and database-pool usage. The
+dedicated async worker preserves web/queue isolation while keeping resource use appropriate for the
+current MVP workload.
+
+### Database and process budget
+
+Solid Queue 1.4.0 uses the same PostgreSQL database as application data. Its tables are already in
+the primary schema and are maintained by the normal migration path; this runtime change needs no
+schema migration or additional data service.
+
+The default worker uses three execution threads. Solid Queue reserves additional capacity for
+polling and heartbeats, so `config/database.yml` keeps a five-connection pool. The current single
+Puma process also has a five-connection pool. Staging and production each allow 20 PostgreSQL
+connections, leaving approximately ten connections of headroom with one web and one async worker
+process at current settings. Recheck this budget before increasing `RAILS_MAX_THREADS`, adding Puma
+processes, or increasing queue concurrency.
+
+One continuously running Basic worker adds one billed dyno per environment, currently up to $7 per
+month and prorated by runtime. It does not require Redis or another add-on. Confirm the current
+[Heroku dyno price](https://www.heroku.com/pricing/) before rollout.
+
+### Deployment and smoke verification
+
+Deploy the reviewed commit first. Then enable exactly one worker; a `Procfile` declaration does not
+alter the running formation by itself:
+
+```sh
+heroku ps:scale worker=1:Basic --app boat-binder-staging
+heroku ps --app boat-binder-staging
+heroku logs --tail --ps worker --app boat-binder-staging
+```
+
+Use the argument-free smoke job. It records only a static completion marker and does not accept or
+log customer identifiers:
+
+```sh
+heroku run 'bin/rails runner "job = Operations::QueueSmokeJob.perform_later; puts job.job_id"' --app boat-binder-staging
+```
+
+Confirm the worker log contains `solid_queue_smoke result=completed`. Queue health can be inspected
+without printing job arguments or payloads:
+
+```sh
+heroku run 'bin/rails runner "puts({ ready: SolidQueue::ReadyExecution.count, claimed: SolidQueue::ClaimedExecution.count, failed: SolidQueue::FailedExecution.count, unfinished: SolidQueue::Job.where(finished_at: nil).count })"' --app boat-binder-staging
+```
+
+Failed jobs remain represented in `solid_queue_failed_executions`; Solid Queue does not retry them
+automatically unless the job defines Active Job retry behavior. Investigate a specific failed job in
+an authenticated Rails console without copying its serialized arguments or full exception into an
+issue or shared log. Retry or discard only the verified record, never the queue tables in bulk.
+
+To verify persistence across a restart safely, scale the staging worker to zero, enqueue the harmless
+smoke job, confirm one ready/unfinished job exists, and scale the worker back to one. The static
+completion marker should appear after startup and the ready count should return to zero. Solid Queue
+stores jobs in PostgreSQL, and graceful `TERM` handling returns unfinished work to the queue. Do not
+run destructive queue-table cleanup commands during this check.
+
+After staging passes, repeat the process inspection, one-worker scaling, harmless smoke job, backlog
+check, web health check, and connection-headroom review for production. Do not enqueue customer
+notification jobs until the production worker is confirmed healthy.
+
+### Rollback
+
+Scale the worker to zero before reverting the runtime commit:
+
+```sh
+heroku ps:scale worker=0 --app boat-binder-staging
+heroku ps:scale worker=0 --app boat-binder
+```
+
+Scaling down or reverting the `Procfile` does not delete queued or failed jobs. Preserve those rows
+for inspection and resume them only after a healthy executor is restored. No database rollback or
+customer-data migration is involved.
 
 ## Recommended Deployment Flow
 
@@ -192,7 +288,7 @@ Keep the current Heroku production app as the live environment:
    - request a password reset or invitation in staging email mode
    - send a Stripe CLI/Dashboard test webhook to staging
 6. Promote the same reviewed commit to production.
-7. Confirm release-phase migrations and production health.
+7. Confirm release-phase migrations, the one-worker formation, queue health, and production web health.
 
 Heroku Pipelines are a good fit if the team wants explicit promotion from staging to production. GitHub Actions deployment can be added later if the team wants deployment events, environment approvals, or post-deploy smoke tests in CI.
 
@@ -223,7 +319,7 @@ Heroku Pipelines are a good fit if the team wants explicit promotion from stagin
 ## Risks And Open Questions
 
 - Confirm the canonical production host. The repository references both `boat-binder.com` and `app.boat-binder.com` in docs/examples.
-- Confirm whether production currently uses a Solid Queue worker dyno or `SOLID_QUEUE_IN_PUMA`.
+- Confirm database connection headroom before increasing web or queue concurrency beyond the documented one-process defaults.
 - Confirm whether production uses a dedicated S3 bucket and whether staging should use a separate AWS account, IAM user, bucket, or prefix.
 - Confirm whether Mailgun staging should send real email, use a sandbox, or redirect to internal test recipients.
 - Confirm whether Heroku deploys are manual, GitHub-connected, or pipeline-based today.
@@ -239,7 +335,7 @@ Recommended implementation order:
 2. Configure a staging-only `SECRET_KEY_BASE`, plus staging `APP_HOST`, SMTP, S3, Stripe test-mode, and demo credentials.
 3. Create a staging S3 bucket and least-privilege IAM credentials.
 4. Configure a staging Stripe webhook endpoint and store its signing secret.
-5. Decide the Solid Queue runtime strategy: `SOLID_QUEUE_IN_PUMA` for MVP staging or a dedicated worker dyno.
+5. Deploy and validate the dedicated Solid Queue worker in staging, then explicitly scale one production worker before queued transactional work is enabled.
 6. Add a deployment runbook with staging smoke tests and production promotion steps.
 7. Add explicit host authorization for finalized production and staging domains if appropriate.
 8. Add a safe staging demo-data refresh command or task that uses the scoped Build Week demo setup.
