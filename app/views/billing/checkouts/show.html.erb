@@ -23,13 +23,20 @@
               <p class="mt-2 text-sm leading-6 text-slate-600"><%= option.description %></p>
             </div>
             <% if option.trial? %>
-              <%= status_chip("#{option.trial_days}-day trial", tone: :info) %>
+              <%= status_chip("#{option.trial_days}-day free trial", tone: :info) %>
             <% end %>
           </div>
 
           <p class="mt-6 text-4xl font-black"><%= option.display_price %></p>
+          <% if option.key == Billing::SubscriptionPlanCatalog::SELF_MANAGED_ANNUAL_KEY && @annual_savings_cents&.positive? %>
+            <p class="mt-2 text-sm font-black text-[#1E5A7A]">Save <%= number_to_currency(@annual_savings_cents / 100.0, precision: 0) %> annually</p>
+          <% end %>
           <ul class="mt-6 flex-1 space-y-3 text-sm font-semibold text-slate-700">
-            <li>Unlimited vessel records</li>
+            <% owner_limit = option.entitlements.fetch(:owner_user_limit) %>
+            <li><%= owner_limit == 1 ? "One" : owner_limit %> active Owner <%= "user".pluralize(owner_limit) %> per Account</li>
+            <% if option.entitlements.fetch(:unlimited_vessels) %>
+              <li>Unlimited vessel records</li>
+            <% end %>
             <li>Documents, reminders, and service history</li>
             <li>Payment details handled securely by Stripe</li>
           </ul>

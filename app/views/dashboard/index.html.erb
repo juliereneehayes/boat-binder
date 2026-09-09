@@ -20,7 +20,7 @@
               billing_portal_path,
               form: { data: { turbo: false }, class: "inline-flex" },
               class: primary_button_class("bg-[#7DAAB3] text-[#0B1F35] hover:bg-[#B9D5DA]") %>
-          <% else %>
+          <% elsif @self_managed_plans_available %>
             <%= link_to "View Self Managed plans", billing_checkout_path, class: primary_button_class("bg-[#7DAAB3] text-[#0B1F35] hover:bg-[#B9D5DA]") %>
           <% end %>
         <% end %>

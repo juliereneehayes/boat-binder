@@ -6,7 +6,7 @@ module Billing
     before_action :set_billing_account, only: %i[show create]
 
     def show
-      @billing_options = SubscriptionPlanCatalog.new.enabled_options
+      load_billing_options
     rescue SubscriptionPlanCatalog::ConfigurationError
       @billing_options = []
       flash.now[:alert] = CHECKOUT_ERROR_MESSAGE
@@ -26,7 +26,7 @@ module Billing
       StripeCheckoutSessionCreator::CheckoutError,
       StripeConfiguration::MissingConfigurationError,
       SubscriptionPlanCatalog::ConfigurationError
-      @billing_options = available_billing_options
+      load_available_billing_options
       flash.now[:alert] = CHECKOUT_ERROR_MESSAGE
       render :show, status: :unprocessable_entity
     end
@@ -49,10 +49,17 @@ module Billing
       redirect_to root_path, alert: Authorization::ACCESS_DENIED_MESSAGE
     end
 
-    def available_billing_options
-      SubscriptionPlanCatalog.new.enabled_options
+    def load_billing_options
+      catalog = SubscriptionPlanCatalog.new
+      @billing_options = catalog.enabled_options
+      @annual_savings_cents = catalog.self_managed_annual_savings_cents
+    end
+
+    def load_available_billing_options
+      load_billing_options
     rescue SubscriptionPlanCatalog::ConfigurationError
-      []
+      @billing_options = []
+      @annual_savings_cents = nil
     end
 
     def checkout_url_options

@@ -43,6 +43,10 @@ class OwnerLifecycleRecoveryIntegrationTest < ActionDispatch::IntegrationTest
     assert_includes response.body, @vessel.name
     assert_not_includes response.body, "Account recovery options"
     assert_not_includes response.body, "Request an account export"
+    assert_select "form[action=?]", billing_portal_path, count: 1
+    assert_select "a[href=?]", billing_checkout_path,
+      text: "View Self Managed plans",
+      count: 0
   end
 
   test "pending Checkout shows ordinary setup without binder access or recovery actions" do
@@ -58,6 +62,11 @@ class OwnerLifecycleRecoveryIntegrationTest < ActionDispatch::IntegrationTest
     assert_includes response.body, "Set up your Boat Binder account"
     assert_includes response.body, "Choose your Self Managed plan"
     assert_includes response.body, "View Self Managed plans"
+    assert_not_includes response.body, "Account review needed"
+    assert_not_includes response.body, "Your account needs review"
+    assert_not_includes response.body, "Online billing recovery is not available"
+    assert_not_includes response.body, "pending_checkout"
+    assert_not_includes response.body, Subscription::LOCAL_PROVIDER
     assert_not_includes response.body, "Account recovery"
     assert_not_includes response.body, @vessel.name
     assert_not_includes response.body, @document.title
@@ -111,6 +120,9 @@ class OwnerLifecycleRecoveryIntegrationTest < ActionDispatch::IntegrationTest
       assert_select "form[action=?]", billing_portal_path, count: 1
       assert_select "form[action=?]", account_export_requests_path, count: 1
       assert_select "form[action=?]", billing_reactivation_path, count: 0
+      assert_select "a[href=?]", billing_checkout_path,
+        text: "View Self Managed plans",
+        count: 0
     end
   end
 
@@ -141,6 +153,9 @@ class OwnerLifecycleRecoveryIntegrationTest < ActionDispatch::IntegrationTest
     assert_select "form[action=?]", billing_portal_path, count: 1
     assert_select "form[action=?]", account_export_requests_path, count: 1
     assert_select "form[action=?]", billing_reactivation_path, count: 0
+    assert_select "a[href=?]", billing_checkout_path,
+      text: "View Self Managed plans",
+      count: 0
   end
 
   test "read only grace shows records and verified terminal reactivation choices" do
@@ -186,6 +201,11 @@ class OwnerLifecycleRecoveryIntegrationTest < ActionDispatch::IntegrationTest
 
     assert_response :success
     assert_includes response.body, "Your account needs review"
+    assert_includes response.body, "Online billing recovery is not available for this account"
+    assert_not_includes response.body, "suspended"
+    assert_not_includes response.body, Subscription::STRIPE_PROVIDER
+    assert_not_includes response.body, @account.subscription.external_customer_id
+    assert_not_includes response.body, @account.subscription.external_subscription_id
     assert_select "form[action=?]", billing_portal_path, count: 0
     assert_select "form[action=?]", billing_reactivation_path, count: 0
     assert_select "form[action=?]", account_export_requests_path, count: 0
