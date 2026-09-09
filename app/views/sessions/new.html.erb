@@ -18,5 +18,6 @@
     <%= form.submit "Sign in", class: "min-h-12 w-full rounded-md bg-cyan-700 px-4 py-3 text-base font-bold text-white shadow-sm", data: { turbo_submits_with: "Signing in..." } %>
 
     <%= link_to "Forgot password?", new_password_path, class: "block py-2 text-center text-sm font-semibold text-slate-600 underline" %>
+    <%= link_to "Need a new verification email?", new_email_verification_path, class: "block py-2 text-center text-sm font-semibold text-slate-600 underline" %>
   <% end %>
 </section>

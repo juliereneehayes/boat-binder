@@ -12,6 +12,38 @@ class SelfServiceRegistration
   validates :email_address, presence: true, format: { with: URI::MailTo::EMAIL_REGEXP }
   validates :password, presence: true, confirmation: true, length: { in: PASSWORD_LENGTH }
 
+  class << self
+    def deliver_email(message)
+      # Mailer logging is silenced here so delivery exceptions cannot emit recipients or tokenized URLs.
+      attempts = 0
+
+      begin
+        attempts += 1
+        ActionMailer::Base.logger.silence(Logger::FATAL) { message.deliver_now }
+      rescue Net::SMTPServerBusy
+        retry if attempts <= SMTP_SERVER_BUSY_RETRIES
+
+        raise
+      end
+    end
+
+    def pending_verification?(user)
+      return false unless user&.owner? && user.email_verification_pending?
+      return false unless user.password_digest.present?
+      return false if user.invitation_sent_at.present? || user.invitation_accepted_at.present?
+
+      memberships = user.account_memberships.includes(account: :subscription).to_a
+      return false unless memberships.one?
+
+      membership = memberships.first
+      account = membership.account
+
+      membership.active? && membership.access_level == "editor" &&
+        account.active? && account.account_type == "client" &&
+        account.subscription&.pending_checkout?
+    end
+  end
+
   def name=(value)
     @name = value.to_s.squish.presence
   end
@@ -93,7 +125,7 @@ class SelfServiceRegistration
   end
 
   def deliver_verification_email
-    deliver_registration_email(EmailVerificationsMailer.verify(user))
+    self.class.deliver_email(EmailVerificationsMailer.verify(user))
   rescue *ApplicationMailer::DELIVERY_ERRORS => error
     @delivery_failed = true
     Rails.logger.error(
@@ -103,27 +135,13 @@ class SelfServiceRegistration
   end
 
   def deliver_existing_address_notification
-    deliver_registration_email(RegistrationMailer.existing_address(email_address))
+    self.class.deliver_email(RegistrationMailer.existing_address(email_address))
   rescue *ApplicationMailer::DELIVERY_ERRORS => error
     @delivery_failed = true
     Rails.logger.error(
       "Registration existing-address notification delivery failed " \
       "exception_class=#{error.class}"
     )
-  end
-
-  def deliver_registration_email(message)
-    # Action Mailer logs raw exception messages; registration emits its sanitized failure event instead.
-    attempts = 0
-
-    begin
-      attempts += 1
-      ActionMailer::Base.logger.silence(Logger::FATAL) { message.deliver_now }
-    rescue Net::SMTPServerBusy
-      retry if attempts <= SMTP_SERVER_BUSY_RETRIES
-
-      raise
-    end
   end
 
   def duplicate_email?(record)
