@@ -12,7 +12,9 @@ class DashboardController < ApplicationController
       return
     end
 
-    @billing_portal_available = billing_portal_available? && @owner_lifecycle_recoveries.none?(&:visible?)
+    lifecycle_recovery_visible = @owner_lifecycle_recoveries.any?(&:visible?)
+    @billing_portal_available = owner_user? && !lifecycle_recovery_visible && billing_portal_available?
+    @self_managed_plans_available = owner_user? && !lifecycle_recovery_visible && self_managed_plans_available?
     @dashboard_account = scoped_accounts.limit(2).to_a.then { |accounts| accounts.one? ? accounts.first : nil }
     @vessels = scoped_vessels.active.includes(:account, :reminders, :service_visits).with_attached_primary_photo.ordered
     @upcoming_reminders = scoped_reminders.includes(asset: :account).upcoming.limit(6)

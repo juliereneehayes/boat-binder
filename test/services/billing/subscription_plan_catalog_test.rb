@@ -30,7 +30,7 @@ module Billing
       assert_equal "self_managed_annual", option.key
       assert_equal "self_managed", option.plan_key
       assert_equal "Self Managed", option.name
-      assert_includes option.description, "$48 annual savings"
+      assert_equal "For owners managing their own vessel binder.", option.description
       assert_equal "year", option.interval
       assert_equal 24_000, option.amount_cents
       assert_equal "$240/year", option.display_price
@@ -40,12 +40,15 @@ module Billing
       assert option.enabled?
     end
 
-    test "annual description reflects the savings calculated from catalog prices" do
-      monthly = catalog.fetch("self_managed_monthly")
-      annual = catalog.fetch("self_managed_annual")
-      savings_cents = (monthly.amount_cents * 12) - annual.amount_cents
+    test "annual savings are calculated from catalog prices" do
+      assert_equal 4_800, catalog.self_managed_annual_savings_cents
 
-      assert_includes annual.description, "$#{savings_cents / 100} annual savings"
+      definitions = SubscriptionPlanCatalog::DEFAULT_DEFINITIONS.map(&:deep_dup)
+      definitions.find { |definition| definition.fetch(:key) == "self_managed_monthly" }[:amount_cents] = 2_500
+      definitions.find { |definition| definition.fetch(:key) == "self_managed_annual" }[:amount_cents] = 27_500
+      adjusted_catalog = build_catalog(definitions:)
+
+      assert_equal 2_500, adjusted_catalog.self_managed_annual_savings_cents
     end
 
     test "monthly and annual options share the stable self managed plan key" do

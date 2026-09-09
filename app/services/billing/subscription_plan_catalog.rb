@@ -73,7 +73,7 @@ module Billing
         key: SELF_MANAGED_ANNUAL_KEY,
         plan_key: SELF_MANAGED_PLAN_KEY,
         name: "Self Managed",
-        description: "For owners managing their own vessel binder, with $48 annual savings.",
+        description: "For owners managing their own vessel binder.",
         interval: "year",
         interval_count: 1,
         amount_cents: 24_000,
@@ -150,6 +150,13 @@ module Billing
 
     def options_for_plan(plan_key)
       enabled_options.select { |option| option.plan_key == plan_key.to_s }.freeze
+    end
+
+    def self_managed_annual_savings_cents
+      monthly = find(SELF_MANAGED_MONTHLY_KEY)
+      annual = find(SELF_MANAGED_ANNUAL_KEY)
+
+      (monthly.amount_cents * 12) - annual.amount_cents
     end
 
     private
