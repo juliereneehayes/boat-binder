@@ -1,6 +1,7 @@
 require "test_helper"
 
 class StripeSubscriptionLifecycleTest < ActionDispatch::IntegrationTest
+  include ActiveJob::TestHelper
   WEBHOOK_SECRET = "whsec_lifecycle_test"
 
   setup do
@@ -14,14 +15,160 @@ class StripeSubscriptionLifecycleTest < ActionDispatch::IntegrationTest
     Rails.configuration.x.stripe.livemode = false
     Rails.configuration.x.stripe.self_managed_monthly_price_id = "price_lifecycle_monthly"
     Rails.configuration.x.stripe.self_managed_annual_price_id = "price_lifecycle_annual"
+    @previous_queue_adapter = ActiveJob::Base.queue_adapter
+    ActiveJob::Base.queue_adapter = :test
+    clear_enqueued_jobs
+    ActionMailer::Base.deliveries.clear
   end
 
   teardown do
+    clear_enqueued_jobs
+    ActionMailer::Base.deliveries.clear
+    ActiveJob::Base.queue_adapter = @previous_queue_adapter
     Rails.configuration.x.stripe.secret_key = @previous_secret_key
     Rails.configuration.x.stripe.webhook_secret = @previous_webhook_secret
     Rails.configuration.x.stripe.livemode = @previous_livemode
     Rails.configuration.x.stripe.self_managed_monthly_price_id = @previous_monthly_price_id
     Rails.configuration.x.stripe.self_managed_annual_price_id = @previous_annual_price_id
+  end
+
+
+  test "initial monthly trial synchronization creates and enqueues one durable confirmation" do
+    state = create_stripe_state("monthly_trial_confirmation", option_key: "self_managed_monthly")
+    recipient = verified_owner_for(state.fetch(:account), email: "monthly-confirmation@example.test")
+    trial_start = Time.zone.local(2026, 9, 9, 12)
+    trial_end = trial_start + 7.days
+
+    assert_difference -> { BillingTrialStartConfirmation.count }, 1 do
+      assert_enqueued_with(job: Billing::TrialStartConfirmationDeliveryJob) do
+        post_subscription_event(
+          state:,
+          event_id: "evt_monthly_trial_confirmation",
+          event_type: "customer.subscription.created",
+          status: "trialing",
+          trial_start:,
+          trial_end:
+        )
+      end
+    end
+
+    assert_response :success
+    confirmation = BillingTrialStartConfirmation.last
+    assert_equal state.fetch(:account), confirmation.account
+    assert_equal state.fetch(:subscription), confirmation.subscription
+    assert_equal state.fetch(:subscription_id), confirmation.external_subscription_id
+    assert_equal "self_managed_monthly", confirmation.option_key
+    assert_equal trial_start, confirmation.trial_started_at
+    assert_equal trial_end, confirmation.trial_ends_at
+    assert_equal trial_start, state.fetch(:subscription).reload.trial_started_at
+    perform_enqueued_jobs
+    assert_equal 1, ActionMailer::Base.deliveries.size
+    assert_equal [ recipient.email_address ], ActionMailer::Base.deliveries.last.to
+    assert_includes ActionMailer::Base.deliveries.last.text_part.decoded, "$24/month"
+  end
+
+  test "initial annual trial synchronization creates one durable confirmation" do
+    state = create_stripe_state("annual_trial_confirmation", option_key: "self_managed_annual")
+    recipient = verified_owner_for(state.fetch(:account), email: "annual-confirmation@example.test")
+    trial_start = Time.zone.local(2026, 9, 9, 12)
+
+    assert_difference -> { BillingTrialStartConfirmation.count }, 1 do
+      post_subscription_event(
+        state:,
+        event_id: "evt_annual_trial_confirmation",
+        event_type: "customer.subscription.created",
+        status: "trialing",
+        price_id: "price_lifecycle_annual",
+        trial_start:,
+        trial_end: trial_start + 7.days
+      )
+    end
+
+    assert_response :success
+    assert_equal "self_managed_annual", BillingTrialStartConfirmation.last.option_key
+    perform_enqueued_jobs
+    assert_equal 1, ActionMailer::Base.deliveries.size
+    assert_equal [ recipient.email_address ], ActionMailer::Base.deliveries.last.to
+    assert_includes ActionMailer::Base.deliveries.last.text_part.decoded, "$240/year"
+  end
+
+  test "duplicate related and out-of-order event deliveries do not duplicate a trial confirmation" do
+    state = create_stripe_state("deduplicated_trial_confirmation")
+    verified_owner_for(state.fetch(:account), email: "deduplicated-confirmation@example.test")
+    trial_start = Time.zone.local(2026, 9, 9, 12)
+    attributes = { status: "trialing", trial_start:, trial_end: trial_start + 7.days }
+
+    post_subscription_event(
+      state:,
+      event_id: "evt_trial_confirmation_updated",
+      event_type: "customer.subscription.updated",
+      **attributes
+    )
+    post_subscription_event(
+      state:,
+      event_id: "evt_trial_confirmation_created",
+      event_type: "customer.subscription.created",
+      **attributes
+    )
+    post_subscription_event(
+      state:,
+      event_id: "evt_trial_confirmation_updated",
+      event_type: "customer.subscription.updated",
+      **attributes
+    )
+
+    assert_response :success
+    assert_equal 1, BillingTrialStartConfirmation.where(account: state.fetch(:account)).count
+    assert_equal 1, enqueued_jobs.count { |job| job[:job] == Billing::TrialStartConfirmationDeliveryJob }
+    perform_enqueued_jobs
+    assert_equal 1, ActionMailer::Base.deliveries.size
+  end
+
+  test "enqueue failure does not roll back subscription synchronization or fail the webhook" do
+    state = create_stripe_state("trial_confirmation_enqueue_failure")
+    trial_start = Time.zone.local(2026, 9, 9, 12)
+
+    with_trial_confirmation_enqueue(->(*) { raise SolidQueue::Job::EnqueueError }) do
+      post_subscription_event(
+        state:,
+        event_id: "evt_trial_confirmation_enqueue_failure",
+        event_type: "customer.subscription.created",
+        status: "trialing",
+        trial_start:,
+        trial_end: trial_start + 7.days
+      )
+    end
+
+    assert_response :success
+    assert_equal "processed", receipt("evt_trial_confirmation_enqueue_failure").status
+    assert_equal "trialing", state.fetch(:subscription).reload.status
+    confirmation = BillingTrialStartConfirmation.find_by!(account: state.fetch(:account))
+    assert_equal "failed", confirmation.status
+    assert_equal "enqueue_failed", confirmation.error_code
+  end
+
+  test "queued delivery failure leaves the processed webhook and synchronized trial intact" do
+    state = create_stripe_state("trial_confirmation_delivery_failure")
+    verified_owner_for(state.fetch(:account), email: "failed-confirmation@example.test")
+    trial_start = Time.zone.local(2026, 9, 9, 12)
+    post_subscription_event(
+      state:,
+      event_id: "evt_trial_confirmation_delivery_failure",
+      event_type: "customer.subscription.created",
+      status: "trialing",
+      trial_start:,
+      trial_end: trial_start + 7.days
+    )
+    failing_message = Object.new
+    failing_message.define_singleton_method(:deliver_now) { raise IOError, "mail service unavailable" }
+
+    with_mailer_confirmation(->(*) { failing_message }) do
+      assert_raises(IOError) { perform_enqueued_jobs }
+    end
+
+    assert_equal "processed", receipt("evt_trial_confirmation_delivery_failure").status
+    assert_equal "trialing", state.fetch(:subscription).reload.status
+    assert_equal "failed", BillingTrialStartConfirmation.find_by!(account: state.fetch(:account)).status
   end
 
   test "all supported canonical Stripe statuses map to the deliberate local states" do
@@ -595,6 +742,33 @@ class StripeSubscriptionLifecycleTest < ActionDispatch::IntegrationTest
 
   private
 
+  def with_trial_confirmation_enqueue(replacement)
+    original_method = Billing::TrialStartConfirmationDeliveryJob.method(:perform_later)
+    Billing::TrialStartConfirmationDeliveryJob.define_singleton_method(:perform_later) do |*arguments|
+      replacement.call(*arguments)
+    end
+    yield
+  ensure
+    Billing::TrialStartConfirmationDeliveryJob.define_singleton_method(:perform_later, original_method)
+  end
+
+  def with_mailer_confirmation(replacement)
+    original_method = TrialStartConfirmationMailer.method(:confirmation)
+    TrialStartConfirmationMailer.define_singleton_method(:confirmation) do |*arguments|
+      replacement.call(*arguments)
+    end
+    yield
+  ensure
+    TrialStartConfirmationMailer.define_singleton_method(:confirmation, original_method)
+  end
+
+  def verified_owner_for(account, email:)
+    owner = create_user(email:, role: "owner")
+    owner.update!(email_verification_sent_at: 1.hour.ago, email_verified_at: Time.current)
+    create_account_membership(user: owner, account:)
+    owner
+  end
+
   def create_stripe_state(suffix, status: "active", option_key: "self_managed_monthly")
     account = create_account(name: "Lifecycle #{suffix}")
     customer_id = "cus_#{suffix}"
@@ -682,13 +856,14 @@ class StripeSubscriptionLifecycleTest < ActionDispatch::IntegrationTest
   end
 
   def subscription_data(state:, status:, price_id: "price_lifecycle_monthly", period_end: 1.month.from_now,
-    trial_end: status == "trialing" ? 7.days.from_now : nil,
+    trial_start: nil, trial_end: status == "trialing" ? 7.days.from_now : nil,
     cancel_at_period_end: false, cancel_at: nil, canceled_at: nil, ended_at: nil)
     {
       id: state.fetch(:subscription_id),
       object: "subscription",
       customer: state.fetch(:customer_id),
       status:,
+      trial_start: trial_start&.to_i,
       trial_end: trial_end&.to_i,
       cancel_at_period_end:,
       cancel_at: cancel_at&.to_i,
@@ -775,6 +950,7 @@ class StripeSubscriptionLifecycleTest < ActionDispatch::IntegrationTest
       "provider",
       "external_customer_id",
       "external_subscription_id",
+      "trial_started_at",
       "trial_ends_at",
       "current_period_ends_at",
       "cancel_at_period_end",

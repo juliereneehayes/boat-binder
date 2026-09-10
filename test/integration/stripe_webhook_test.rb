@@ -124,16 +124,18 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
     trial_end = 7.days.from_now.change(usec: 0)
     period_end = 1.month.from_now.change(usec: 0)
 
-    post_signed_event(
-      event_id: "evt_checkout_completed",
-      event_type: "checkout.session.completed",
-      data_object: checkout_session_data(
-        attempt: attempt,
-        account_reference: account_reference,
-        customer_id: "cus_checkout_sync",
-        subscription_id: "sub_checkout_sync"
+    assert_no_difference -> { BillingTrialStartConfirmation.count } do
+      post_signed_event(
+        event_id: "evt_checkout_completed",
+        event_type: "checkout.session.completed",
+        data_object: checkout_session_data(
+          attempt: attempt,
+          account_reference: account_reference,
+          customer_id: "cus_checkout_sync",
+          subscription_id: "sub_checkout_sync"
+        )
       )
-    )
+    end
 
     assert_response :success
     checkout_receipt = BillingWebhookEvent.find_by!(external_event_id: "evt_checkout_completed")
@@ -1851,6 +1853,7 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
       "provider",
       "external_customer_id",
       "external_subscription_id",
+      "trial_started_at",
       "trial_ends_at",
       "current_period_ends_at",
       "cancel_at_period_end",

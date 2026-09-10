@@ -111,6 +111,32 @@ class AccountTest < ActiveSupport::TestCase
     assert_equal "eligible-owner@example.test", account.transactional_recipient_email
   end
 
+  test "verified transactional owner recipient stays within the account and follows membership order" do
+    account = create_account(name: "Verified Harbor")
+    other_account = create_account(name: "Other Verified Harbor")
+    unverified_owner = create_user(email: "unverified-owner@example.test", role: "owner")
+    first_verified_owner = verified_owner(email: "first-verified-owner@example.test")
+    second_verified_owner = verified_owner(email: "second-verified-owner@example.test")
+    other_owner = verified_owner(email: "other-account-owner@example.test")
+
+    create_account_membership(user: unverified_owner, account:)
+    first_membership = create_account_membership(user: first_verified_owner, account:)
+    second_membership = create_account_membership(user: second_verified_owner, account:)
+    create_account_membership(user: other_owner, account: other_account)
+
+    assert_operator first_membership.id, :<, second_membership.id
+    assert_equal first_verified_owner, account.verified_transactional_owner_recipient
+  end
+
+  test "accepted invitation qualifies an owner as a verified transactional recipient" do
+    account = create_account(name: "Invitation Verified Harbor")
+    owner = create_user(email: "accepted-owner@example.test", role: "owner")
+    owner.update!(invitation_sent_at: 1.day.ago, invitation_accepted_at: Time.current)
+    create_account_membership(user: owner, account:)
+
+    assert_equal owner, account.verified_transactional_owner_recipient
+  end
+
   test "transactional recipient falls back to manual primary contact only when no owner user is eligible" do
     account = create_account(name: "Marisol Trust")
     account.contacts.create!(name: "Manual Contact", email: "manual-owner@example.test", role: "Owner")
@@ -149,5 +175,14 @@ class AccountTest < ActiveSupport::TestCase
 
     assert_equal "Inactive", account.status_label
     assert_includes account.assets, asset
+  end
+
+
+  private
+
+  def verified_owner(email:)
+    owner = create_user(email:, role: "owner")
+    owner.update!(email_verification_sent_at: 1.hour.ago, email_verified_at: Time.current)
+    owner
   end
 end

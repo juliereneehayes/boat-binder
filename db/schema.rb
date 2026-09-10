@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_09_05_120000) do
+ActiveRecord::Schema[8.1].define(version: 2026_09_09_090000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -166,6 +166,32 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_05_120000) do
     t.index ["stripe_customer_id"], name: "index_billing_checkout_attempts_on_stripe_customer_id"
     t.check_constraint "replaces_external_subscription_id IS NULL OR replaces_external_subscription_id::text <> ''::text", name: "chk_billing_checkout_attempts_replacement_present"
     t.check_constraint "status::text = ANY (ARRAY['creating'::character varying, 'open'::character varying, 'replacing'::character varying, 'submitted'::character varying, 'completed'::character varying, 'canceled'::character varying, 'expired'::character varying, 'replaced'::character varying]::text[])", name: "chk_billing_checkout_attempts_status"
+  end
+
+  create_table "billing_trial_start_confirmations", force: :cascade do |t|
+    t.bigint "account_id", null: false
+    t.string "active_job_id"
+    t.datetime "created_at", null: false
+    t.datetime "delivered_at"
+    t.datetime "enqueued_at"
+    t.string "error_code"
+    t.string "external_subscription_id", null: false
+    t.datetime "failed_at"
+    t.string "option_key", null: false
+    t.datetime "skipped_at"
+    t.string "status", default: "pending", null: false
+    t.bigint "subscription_id", null: false
+    t.datetime "trial_ends_at", null: false
+    t.datetime "trial_started_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["account_id", "external_subscription_id", "trial_started_at"], name: "idx_trial_start_confirmations_dedupe", unique: true
+    t.index ["account_id"], name: "index_billing_trial_start_confirmations_on_account_id"
+    t.index ["status"], name: "index_billing_trial_start_confirmations_on_status"
+    t.index ["subscription_id"], name: "index_billing_trial_start_confirmations_on_subscription_id"
+    t.check_constraint "external_subscription_id::text <> ''::text", name: "chk_trial_start_confirmations_subscription"
+    t.check_constraint "option_key::text = ANY (ARRAY['self_managed_monthly'::character varying, 'self_managed_annual'::character varying]::text[])", name: "chk_trial_start_confirmations_option"
+    t.check_constraint "status::text = ANY (ARRAY['pending'::character varying, 'enqueued'::character varying, 'delivering'::character varying, 'delivered'::character varying, 'skipped'::character varying, 'failed'::character varying]::text[])", name: "chk_trial_start_confirmations_status"
+    t.check_constraint "trial_ends_at > trial_started_at", name: "chk_trial_start_confirmations_trial_range"
   end
 
   create_table "billing_webhook_events", force: :cascade do |t|
@@ -482,6 +508,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_05_120000) do
     t.string "provider", default: "local", null: false
     t.string "status", default: "active", null: false
     t.datetime "trial_ends_at"
+    t.datetime "trial_started_at"
     t.datetime "updated_at", null: false
     t.index ["account_id"], name: "index_subscriptions_on_account_id", unique: true
     t.index ["provider", "external_customer_id"], name: "index_subscriptions_on_provider_and_external_customer_id", where: "(external_customer_id IS NOT NULL)"
@@ -522,6 +549,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_05_120000) do
   add_foreign_key "asset_engines", "assets"
   add_foreign_key "assets", "accounts"
   add_foreign_key "billing_checkout_attempts", "accounts"
+  add_foreign_key "billing_trial_start_confirmations", "accounts", on_delete: :cascade
+  add_foreign_key "billing_trial_start_confirmations", "subscriptions", on_delete: :cascade
   add_foreign_key "binder_notes", "accounts"
   add_foreign_key "binder_notes", "assets"
   add_foreign_key "contacts", "accounts"

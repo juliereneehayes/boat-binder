@@ -1,0 +1,17 @@
+Boat Binder
+
+Your Self Managed trial has started.
+
+Your trial ends on <%= short_date(@confirmation.trial_ends_at, account: @account) %>.
+
+Subscription confirmation
+Plan: <%= @option.name %>
+Billing: <%= @billing_interval %>
+After your trial: <%= @option.display_price %>
+
+Manage your billing
+
+Stripe securely handles payment details. To update payment information, review billing, or cancel your subscription, sign in to Boat Binder and choose Manage billing:
+<%= @manage_billing_url %>
+
+This email confirms that a subscription trial started for your Boat Binder account.

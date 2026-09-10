@@ -1,0 +1,41 @@
+<div style="background: #F7F5F2; color: #0B1F35; font-family: Arial, sans-serif; padding: 24px;">
+  <div style="margin: 0 auto; max-width: 600px;">
+    <div style="background: #0B1F35; border-radius: 8px; color: #FFFFFF; padding: 24px;">
+      <p style="color: #7DAAB3; font-size: 12px; font-weight: 700; margin: 0 0 10px; text-transform: uppercase;">Boat Binder</p>
+      <h1 style="font-size: 27px; line-height: 1.25; margin: 0;">Your Self Managed trial has started</h1>
+      <p style="color: #D7E4E7; font-size: 15px; line-height: 1.6; margin: 12px 0 0;">
+        Your trial ends on <strong><%= short_date(@confirmation.trial_ends_at, account: @account) %></strong>.
+      </p>
+    </div>
+
+    <div style="background: #FFFFFF; border: 1px solid #E7DED2; border-radius: 8px; margin-top: 18px; padding: 22px;">
+      <h2 style="font-size: 18px; margin: 0 0 16px;">Subscription confirmation</h2>
+      <table style="border-collapse: collapse; width: 100%;">
+        <tr>
+          <th scope="row" style="border-top: 1px solid #E7DED2; padding: 12px 0; text-align: left; width: 42%;">Plan</th>
+          <td style="border-top: 1px solid #E7DED2; padding: 12px 0;"><%= @option.name %></td>
+        </tr>
+        <tr>
+          <th scope="row" style="border-top: 1px solid #E7DED2; padding: 12px 0; text-align: left;">Billing</th>
+          <td style="border-top: 1px solid #E7DED2; padding: 12px 0;"><%= @billing_interval %></td>
+        </tr>
+        <tr>
+          <th scope="row" style="border-top: 1px solid #E7DED2; padding: 12px 0; text-align: left;">After your trial</th>
+          <td style="border-top: 1px solid #E7DED2; padding: 12px 0;"><%= @option.display_price %></td>
+        </tr>
+      </table>
+    </div>
+
+    <div style="background: #FFFFFF; border: 1px solid #E7DED2; border-radius: 8px; margin-top: 18px; padding: 22px;">
+      <h2 style="font-size: 18px; margin: 0 0 10px;">Manage your billing</h2>
+      <p style="font-size: 15px; line-height: 1.6; margin: 0 0 18px;">
+        Stripe securely handles payment details. To update payment information, review billing, or cancel your subscription, sign in to Boat Binder and choose <strong>Manage billing</strong>.
+      </p>
+      <%= link_to "Sign in to manage billing", @manage_billing_url, style: "background: #1E5A7A; border-radius: 6px; color: #FFFFFF; display: inline-block; font-size: 15px; font-weight: 700; padding: 12px 18px; text-decoration: none;" %>
+    </div>
+
+    <p style="color: #526579; font-size: 12px; line-height: 1.5; margin: 18px 4px 0;">
+      This email confirms that a subscription trial started for your Boat Binder account.
+    </p>
+  </div>
+</div>

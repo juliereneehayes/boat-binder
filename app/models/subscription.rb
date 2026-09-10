@@ -7,6 +7,7 @@ class Subscription < ApplicationRecord
   STATUSES = [ "legacy", PENDING_CHECKOUT_STATUS, "trialing", "active", "past_due", "canceled", "expired", "suspended" ].freeze
 
   belongs_to :account
+  has_many :billing_trial_start_confirmations, dependent: :destroy
 
   validates :account_id, uniqueness: true
   validates :plan, inclusion: { in: PLANS }

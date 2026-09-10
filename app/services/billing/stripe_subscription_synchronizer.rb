@@ -58,6 +58,11 @@ module Billing
 
         subscription.update!(synchronized_attributes(subscription, canonical_subscription, canonical_option))
         locked_attempt.update!(status: "completed") unless locked_attempt.status == "completed"
+        TrialStartConfirmationScheduler.call(
+          subscription:,
+          attempt: locked_attempt,
+          option: canonical_option
+        )
         subscription
       end
     end
@@ -211,6 +216,7 @@ module Billing
         status:,
         external_customer_id: customer_id(canonical_subscription),
         external_subscription_id: subscription_id(canonical_subscription),
+        trial_started_at: timestamp(canonical_subscription[:trial_start]),
         trial_ends_at:,
         current_period_ends_at:,
         cancel_at_period_end: canonical_subscription.cancel_at_period_end == true,
