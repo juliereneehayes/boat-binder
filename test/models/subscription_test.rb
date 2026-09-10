@@ -79,9 +79,11 @@ class SubscriptionTest < ActiveSupport::TestCase
     subscription = create_account(name: "Local lifecycle timing").subscription
 
     assert_nil subscription.cancel_at
+    assert_nil subscription.trial_started_at
     assert_nil subscription.entitlement_ended_at
     assert_nil subscription.past_due_observed_at
     assert Subscription.columns_hash.fetch("cancel_at").null
+    assert Subscription.columns_hash.fetch("trial_started_at").null
     assert Subscription.columns_hash.fetch("entitlement_ended_at").null
     assert Subscription.columns_hash.fetch("past_due_observed_at").null
   end

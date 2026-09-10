@@ -74,6 +74,33 @@ POST https://app.boat-binder.com/webhooks/stripe
 
 The endpoint verifies the raw request body with `Stripe::Webhook.construct_event`, stores event metadata in `billing_webhook_events`, and uses a unique `[provider, external_event_id]` index for idempotency. Full raw payloads, API keys, and signing secrets are not stored.
 
+## Trial-start Confirmation
+
+After a verified Stripe lifecycle webhook commits a new Self Managed subscription's canonical
+`trialing` state, Boat Binder creates one durable trial-start confirmation keyed by the Account,
+external Subscription, and Stripe's authoritative trial-start timestamp. Related, duplicate,
+retried, and out-of-order events converge on that receipt. Checkout returns, registration, and
+email verification never trigger this message.
+
+The receipt enqueues a dedicated Active Job only after the synchronization transaction commits.
+Solid Queue delivers the multipart confirmation asynchronously through the dedicated worker. An
+enqueue or mail-delivery failure is recorded on the confirmation for operations to inspect and does
+not roll back the Subscription or turn a verified webhook into a failure. There are no automatic
+mail retries; an operator may retry a failed job after diagnosing the delivery issue.
+
+The recipient is the first active Owner, in membership order, whose membership is active and whose
+email identity was verified through self-service verification or accepted invitation. Boat Binder
+does not use manually entered Contact email as a fallback for this required billing message. If no
+safe same-Account recipient exists, delivery is skipped and recorded without exposing recipient or
+Stripe identifiers in logs. Email content uses the plan catalog for interval and post-trial price,
+uses the Account time zone for the canonical trial-end date, and directs the Owner to sign in before
+using the server-authorized Billing Portal.
+
+The migration is additive: older application code ignores the nullable Subscription column and the
+new receipt table. Run migrations before serving the new code. Rolling application code back while
+leaving the additive schema in place is safe. Once canonical trial starts or confirmation history
+exist, the migration refuses to roll back rather than discard those records; roll forward instead.
+
 ## Pending Checkout State
 
 A registered Self Managed customer who has not completed Checkout is represented locally as
