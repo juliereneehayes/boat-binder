@@ -1,4 +1,7 @@
 class BillingTrialStartConfirmation < ApplicationRecord
+  class InvalidDeliveryRecovery < StandardError; end
+
+  OPERATOR_RECOVERY_ERROR_CODE = "operator_recovery_after_provider_check"
   STATUSES = %w[pending enqueued delivering delivered skipped failed].freeze
   OPTION_KEYS = [
     Billing::SubscriptionPlanCatalog::SELF_MANAGED_MONTHLY_KEY,
@@ -38,6 +41,26 @@ class BillingTrialStartConfirmation < ApplicationRecord
 
   def mark_failed!(error_code:)
     update!(status: "failed", failed_at: Time.current, error_code:)
+  end
+
+  def reset_stranded_delivery_after_provider_check!
+    with_lock do
+      unless delivering?
+        raise InvalidDeliveryRecovery, "only a delivering confirmation can be reset"
+      end
+
+      update!(
+        status: "failed",
+        active_job_id: nil,
+        failed_at: Time.current,
+        error_code: OPERATOR_RECOVERY_ERROR_CODE
+      )
+    end
+
+    Rails.logger.warn(
+      "Trial start confirmation result=operator_recovery_reset confirmation_id=#{id}"
+    )
+    true
   end
 
   def delivered?

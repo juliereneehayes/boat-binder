@@ -98,6 +98,33 @@ module Billing
       assert_not_includes logs, @confirmation.external_subscription_id
     end
 
+    test "explicit recovery lets a new job deliver a stranded confirmation exactly once" do
+      recipient = verified_owner(email: "recovered-delivery@example.test")
+      create_account_membership(user: recipient, account: @account)
+      @confirmation.update!(status: "delivering", active_job_id: "stranded-job")
+
+      assert_no_difference -> { ActionMailer::Base.deliveries.size } do
+        TrialStartConfirmationDeliveryJob.perform_now(@confirmation.id)
+      end
+      assert_equal "delivering", @confirmation.reload.status
+
+      logs = capture_logs do
+        @confirmation.reset_stranded_delivery_after_provider_check!
+      end
+      assert_includes logs, "result=operator_recovery_reset"
+      assert_not_includes logs, recipient.email_address
+      assert_not_includes logs, @confirmation.external_subscription_id
+
+      assert_difference -> { ActionMailer::Base.deliveries.size }, 1 do
+        TrialStartConfirmationDeliveryJob.perform_now(@confirmation.id)
+      end
+      assert_equal "delivered", @confirmation.reload.status
+
+      assert_no_difference -> { ActionMailer::Base.deliveries.size } do
+        TrialStartConfirmationDeliveryJob.perform_now(@confirmation.id)
+      end
+    end
+
     private
 
     def create_confirmation

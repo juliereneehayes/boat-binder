@@ -45,6 +45,49 @@ class BillingTrialStartConfirmationTest < ActiveSupport::TestCase
     assert_includes confirmation.errors[:trial_ends_at], "must be after the trial start"
   end
 
+  test "a different job cannot claim a delivering confirmation even when the claim is old" do
+    confirmation = create_confirmation
+    confirmation.update!(status: "delivering", active_job_id: "active-job")
+    confirmation.update_column(:updated_at, 1.year.ago)
+
+    assert_not confirmation.claim_delivery!(job_id: "different-job")
+
+    confirmation.reload
+    assert_equal "delivering", confirmation.status
+    assert_equal "active-job", confirmation.active_job_id
+  end
+
+  test "operator recovery resets only a delivering confirmation after a provider check" do
+    confirmation = create_confirmation
+    confirmation.update!(status: "delivering", active_job_id: "stranded-job")
+    clear_enqueued_jobs
+
+    assert_no_enqueued_jobs do
+      assert confirmation.reset_stranded_delivery_after_provider_check!
+    end
+
+    confirmation.reload
+    assert_equal "failed", confirmation.status
+    assert_nil confirmation.active_job_id
+    assert_not_nil confirmation.failed_at
+    assert_equal BillingTrialStartConfirmation::OPERATOR_RECOVERY_ERROR_CODE,
+      confirmation.error_code
+  end
+
+  test "operator recovery fails closed for confirmations that are not delivering" do
+    confirmation = create_confirmation.reload
+
+    %w[pending enqueued failed delivered skipped].each do |status|
+      confirmation.update!(status:, active_job_id: "job-for-#{status}")
+
+      assert_raises(BillingTrialStartConfirmation::InvalidDeliveryRecovery) do
+        confirmation.reset_stranded_delivery_after_provider_check!
+      end
+      assert_equal status, confirmation.reload.status
+      assert_equal "job-for-#{status}", confirmation.active_job_id
+    end
+  end
+
   test "delivery is enqueued only after the creating transaction commits" do
     assert_no_enqueued_jobs do
       ActiveRecord::Base.transaction do
