@@ -4,9 +4,14 @@ module Billing
   class OwnerLifecycleRecoveryTest < ActiveSupport::TestCase
     setup do
       @now = Time.zone.local(2026, 8, 29, 12)
+      travel_to @now
       @account = create_account(name: "Recovery Service Account")
       @owner = create_user(email: "recovery-service@example.test", role: "owner")
       @editor = create_account_membership(user: @owner, account: @account, access_level: "editor")
+    end
+
+    teardown do
+      travel_back
     end
 
     test "ordinary current entitlement stays invisible while either canonical schedule is actionable" do
