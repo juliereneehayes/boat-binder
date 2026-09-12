@@ -80,7 +80,11 @@ Documentation currently includes:
 - `docs/email.md` for Mailgun SMTP setup
 - `docs/stripe.md` for Stripe webhook setup
 
-The Build Week demo setup is implemented by `BuildWeek::DemoAccountSetup` and `db/seeds/build_week_demo.rb`. It refreshes a fictional owner account with demo vessels, documents, reminders, notes, and service visits. Production requires `BUILD_WEEK_DEMO_PASSWORD`; development and test have a fallback. The regular `db/seeds.rb` is a broader local/demo seed that clears and recreates application data and should not be treated as a production or staging refresh workflow.
+Ordinary `db/seeds.rb` is non-destructive outside production and aborts immediately in production.
+The retained fictional Build Week setup is implemented by `BuildWeek::DemoAccountSetup` and the
+`demo:reset` task. It has no credential defaults, refreshes only the explicitly identified marked
+Account, and requires an environment allowlist plus typed confirmation outside test. Production is
+prohibited. Contest-specific retirement or repurposing remains owned by #125.
 
 ## Current Strengths
 
@@ -105,7 +109,9 @@ The Build Week demo setup is implemented by `BuildWeek::DemoAccountSetup` and `d
 - The Stripe documentation currently names the production webhook URL directly. Staging will need its own endpoint, webhook signing secret, and test-mode Price IDs once Checkout is introduced.
 - The repository documents Stripe plan Price ID environment variables, but this checkout does not yet contain an application plan catalog implementation. Staging work should reconcile the docs with the eventual billing-plan code before Checkout.
 - The dedicated Solid Queue worker must be scaled explicitly in each Heroku formation; deploying the `Procfile` alone does not start it.
-- `db/seeds.rb` is destructive and should remain a local/demo seed only. Staging demo data should use a scoped script or task.
+- The current production-mode staging recommendation intentionally prohibits `db:seed` and the
+  retained Build Week reset. A future staging demo workflow must be explicitly designed under #125
+  rather than weakening the production guard.
 
 ## Production Assumptions Discovered
 
@@ -120,7 +126,8 @@ The following values or behaviors will need environment-specific decisions befor
 - Production uploads require S3 variables and a bucket.
 - Stripe webhook verification requires `STRIPE_WEBHOOK_SECRET`.
 - Stripe API key configuration is optional at boot but required for future Stripe-dependent operations.
-- `BUILD_WEEK_DEMO_PASSWORD` is required in production.
+- The retained Build Week demo credentials have no defaults and are accepted only by the guarded,
+  non-production `demo:reset` task.
 - Host authorization is not explicitly configured in production.
 - `config.cache.yml` namespaces cache entries by `Rails.env`; staging using `RAILS_ENV=production` would share the namespace name `production` unless isolated by database or future configuration.
 
@@ -156,7 +163,7 @@ Create a separate Heroku app, for example `boat-binder-staging`, running the sam
 - separate Stripe test-mode webhook endpoint and signing secret
 - Stripe test-mode Price IDs
 - `STRIPE_LIVEMODE=false`
-- separate `BUILD_WEEK_DEMO_EMAIL` and `BUILD_WEEK_DEMO_PASSWORD`
+- no demo reset configuration unless #125 deliberately defines a supported staging replacement
 
 Running staging with `RAILS_ENV=production` keeps Rails behavior close to production. A separate `staging.rb` environment could be added later if the app needs visible environment banners, different caching, or more permissive diagnostics, but it also increases configuration drift. For Phase 1 staging, a distinct Heroku app with production Rails behavior and separate config vars is the simpler and safer path.
 
@@ -178,7 +185,7 @@ Keep the current Heroku production app as the live environment:
 - production Stripe live-mode keys and webhook signing secret when billing goes live
 - production Stripe live-mode Price IDs and `STRIPE_LIVEMODE=true`
 - one explicitly scaled Solid Queue `worker` process before queued transactional work is enabled
-- no demo-data refresh unless intentionally run by an operator
+- no production demo-data reset path or configuration
 
 ## Solid Queue Runtime
 
@@ -304,7 +311,8 @@ Heroku Pipelines are a good fit if the team wants explicit promotion from stagin
   - production: `https://app.boat-binder.com/webhooks/stripe`
   - staging: `https://staging.boat-binder.com/webhooks/stripe` or the chosen staging host
 - Use separate `APP_HOST` values so all email links route to the correct environment.
-- Use separate demo credentials for staging and production demos.
+- If #125 retains a staging demo, use staging-only credentials; production has no supported demo
+  reset configuration.
 - Document which environment may contain fictional/demo data and which must not.
 
 ## Documentation Updates Needed Once Staging Exists
@@ -332,12 +340,14 @@ Heroku Pipelines are a good fit if the team wants explicit promotion from stagin
 Recommended implementation order:
 
 1. Create the Heroku staging app and attach a separate PostgreSQL database.
-2. Configure a staging-only `SECRET_KEY_BASE`, plus staging `APP_HOST`, SMTP, S3, Stripe test-mode, and demo credentials.
+2. Configure a staging-only `SECRET_KEY_BASE`, plus staging `APP_HOST`, SMTP, S3, and Stripe test-mode
+   credentials. Add demo credentials only if #125 defines a supported staging workflow.
 3. Create a staging S3 bucket and least-privilege IAM credentials.
 4. Configure a staging Stripe webhook endpoint and store its signing secret.
 5. Deploy and validate the dedicated Solid Queue worker in staging, then explicitly scale one production worker before queued transactional work is enabled.
 6. Add a deployment runbook with staging smoke tests and production promotion steps.
 7. Add explicit host authorization for finalized production and staging domains if appropriate.
-8. Add a safe staging demo-data refresh command or task that uses the scoped Build Week demo setup.
+8. Decide under #125 whether staging needs a demo; if retained, add a supported staging-only route to
+   the existing scoped setup without weakening production prohibition.
 9. Add optional GitHub Actions deployment automation or Heroku Pipeline promotion after manual deployment is stable.
 10. Add environment-specific observability checks for email delivery, Stripe webhook receipt, background jobs, and Active Storage uploads.

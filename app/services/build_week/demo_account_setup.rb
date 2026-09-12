@@ -2,24 +2,38 @@ module BuildWeek
   class DemoAccountSetup
     class ConflictError < StandardError; end
     class MissingCredentialError < StandardError; end
+    class UnsafeEnvironmentError < StandardError; end
+    class ConfirmationError < StandardError; end
 
     DEMO_MARKER = "[Build Week demo account]".freeze
     ACCOUNT_NAME = "Alex Johnson"
-    DEFAULT_EMAIL = "demo@boat-binder.com"
-    DEFAULT_PASSWORD = "boat-binder-build-week-demo"
     ACCOUNT_TIME_ZONE = "America/Los_Angeles"
+    ALLOWED_ENVIRONMENTS_VARIABLE = "BUILD_WEEK_DEMO_ALLOWED_ENVIRONMENTS"
+    CONFIRMATION_VARIABLE = "BUILD_WEEK_DEMO_CONFIRMATION"
+    REQUIRED_CONFIRMATION = "RESET BUILD WEEK DEMO"
+    SUPPORTED_ENVIRONMENTS = %w[development staging test].freeze
 
     Result = Struct.new(:account, :user, :vessels, keyword_init: true)
 
-    def self.call(output: $stdout)
-      new(output: output).call
+    def self.call(output: $stdout, environment: Rails.env, allowed_environments: nil, confirmation: nil)
+      new(
+        output: output,
+        environment: environment,
+        allowed_environments: allowed_environments,
+        confirmation: confirmation
+      ).call
     end
 
-    def initialize(output:)
+    def initialize(output:, environment: Rails.env, allowed_environments: nil, confirmation: nil)
       @output = output
+      @environment = ActiveSupport::EnvironmentInquirer.new(environment.to_s)
+      @allowed_environments = allowed_environments || ENV[ALLOWED_ENVIRONMENTS_VARIABLE]
+      @confirmation = confirmation || ENV[CONFIRMATION_VARIABLE]
     end
 
     def call
+      validate_execution!
+      validate_credentials!
       result = nil
 
       ActiveRecord::Base.transaction do
@@ -39,18 +53,49 @@ module BuildWeek
 
     private
 
-    attr_reader :output
+    attr_reader :allowed_environments, :confirmation, :environment, :output
 
     def demo_email
-      ENV.fetch("BUILD_WEEK_DEMO_EMAIL", DEFAULT_EMAIL).to_s.strip.downcase
+      ENV["BUILD_WEEK_DEMO_EMAIL"].to_s.strip.downcase
     end
 
     def demo_password
-      password = ENV["BUILD_WEEK_DEMO_PASSWORD"].presence
-      return password if password.present?
-      return DEFAULT_PASSWORD unless Rails.env.production?
+      ENV["BUILD_WEEK_DEMO_PASSWORD"].to_s
+    end
 
-      raise MissingCredentialError, "BUILD_WEEK_DEMO_PASSWORD must be set in production"
+    def validate_execution!
+      if environment.production?
+        raise UnsafeEnvironmentError, "Build Week demo reset is prohibited in production"
+      end
+
+      unless supported_environment? && configured_environment_allowlist.include?(environment.to_s)
+        raise UnsafeEnvironmentError,
+          "Build Week demo reset is not enabled for the current environment"
+      end
+
+      return if environment.test?
+      return if confirmation == REQUIRED_CONFIRMATION
+
+      raise ConfirmationError,
+        "Set #{CONFIRMATION_VARIABLE} to #{REQUIRED_CONFIRMATION.inspect} to confirm the scoped reset"
+    end
+
+    def supported_environment?
+      SUPPORTED_ENVIRONMENTS.include?(environment.to_s)
+    end
+
+    def configured_environment_allowlist
+      allowed_environments.to_s.split(",").map(&:strip).reject(&:blank?)
+    end
+
+    def validate_credentials!
+      if demo_email.blank?
+        raise MissingCredentialError, "BUILD_WEEK_DEMO_EMAIL must be set"
+      end
+
+      if demo_password.blank?
+        raise MissingCredentialError, "BUILD_WEEK_DEMO_PASSWORD must be set"
+      end
     end
 
     def find_or_create_account
@@ -396,12 +441,11 @@ module BuildWeek
     def print_summary(result)
       output.puts "Build Week demo account refreshed."
       output.puts "Account: #{result.account.name}"
-      output.puts "Login email: #{result.user.email_address}"
       output.puts "Vessels: #{result.vessels.map(&:name).join(', ')}"
       output.puts "Documents: #{result.account.documents.count}"
       output.puts "Service visits: #{result.account.assets.joins(:service_visits).count}"
       output.puts "Reminders: #{result.account.assets.joins(:reminders).count}"
-      output.puts "Password: set from BUILD_WEEK_DEMO_PASSWORD; production requires this variable."
+      output.puts "Credentials were supplied through the required demo environment variables."
     end
   end
 end

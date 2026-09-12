@@ -8,13 +8,18 @@ class BuildWeekDemoAccountSetupTest < ActiveSupport::TestCase
   setup do
     @previous_email = ENV["BUILD_WEEK_DEMO_EMAIL"]
     @previous_password = ENV["BUILD_WEEK_DEMO_PASSWORD"]
+    @previous_allowed_environments = ENV["BUILD_WEEK_DEMO_ALLOWED_ENVIRONMENTS"]
+    @previous_confirmation = ENV["BUILD_WEEK_DEMO_CONFIRMATION"]
     ENV["BUILD_WEEK_DEMO_EMAIL"] = DEMO_EMAIL
     ENV["BUILD_WEEK_DEMO_PASSWORD"] = DEMO_PASSWORD
+    ENV["BUILD_WEEK_DEMO_ALLOWED_ENVIRONMENTS"] = "test"
   end
 
   teardown do
     restore_env("BUILD_WEEK_DEMO_EMAIL", @previous_email)
     restore_env("BUILD_WEEK_DEMO_PASSWORD", @previous_password)
+    restore_env("BUILD_WEEK_DEMO_ALLOWED_ENVIRONMENTS", @previous_allowed_environments)
+    restore_env("BUILD_WEEK_DEMO_CONFIRMATION", @previous_confirmation)
   end
 
   test "first run creates the expected demo user account and content" do
@@ -50,7 +55,88 @@ class BuildWeekDemoAccountSetupTest < ActiveSupport::TestCase
     assert_equal 4, account.binder_notes.count
     assert_not_includes output.string, DEMO_PASSWORD
     assert_includes output.string, "Build Week demo account refreshed."
-    assert_includes output.string, "Password: set from BUILD_WEEK_DEMO_PASSWORD; production requires this variable."
+    assert_includes output.string, "Credentials were supplied through the required demo environment variables."
+    assert_not_includes output.string, DEMO_EMAIL
+  end
+
+  test "production reset is prohibited before any mutation" do
+    unrelated = create_account(name: "Production Customer")
+    unrelated_vessel = create_vessel(account: unrelated, name: "Protected Vessel")
+
+    error = assert_raises(BuildWeek::DemoAccountSetup::UnsafeEnvironmentError) do
+      BuildWeek::DemoAccountSetup.call(
+        output: StringIO.new,
+        environment: "production",
+        allowed_environments: "production",
+        confirmation: BuildWeek::DemoAccountSetup::REQUIRED_CONFIRMATION
+      )
+    end
+
+    assert_equal "Build Week demo reset is prohibited in production", error.message
+    assert Account.exists?(unrelated.id)
+    assert Asset.exists?(unrelated_vessel.id)
+    assert_nil Account.find_by(name: BuildWeek::DemoAccountSetup::ACCOUNT_NAME)
+  end
+
+  test "reset refuses an environment that is not explicitly allowlisted" do
+    error = assert_raises(BuildWeek::DemoAccountSetup::UnsafeEnvironmentError) do
+      BuildWeek::DemoAccountSetup.call(
+        output: StringIO.new,
+        environment: "development",
+        allowed_environments: "test",
+        confirmation: BuildWeek::DemoAccountSetup::REQUIRED_CONFIRMATION
+      )
+    end
+
+    assert_equal "Build Week demo reset is not enabled for the current environment", error.message
+    assert_nil Account.find_by(name: BuildWeek::DemoAccountSetup::ACCOUNT_NAME)
+  end
+
+  test "reset requires typed confirmation outside test" do
+    error = assert_raises(BuildWeek::DemoAccountSetup::ConfirmationError) do
+      BuildWeek::DemoAccountSetup.call(
+        output: StringIO.new,
+        environment: "development",
+        allowed_environments: "development",
+        confirmation: "yes"
+      )
+    end
+
+    assert_includes error.message, BuildWeek::DemoAccountSetup::CONFIRMATION_VARIABLE
+    assert_nil Account.find_by(name: BuildWeek::DemoAccountSetup::ACCOUNT_NAME)
+  end
+
+  test "allowlisted development reset succeeds with exact typed confirmation" do
+    result = BuildWeek::DemoAccountSetup.call(
+      output: StringIO.new,
+      environment: "development",
+      allowed_environments: "development",
+      confirmation: BuildWeek::DemoAccountSetup::REQUIRED_CONFIRMATION
+    )
+
+    assert result.account.persisted?
+    assert result.user.persisted?
+  end
+
+  test "reset requires explicitly configured demo credentials" do
+    ENV.delete("BUILD_WEEK_DEMO_EMAIL")
+
+    error = assert_raises(BuildWeek::DemoAccountSetup::MissingCredentialError) do
+      BuildWeek::DemoAccountSetup.call(output: StringIO.new)
+    end
+
+    assert_equal "BUILD_WEEK_DEMO_EMAIL must be set", error.message
+    assert_nil Account.find_by(name: BuildWeek::DemoAccountSetup::ACCOUNT_NAME)
+
+    ENV["BUILD_WEEK_DEMO_EMAIL"] = DEMO_EMAIL
+    ENV.delete("BUILD_WEEK_DEMO_PASSWORD")
+
+    error = assert_raises(BuildWeek::DemoAccountSetup::MissingCredentialError) do
+      BuildWeek::DemoAccountSetup.call(output: StringIO.new)
+    end
+
+    assert_equal "BUILD_WEEK_DEMO_PASSWORD must be set", error.message
+    assert_nil Account.find_by(name: BuildWeek::DemoAccountSetup::ACCOUNT_NAME)
   end
 
   test "environment restoration deletes originally unset variables and restores present ones" do
@@ -171,13 +257,28 @@ class BuildWeekDemoAccountSetupTest < ActiveSupport::TestCase
   test "unrelated accounts are untouched" do
     unrelated = create_account(name: "Unrelated Owner")
     unrelated_vessel = create_vessel(account: unrelated, name: "Unrelated Vessel")
+    unrelated_document = Document.create!(
+      account: unrelated,
+      asset: unrelated_vessel,
+      title: "Private registration",
+      document_type: "registration"
+    )
+    unrelated_document.file.attach(uploaded_file("sample.pdf", "application/pdf"))
+    unrelated_vessel.primary_photo.attach(uploaded_file("sample.jpg", "image/jpeg"))
+    document_blob_id = unrelated_document.file.blob.id
+    photo_blob_id = unrelated_vessel.primary_photo.blob.id
 
     BuildWeek::DemoAccountSetup.call(output: StringIO.new)
 
     assert Account.exists?(unrelated.id)
     assert Asset.exists?(unrelated_vessel.id)
+    assert Document.exists?(unrelated_document.id)
+    assert ActiveStorage::Blob.exists?(document_blob_id)
+    assert ActiveStorage::Blob.exists?(photo_blob_id)
     assert_equal "Unrelated Owner", unrelated.reload.name
     assert_equal "Unrelated Vessel", unrelated_vessel.reload.name
+    assert unrelated_document.reload.file.attached?
+    assert unrelated_vessel.reload.primary_photo.attached?
   end
 
   test "demo owner has active writable membership and valid local subscription" do

@@ -55,6 +55,10 @@ bin/dev
 `db:prepare` initializes the application, Solid Cache, Solid Queue, and Solid Cable tables in the
 same local PostgreSQL database.
 
+`db:seed` is intentionally non-destructive and does not create sample users. The explicitly scoped
+fictional demo reset, including its required safeguards, is documented in
+[Seed and Demo Operations](docs/seed-operations.md).
+
 `bin/dev` runs Rails and Tailwind watchers through `Procfile.dev`. The app defaults to port 3000 unless `PORT` is set. You can also run `bin/rails server`.
 
 ## Tests And Security Checks
@@ -94,5 +98,6 @@ Planned GPT-5.6 feature: a Vessel Ownership Brief that synthesizes reminders, se
 
 - [Configuration](docs/configuration.md)
 - [Deployment Architecture Review](docs/deployment-architecture.md)
+- [Seed and Demo Operations](docs/seed-operations.md)
 - [Production Email](docs/email.md)
 - [Stripe Foundation](docs/stripe.md)
