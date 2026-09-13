@@ -34,11 +34,11 @@ class AttachmentsController < ApplicationController
 
     blob = attachment.blob
     response.headers["Accept-Ranges"] = "bytes"
-    response.headers["Content-Length"] = blob.byte_size.to_s
 
     if request.headers["Range"].present?
       send_blob_byte_range_data(blob, request.headers["Range"], disposition:)
     else
+      response.headers["Content-Length"] = blob.byte_size.to_s
       send_blob_stream(blob, disposition:)
     end
   end

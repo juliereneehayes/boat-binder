@@ -31,6 +31,7 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
     assert_response :success
     assert_equal "application/pdf", response.media_type
     assert_match(/inline/, response.headers.fetch("Content-Disposition"))
+    assert_equal @document.file.blob.byte_size.to_s, response.headers.fetch("Content-Length")
     assert_private_no_store
 
     get document_file_path(@document, disposition: "attachment")
@@ -45,6 +46,21 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
     get service_visit_photo_path(@vessel, @visit, @photo)
     assert_response :success
     assert_equal "image/png", response.media_type
+    assert_private_no_store
+  end
+
+  test "authorized Document range requests return only the requested bytes and partial length" do
+    blob = @document.file.blob
+    expected_body = blob.download.byteslice(0, 10)
+    sign_in_as(@owner)
+
+    get document_file_path(@document), headers: { "Range" => "bytes=0-9" }
+
+    assert_response :partial_content
+    assert_equal "bytes 0-9/#{blob.byte_size}", response.headers.fetch("Content-Range")
+    assert_equal expected_body.bytesize.to_s, response.headers.fetch("Content-Length")
+    assert_equal expected_body, response.body
+    assert_equal "bytes", response.headers.fetch("Accept-Ranges")
     assert_private_no_store
   end
 
