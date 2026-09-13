@@ -47,6 +47,7 @@ class VesselsController < ApplicationController
     @vessel = Asset.new(vessel_params.except(:primary_photo))
     @vessel.asset_type = "vessel"
     return unless assign_vessel_account(@vessel)
+    return unless attachment_upload_account_active?(@vessel.account, primary_photo_upload)
 
     if (primary_photo_error = Asset.primary_photo_upload_error(primary_photo_upload))
       render_vessel_form_with_primary_photo_error(@vessel, primary_photo_error, :new)
@@ -75,6 +76,7 @@ class VesselsController < ApplicationController
     primary_photo_upload = vessel_params[:primary_photo]
     permitted_attributes = vessel_params.except(:primary_photo)
     return unless assign_vessel_account(@vessel)
+    return unless attachment_upload_account_active?(@vessel.account, primary_photo_upload)
 
     if (primary_photo_error = Asset.primary_photo_upload_error(primary_photo_upload))
       @vessel.assign_attributes(permitted_attributes)
@@ -192,5 +194,12 @@ class VesselsController < ApplicationController
 
   def require_vessel_creation_access!
     deny_access! unless can_create_vessels?
+  end
+
+  def attachment_upload_account_active?(account, upload)
+    return true if upload.blank? || account&.active?
+
+    deny_access!
+    false
   end
 end

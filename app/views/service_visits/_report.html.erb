@@ -206,7 +206,7 @@
       <% if service_visit.photos.attached? && show_photos %>
         <div class="grid gap-3 sm:grid-cols-2">
           <% service_visit.photos.each do |photo| %>
-            <%= image_tag photo, alt: "", class: "aspect-[4/3] w-full rounded-md object-cover ring-1 ring-slate-200" %>
+            <%= image_tag service_visit_photo_path(vessel, service_visit, photo), alt: "", class: "aspect-[4/3] w-full rounded-md object-cover ring-1 ring-slate-200" %>
           <% end %>
         </div>
       <% elsif service_visit.photos.attached? %>

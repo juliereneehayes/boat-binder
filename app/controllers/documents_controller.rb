@@ -35,6 +35,7 @@ class DocumentsController < ApplicationController
       Document.new(document_attribute_params)
     end
     return unless assign_document_relationships(@document, template: :new)
+    return unless attachment_upload_account_active?(@document.account, file_upload)
 
     if (file_error = Document.file_upload_error(file_upload))
       render_document_form_with_file_error(@document, file_error, :new)
@@ -61,6 +62,7 @@ class DocumentsController < ApplicationController
     file_upload = document_file_upload
     @document.assign_attributes(document_attribute_params)
     return unless assign_document_relationships(@document, template: :edit)
+    return unless attachment_upload_account_active?(@document.account, file_upload)
 
     if (file_error = Document.file_upload_error(file_upload))
       render_document_form_with_file_error(@document, file_error, :edit)
@@ -245,5 +247,12 @@ class DocumentsController < ApplicationController
     else
       documents_path
     end
+  end
+
+  def attachment_upload_account_active?(account, upload)
+    return true if upload.blank? || account&.active?
+
+    deny_access!
+    false
   end
 end

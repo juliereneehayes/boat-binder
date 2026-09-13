@@ -46,6 +46,10 @@ Rails.application.routes.draw do
   end
 
   resources :documents, only: %i[index show new create edit update destroy]
+  get "documents/:document_id/file", to: "attachments#document_file", as: :document_file
+  get "vessels/:vessel_id/primary-photo", to: "attachments#vessel_primary_photo", as: :vessel_primary_photo
+  get "vessels/:vessel_id/service-visits/:service_visit_id/photos/:id",
+    to: "attachments#service_visit_photo", as: :service_visit_photo
   resources :reminders, only: %i[index new create edit update]
   resources :service_visits, only: %i[index]
   get "users", to: redirect("/admin/users")

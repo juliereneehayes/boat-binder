@@ -32,8 +32,8 @@
             <%= link_to document.file.attached? ? "Edit" : "Edit / Add file", edit_document_path(document), class: secondary_button_class("min-h-11") %>
           <% end %>
           <% if document.file.attached? %>
-            <%= link_to "Open file", url_for(document.file), class: "inline-flex min-h-11 items-center rounded-md bg-slate-900 px-4 py-2 text-sm font-bold text-white" %>
-            <%= link_to "Download", rails_blob_path(document.file, disposition: "attachment"), class: "inline-flex min-h-11 items-center rounded-md border border-slate-200 px-4 py-2 text-sm font-bold text-slate-700" %>
+            <%= link_to "Open file", document_file_path(document), class: "inline-flex min-h-11 items-center rounded-md bg-slate-900 px-4 py-2 text-sm font-bold text-white" %>
+            <%= link_to "Download", document_file_path(document, disposition: "attachment"), class: "inline-flex min-h-11 items-center rounded-md border border-slate-200 px-4 py-2 text-sm font-bold text-slate-700" %>
           <% end %>
           <% if can_manage_account?(document.account) %>
             <%= button_to "Delete", document_path(document), method: :delete, form: { data: { turbo_confirm: "Delete #{document.title}?" } }, class: "min-h-11 rounded-md border border-red-200 px-4 py-2 text-sm font-bold text-red-700", data: { turbo_submits_with: "Deleting..." } %>

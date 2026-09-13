@@ -23,6 +23,9 @@ module BoatBinder
     #
     config.time_zone = "Pacific Time (US & Canada)"
     config.exceptions_app = ->(env) { ApplicationExceptions.call(env) }
+    # Customer attachments are delivered only through Boat Binder controllers,
+    # where the owning record and Account are authorized on every request.
+    config.active_storage.draw_routes = false
     # config.eager_load_paths << Rails.root.join("extras")
   end
 end

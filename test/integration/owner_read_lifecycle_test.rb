@@ -374,15 +374,16 @@ class OwnerReadLifecycleTest < ActionDispatch::IntegrationTest
     get vessel_path(@vessel)
     assert_response :success
     assert_includes response.body, @note.title
-    assert_select "#documents a[href^='/rails/active_storage']", minimum: 1
+    assert_select "#documents a[href^=?]", document_file_path(@document), minimum: 1
+    assert_select "img[src=?]", vessel_primary_photo_path(@vessel)
 
     get documents_path
     assert_response :success
     assert_includes response.body, @document.title
-    assert_select "a[href^='/rails/active_storage']", minimum: 1
+    assert_select "a[href^=?]", document_file_path(@document), minimum: 1
     get document_path(@document)
     assert_response :success
-    assert_select "a[href^='/rails/active_storage']", minimum: 1
+    assert_select "a[href^=?]", document_file_path(@document), minimum: 1
 
     get reminders_path
     assert_response :success
@@ -392,6 +393,7 @@ class OwnerReadLifecycleTest < ActionDispatch::IntegrationTest
     assert_includes response.body, @visit.summary
     get vessel_service_visit_path(@vessel, @visit)
     assert_response :success
+    assert_select "img[src=?]", service_visit_photo_path(@vessel, @visit, @visit.photos.attachments.sole)
     get report_vessel_service_visit_path(@vessel, @visit)
     assert_response :success
   end

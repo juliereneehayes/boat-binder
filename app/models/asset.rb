@@ -48,6 +48,7 @@ class Asset < ApplicationRecord
 
   def self.primary_photo_upload_error(upload)
     return if upload.blank?
+    return "must be a new image uploaded from this device" unless AttachmentUpload.multipart?(upload)
 
     detected_content_type = primary_photo_upload_content_type(upload)
 
