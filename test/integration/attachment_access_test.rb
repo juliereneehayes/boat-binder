@@ -69,7 +69,7 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
 
     get vessel_path(@vessel)
     assert_response :success
-    assert_select "img[src=?]", vessel_primary_photo_path(@vessel)
+    assert_select "img[src=?]", vessel_primary_photo_path(@vessel, v: @vessel.primary_photo.blob.id)
     assert_select "a[href^=?]", document_file_path(@document), minimum: 1
     assert_select "[src^='/rails/active_storage'], [href^='/rails/active_storage']", count: 0
 

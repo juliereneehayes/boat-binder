@@ -375,7 +375,7 @@ class OwnerReadLifecycleTest < ActionDispatch::IntegrationTest
     assert_response :success
     assert_includes response.body, @note.title
     assert_select "#documents a[href^=?]", document_file_path(@document), minimum: 1
-    assert_select "img[src=?]", vessel_primary_photo_path(@vessel)
+    assert_select "img[src=?]", vessel_primary_photo_path(@vessel, v: @vessel.primary_photo.blob.id)
 
     get documents_path
     assert_response :success
