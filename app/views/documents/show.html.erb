@@ -58,8 +58,8 @@
           <p><span class="font-semibold text-slate-800">Size:</span> <%= number_to_human_size(@document.file.blob.byte_size) %></p>
         </div>
         <div class="mt-5 flex flex-wrap gap-2">
-          <%= link_to "Open file", document_file_path(@document), class: primary_button_class %>
-          <%= link_to "Download", document_file_path(@document, disposition: "attachment"), class: secondary_button_class %>
+          <%= link_to "Open file", document_file_path(@document), class: primary_button_class, data: { turbo: false } %>
+          <%= link_to "Download", document_file_path(@document, disposition: "attachment"), class: secondary_button_class, data: { turbo: false } %>
         </div>
       <% else %>
         <div class="mt-4 rounded-md border border-dashed border-slate-300 bg-slate-50 p-5">

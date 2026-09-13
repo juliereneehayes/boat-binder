@@ -2,6 +2,21 @@ require "test_helper"
 require "tempfile"
 
 class DocumentManagementTest < ActionDispatch::IntegrationTest
+  test "user-facing attachment links bypass Turbo navigation" do
+    sign_in_as
+    vessel = create_vessel
+    document = vessel.documents.create!(account: vessel.account, title: "Turbo document", document_type: "other")
+    document.file.attach(fixture_file_upload("sample.pdf", "application/pdf"))
+
+    [ document_path(document), documents_path, vessel_path(vessel) ].each do |path|
+      get path
+      assert_response :success
+      assert_select "a[href=?][data-turbo='false']", document_file_path(document), text: "Open file"
+      assert_select "a[href=?][data-turbo='false']",
+        document_file_path(document, disposition: "attachment"), text: "Download"
+    end
+  end
+
   test "vessel page includes direct document link and document can be deleted" do
     sign_in_as
     vessel = create_vessel
