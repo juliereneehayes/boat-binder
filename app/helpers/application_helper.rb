@@ -133,7 +133,7 @@ module ApplicationHelper
 
   def vessel_primary_photo(vessel, image_class:, placeholder_class:)
     if vessel.primary_photo.attached?
-      image_tag vessel.primary_photo, alt: "#{vessel.name} primary photo", class: image_class
+      image_tag vessel_primary_photo_path(vessel), alt: "#{vessel.name} primary photo", class: image_class
     else
       tag.div class: placeholder_class, role: "img", aria: { label: "Primary photo placeholder for #{vessel.name}" } do
         safe_join([

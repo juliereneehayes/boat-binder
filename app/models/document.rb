@@ -20,6 +20,7 @@ class Document < ApplicationRecord
 
   def self.file_upload_error(upload)
     return if upload.blank?
+    return "must be a new file uploaded from this device" unless AttachmentUpload.multipart?(upload)
     return "must be a PDF, JPEG, PNG, or WEBP file" unless ALLOWED_FILE_CONTENT_TYPES.include?(file_upload_content_type(upload))
 
     "must be 25 MB or smaller" if file_upload_size(upload).to_i > MAX_FILE_SIZE

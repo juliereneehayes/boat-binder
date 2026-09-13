@@ -24,12 +24,23 @@ class ServiceVisitsController < ApplicationController
   end
 
   def create
-    @service_visit = @vessel.service_visits.new(service_visit_params)
+    submitted_attributes = service_visit_params
+    photo_uploads = submitted_attributes.delete(:photos)
+    return unless attachment_upload_account_active?(photo_uploads)
+
+    @service_visit = @vessel.service_visits.new(submitted_attributes)
     @service_visit.performed_by_user = Current.user
     @service_visit.build_workflow_defaults
     assign_engine_readings
     assign_inspection_checks
     assign_battery_checks
+
+    if (photo_error = ServiceVisit.photo_upload_error(photo_uploads))
+      render_service_visit_form_with_photo_error(photo_error)
+      return
+    end
+
+    append_photo_uploads(photo_uploads)
 
     if @service_visit.save
       create_issue_note if issue_note_present?
@@ -47,11 +58,19 @@ class ServiceVisitsController < ApplicationController
   def update
     submitted_attributes = service_visit_params
     photo_uploads = submitted_attributes.delete(:photos)
+    return unless attachment_upload_account_active?(photo_uploads)
+
     @service_visit.assign_attributes(submitted_attributes)
-    append_photo_uploads(photo_uploads)
     assign_engine_readings
     assign_inspection_checks
     assign_battery_checks
+
+    if (photo_error = ServiceVisit.photo_upload_error(photo_uploads))
+      render_service_visit_form_with_photo_error(photo_error)
+      return
+    end
+
+    append_photo_uploads(photo_uploads)
 
     if @service_visit.save
       redirect_to vessel_service_visit_path(@vessel, @service_visit), notice: "Visit report updated."
@@ -170,6 +189,19 @@ class ServiceVisitsController < ApplicationController
     return if uploads.empty?
 
     @service_visit.photos = @service_visit.photos.blobs + uploads
+  end
+
+  def attachment_upload_account_active?(uploads)
+    return true if Array(uploads).compact_blank.empty? || @vessel.account.active?
+
+    deny_access!
+    false
+  end
+
+  def render_service_visit_form_with_photo_error(message)
+    @service_visit.valid?
+    @service_visit.errors.add(:photos, message)
+    render :new, status: :unprocessable_entity
   end
 
   def issue_note_present?

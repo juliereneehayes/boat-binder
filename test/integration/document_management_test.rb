@@ -43,7 +43,8 @@ class DocumentManagementTest < ActionDispatch::IntegrationTest
     assert_includes response.body, "No file attached"
     assert_includes response.body, "Open file"
     assert_includes response.body, "Download"
-    assert_select "#documents a[href^='/rails/active_storage']", minimum: 1
+    assert_select "#documents a[href^=?]", document_file_path(Document.find_by!(title: "Recent document 1")), minimum: 1
+    assert_select "#documents a[href^='/rails/active_storage']", count: 0
   end
 
   test "document index shows view edit and metadata only status" do

@@ -36,6 +36,11 @@ class ServiceVisit < ApplicationRecord
   scope :recent, -> { order(visit_date: :desc, created_at: :desc) }
   scope :with_open_follow_up, -> { where(follow_up_needed: true, follow_up_completed_at: nil) }
 
+  def self.photo_upload_error(uploads)
+    invalid_upload = Array(uploads).compact_blank.find { |upload| !AttachmentUpload.multipart?(upload) }
+    "must be new images uploaded from this device" if invalid_upload
+  end
+
   def summary_recipient_email
     asset.account.transactional_recipient_email
   end
