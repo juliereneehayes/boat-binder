@@ -350,8 +350,8 @@
                 <%= link_to document.file.attached? ? "Edit" : "Edit / Add file", edit_document_path(document), class: secondary_button_class("min-h-10") %>
               <% end %>
               <% if document.file.attached? %>
-                <%= link_to "Open file", document_file_path(document), class: primary_button_class("min-h-10") %>
-                <%= link_to "Download", document_file_path(document, disposition: "attachment"), class: secondary_button_class("min-h-10") %>
+                <%= link_to "Open file", document_file_path(document), class: primary_button_class("min-h-10"), data: { turbo: false } %>
+                <%= link_to "Download", document_file_path(document, disposition: "attachment"), class: secondary_button_class("min-h-10"), data: { turbo: false } %>
               <% else %>
                 <span class="inline-flex min-h-10 items-center rounded-md border border-dashed border-slate-300 px-4 py-2 text-sm font-bold text-slate-500">No file attached</span>
               <% end %>
