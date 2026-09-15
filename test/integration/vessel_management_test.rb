@@ -453,6 +453,42 @@ class VesselManagementTest < ActionDispatch::IntegrationTest
     assert_select "img[alt=?]", "#{vessel.name} primary photo"
   end
 
+  test "vessel primary photo URL changes only when the attachment is replaced" do
+    sign_in_as
+    vessel = create_vessel
+    vessel.primary_photo.attach(fixture_file_upload("sample.jpg", "image/jpeg"))
+    initial_blob_id = vessel.primary_photo.blob.id
+
+    get vessel_path(vessel)
+    assert_response :success
+    initial_src = css_select("img[alt='#{vessel.name} primary photo']").sole["src"]
+    assert_equal vessel_primary_photo_path(vessel, v: initial_blob_id), initial_src
+    assert_not_includes initial_src, "/rails/active_storage"
+
+    get vessel_path(vessel)
+    unchanged_src = css_select("img[alt='#{vessel.name} primary photo']").sole["src"]
+    assert_equal initial_src, unchanged_src
+
+    patch vessel_path(vessel), params: {
+      asset: { primary_photo: fixture_file_upload("sample.png", "image/png") }
+    }
+    assert_redirected_to vessel_path(vessel)
+    follow_redirect!
+
+    replacement_blob_id = vessel.reload.primary_photo.blob.id
+    replacement_src = css_select("img[alt='#{vessel.name} primary photo']").sole["src"]
+    assert_equal vessel_primary_photo_path(vessel, v: replacement_blob_id), replacement_src
+    assert_not_equal initial_src, replacement_src
+    assert_not_includes replacement_src, "/rails/active_storage"
+    refute_match(%r{\Ahttps?://}, replacement_src)
+
+    delete primary_photo_vessel_path(vessel)
+    assert_redirected_to vessel_path(vessel)
+    follow_redirect!
+    assert_select "img[alt=?]", "#{vessel.name} primary photo", count: 0
+    assert_select "[aria-label=?]", "Primary photo placeholder for #{vessel.name}"
+  end
+
   test "vessel show and index display primary photo fallback" do
     sign_in_as
     vessel = create_vessel
