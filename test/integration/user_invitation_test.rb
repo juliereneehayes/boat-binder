@@ -48,6 +48,7 @@ class UserInvitationTest < ActionDispatch::IntegrationTest
     assert_includes response.body, invited_user.email_address
     assert_select "input[name='password'][minlength='15'][maxlength='72']"
     assert_select "input[name='password_confirmation'][minlength='15'][maxlength='72']"
+    assert_includes response.body, "Use at least 15 characters. Passphrases are welcome."
 
     put invitation_path(token), params: {
       password: NEW_TEST_PASSWORD,
@@ -109,6 +110,7 @@ class UserInvitationTest < ActionDispatch::IntegrationTest
     assert_response :success
     assert_includes response.body, "the Active user checkbox is ignored while sending an invitation"
     assert_includes response.body, "manual password fields are disabled while Send invitation email is checked"
+    assert_includes response.body, "Use at least 15 characters. Passphrases are welcome."
     assert_select "input[type=checkbox][name='user[send_invitation]'][checked]"
     assert_select "input[type=checkbox][name='user[active]']" do |elements|
       assert_equal "checked", elements.first["checked"]

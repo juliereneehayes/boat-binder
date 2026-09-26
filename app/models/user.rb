@@ -90,7 +90,7 @@ class User < ApplicationRecord
   def password_fits_bcrypt_byte_limit
     return if password.nil? || password.bytesize <= PASSWORD_MAXIMUM_BYTES
 
-    errors.add(:password, "is too long (maximum is #{PASSWORD_MAXIMUM_BYTES} bytes)")
+    errors.add(:password, "is too long. Please use a shorter password.")
   end
 
   def password_has_not_been_compromised

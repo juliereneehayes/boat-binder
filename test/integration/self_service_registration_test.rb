@@ -22,7 +22,7 @@ class SelfServiceRegistrationIntegrationTest < ActionDispatch::IntegrationTest
     assert_select "input[name='registration[email_address]']"
     assert_select "input[name='registration[password]'][required][autocomplete='new-password'][minlength='15'][maxlength='72']"
     assert_select "input[name='registration[password_confirmation]'][required][autocomplete='new-password'][minlength='15'][maxlength='72']"
-    assert_includes response.body, "Use at least 15 characters."
+    assert_includes response.body, "Use at least 15 characters. Passphrases are welcome."
     assert_select "input[name='registration[role]']", count: 0
     assert_select "input[name='registration[active]']", count: 0
     assert_select "input[name='registration[account_id]']", count: 0
