@@ -1,7 +1,37 @@
 class SessionsController < ApplicationController
   EMAIL_RATE_LIMIT_KEY_PURPOSE = "sign-in-email-rate-limit"
-  RATE_LIMIT_STORE = Rails.env.test? ? ActiveSupport::Cache::MemoryStore.new : Rails.cache
+  RATE_LIMIT_STORE_OVERRIDE_KEY = :sessions_controller_rate_limit_store
   THROTTLED_LOGIN_MESSAGE = "Try again later."
+
+  # Resolve the backing cache per execution so focused tests can inject an
+  # isolated store while all normal requests continue to use Rails.cache.
+  class RateLimitStore
+    def increment(...)
+      SessionsController.rate_limit_store.increment(...)
+    end
+  end
+
+  private_constant :RATE_LIMIT_STORE_OVERRIDE_KEY, :RateLimitStore
+  RATE_LIMIT_STORE = RateLimitStore.new
+
+  class << self
+    def rate_limit_store
+      ActiveSupport::IsolatedExecutionState[RATE_LIMIT_STORE_OVERRIDE_KEY] || Rails.cache
+    end
+
+    def with_rate_limit_store(store)
+      had_previous_store = ActiveSupport::IsolatedExecutionState.key?(RATE_LIMIT_STORE_OVERRIDE_KEY)
+      previous_store = ActiveSupport::IsolatedExecutionState[RATE_LIMIT_STORE_OVERRIDE_KEY]
+      ActiveSupport::IsolatedExecutionState[RATE_LIMIT_STORE_OVERRIDE_KEY] = store
+      yield
+    ensure
+      if had_previous_store
+        ActiveSupport::IsolatedExecutionState[RATE_LIMIT_STORE_OVERRIDE_KEY] = previous_store
+      else
+        ActiveSupport::IsolatedExecutionState.delete(RATE_LIMIT_STORE_OVERRIDE_KEY)
+      end
+    end
+  end
 
   allow_unauthenticated_access only: %i[ new create ]
   # Keep this before rate_limit: signed-in browsers must be redirected without

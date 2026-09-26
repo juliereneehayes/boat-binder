@@ -1,6 +1,13 @@
 require "test_helper"
 
 class SessionRateLimitingTest < ActionDispatch::IntegrationTest
+  def run
+    @rate_limit_store = ActiveSupport::Cache::MemoryStore.new
+    SessionsController.with_rate_limit_store(@rate_limit_store) { super }
+  ensure
+    @rate_limit_store&.clear
+  end
+
   test "one IP is throttled when it targets many different emails" do
     rate_limit_events = capture_rate_limit_events do
       10.times do |index|
@@ -55,7 +62,7 @@ class SessionRateLimitingTest < ActionDispatch::IntegrationTest
     current_user = create_user(email: "signed-in-rate-limit@example.test", role: "admin")
     other_user = create_user(email: "other-rate-limit@example.test")
     sign_in_as current_user
-    SessionsController::RATE_LIMIT_STORE.clear
+    @rate_limit_store.clear
 
     get new_session_path
     assert_redirected_to root_path
@@ -120,7 +127,7 @@ class SessionRateLimitingTest < ActionDispatch::IntegrationTest
     post_login(email_address: "ip-target-11@example.test", ip_address: "192.0.2.70")
     ip_throttle_response = response_signature
 
-    SessionsController::RATE_LIMIT_STORE.clear
+    @rate_limit_store.clear
     10.times do |index|
       post_login(
         email_address: "email-target@example.test",
