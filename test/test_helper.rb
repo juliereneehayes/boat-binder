@@ -11,6 +11,10 @@ module ActiveSupport
     # Run tests in parallel with specified workers
     parallelize(workers: :number_of_processors)
 
+    setup do
+      SessionsController::RATE_LIMIT_STORE.clear
+    end
+
     # Add more helper methods to be used by all tests here...
     def create_account(name: "Hayes Yacht Company", account_type: "client", time_zone: Account::DEFAULT_TIME_ZONE)
       creator = AccountCreator.call(
