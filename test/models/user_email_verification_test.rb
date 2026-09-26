@@ -5,8 +5,8 @@ class UserEmailVerificationTest < ActiveSupport::TestCase
     user = User.create!(
       name: "Pending Verification",
       email_address: "verification-token@example.test",
-      password: "password",
-      password_confirmation: "password",
+      password: TEST_PASSWORD,
+      password_confirmation: TEST_PASSWORD,
       role: "owner",
       active: false,
       email_verification_sent_at: Time.current
@@ -48,8 +48,8 @@ class UserEmailVerificationTest < ActiveSupport::TestCase
     user = User.new(
       name: "Invalid Verification",
       email_address: "invalid-verification@example.test",
-      password: "password",
-      password_confirmation: "password",
+      password: TEST_PASSWORD,
+      password_confirmation: TEST_PASSWORD,
       role: "owner",
       active: false,
       email_verified_at: Time.current

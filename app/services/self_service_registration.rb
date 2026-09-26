@@ -2,7 +2,6 @@ class SelfServiceRegistration
   include ActiveModel::Model
 
   GENERIC_FAILURE_MESSAGE = "Registration could not be completed. Please try again."
-  PASSWORD_LENGTH = 15..72
   SMTP_SERVER_BUSY_RETRIES = 1
 
   attr_accessor :name, :email_address, :password, :password_confirmation
@@ -10,7 +9,7 @@ class SelfServiceRegistration
 
   validates :name, presence: true, length: { maximum: 120 }
   validates :email_address, presence: true, format: { with: URI::MailTo::EMAIL_REGEXP }
-  validates :password, presence: true, confirmation: true, length: { in: PASSWORD_LENGTH }
+  validate :password_meets_user_policy
 
   class << self
     def deliver_email(message)
@@ -65,7 +64,13 @@ class SelfServiceRegistration
     deliver_verification_email
     self
   rescue ActiveRecord::RecordInvalid => error
-    duplicate_email?(error.record) ? accept_duplicate : record_failure
+    if duplicate_email?(error.record)
+      accept_duplicate
+    elsif error.record.equal?(user) && user_password_errors?
+      copy_user_password_errors
+    else
+      record_failure
+    end
   rescue ActiveRecord::RecordNotUnique
     accept_duplicate
   end
@@ -87,6 +92,23 @@ class SelfServiceRegistration
   end
 
   private
+
+  def password_meets_user_policy
+    user.valid?
+    copy_user_password_errors
+  end
+
+  def copy_user_password_errors
+    %i[password password_confirmation].each do |attribute|
+      user.errors[attribute].each { |message| errors.add(attribute, message) }
+    end
+
+    self
+  end
+
+  def user_password_errors?
+    user.errors[:password].any? || user.errors[:password_confirmation].any?
+  end
 
   def build_record_graph
     @user = User.new(

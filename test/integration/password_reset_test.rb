@@ -38,6 +38,24 @@ class PasswordResetTest < ActionDispatch::IntegrationTest
     get edit_password_path(token)
 
     assert_response :success
+    assert_select "input[name='password'][minlength='15'][maxlength='72']"
+    assert_select "input[name='password_confirmation'][minlength='15'][maxlength='72']"
+  end
+
+  test "password reset rejects a 14-character new password" do
+    user = create_user(email: "short-reset@example.test")
+    original_digest = user.password_digest
+    token = user.password_reset_token
+    short_password = "a" * 14
+
+    put password_path(token), params: {
+      password: short_password,
+      password_confirmation: short_password
+    }
+
+    assert_redirected_to edit_password_path(token)
+    assert_equal original_digest, user.reload.password_digest
+    assert_not user.authenticate(short_password)
   end
 
   test "authenticated user cannot view another account password reset form" do
@@ -76,8 +94,8 @@ class PasswordResetTest < ActionDispatch::IntegrationTest
 
     assert_no_difference -> { Session.count } do
       put password_path(token), params: {
-        password: "new-password",
-        password_confirmation: "new-password"
+        password: NEW_TEST_PASSWORD,
+        password_confirmation: NEW_TEST_PASSWORD
       }
     end
 
@@ -87,14 +105,14 @@ class PasswordResetTest < ActionDispatch::IntegrationTest
     assert_response :success
     assert_includes response.body, signed_in_user.name
     assert_equal original_password_digest, reset_user.reload.password_digest
-    assert_not reset_user.authenticate("new-password")
+    assert_not reset_user.authenticate(NEW_TEST_PASSWORD)
 
     delete session_path
 
     assert_no_difference -> { Session.count } do
       put password_path(token), params: {
-        password: "new-password",
-        password_confirmation: "new-password"
+        password: NEW_TEST_PASSWORD,
+        password_confirmation: NEW_TEST_PASSWORD
       }
     end
 
@@ -102,7 +120,7 @@ class PasswordResetTest < ActionDispatch::IntegrationTest
     follow_redirect!
     assert_response :success
     assert_includes response.body, "Password has been reset."
-    assert reset_user.reload.authenticate("new-password")
+    assert reset_user.reload.authenticate(NEW_TEST_PASSWORD)
   end
 
   test "password reset request keeps generic messaging when email is unknown" do

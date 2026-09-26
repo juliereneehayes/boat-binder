@@ -97,6 +97,48 @@ class SelfServiceRegistrationTest < ActiveSupport::TestCase
     assert_equal 1, account.account_memberships.count
   end
 
+  test "reports the User policy error for a compromised password" do
+    registration = build_registration(email_address: "compromised@example.test")
+    registration.user.password_compromise_checker = ->(_password) { true }
+
+    assert_no_difference -> { User.count } do
+      registration.call
+    end
+
+    assert_not registration.accepted?
+    assert_includes registration.errors[:password], User::COMPROMISED_PASSWORD_MESSAGE
+  end
+
+  test "compromised-password validation does not reveal whether an email is registered" do
+    create_user(email: "registered-compromised@example.test")
+    registrations = [
+      build_registration(email_address: "new-compromised@example.test"),
+      build_registration(email_address: "registered-compromised@example.test")
+    ]
+    registrations.each do |registration|
+      registration.user.password_compromise_checker = ->(_password) { true }
+    end
+
+    registrations.each(&:call)
+
+    assert_equal registrations.first.errors.to_hash, registrations.second.errors.to_hash
+    registrations.each { |registration| assert_not registration.accepted? }
+  end
+
+  test "checks a valid password once even though registration validates before saving" do
+    registration = build_registration(email_address: "single-check@example.test")
+    checks = 0
+    registration.user.password_compromise_checker = lambda do |_password|
+      checks += 1
+      false
+    end
+
+    registration.call
+
+    assert registration.created?
+    assert_equal 1, checks
+  end
+
   test "rolls the whole graph back at every persistence failure point" do
     %i[user account subscription membership].each do |failure_point|
       registration = build_registration(
