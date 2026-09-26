@@ -47,6 +47,7 @@ class PasswordResetTest < ActionDispatch::IntegrationTest
     original_digest = user.password_digest
     token = user.password_reset_token
     short_password = "a" * 14
+    user.update_column(:email_address, "not-an-email")
 
     put password_path(token), params: {
       password: short_password,
@@ -54,8 +55,56 @@ class PasswordResetTest < ActionDispatch::IntegrationTest
     }
 
     assert_redirected_to edit_password_path(token)
+    assert_includes flash[:alert], "Password is too short (minimum is 15 characters)"
+    assert_not_includes flash[:alert], "Email address"
     assert_equal original_digest, user.reload.password_digest
     assert_not user.authenticate(short_password)
+  end
+
+  test "password reset reports the bcrypt byte limit for a multibyte password" do
+    user = create_user(email: "multibyte-reset@example.test")
+    original_digest = user.password_digest
+    token = user.password_reset_token
+    oversized_password = "船" * 25
+
+    put password_path(token), params: {
+      password: oversized_password,
+      password_confirmation: oversized_password
+    }
+
+    assert_redirected_to edit_password_path(token)
+    assert_includes flash[:alert], "Password is too long (maximum is 72 bytes)"
+    assert_equal original_digest, user.reload.password_digest
+  end
+
+  test "password reset reports confirmation mismatch without unrelated errors" do
+    user = create_user(email: "mismatch-reset@example.test")
+    token = user.password_reset_token
+
+    put password_path(token), params: {
+      password: NEW_TEST_PASSWORD,
+      password_confirmation: "different-password"
+    }
+
+    assert_redirected_to edit_password_path(token)
+    assert_equal "Password confirmation doesn't match Password", flash[:alert]
+  end
+
+  test "password reset reports the generic compromised-password validation" do
+    user = create_user(email: "compromised-reset@example.test")
+    token = user.password_reset_token
+    original_checker = User.password_compromise_checker
+    User.password_compromise_checker = ->(_password) { true }
+
+    put password_path(token), params: {
+      password: NEW_TEST_PASSWORD,
+      password_confirmation: NEW_TEST_PASSWORD
+    }
+
+    assert_redirected_to edit_password_path(token)
+    assert_equal "Password #{User::COMPROMISED_PASSWORD_MESSAGE}", flash[:alert]
+  ensure
+    User.password_compromise_checker = original_checker if original_checker
   end
 
   test "authenticated user cannot view another account password reset form" do

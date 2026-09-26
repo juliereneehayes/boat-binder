@@ -66,7 +66,7 @@ class SelfServiceRegistrationTest < ActiveSupport::TestCase
     assert_not user.active?
     assert user.email_verification_pending?
     assert_not user.invitation_pending?
-    assert user.authenticate("correct horse battery staple")
+    assert user.authenticate(TEST_PASSWORD)
     assert_equal "New Owner", user.name
     assert_equal "new-owner@example.test", user.email_address
 
@@ -190,7 +190,7 @@ class SelfServiceRegistrationTest < ActiveSupport::TestCase
     assert_not registration.created?
     assert_not registration.delivery_failed?
     assert_empty registration.errors
-    assert registration.user.authenticate("correct horse battery staple")
+    assert registration.user.authenticate(TEST_PASSWORD)
     assert_equal existing_user_state, existing_user.reload.attributes
 
     mail = ActionMailer::Base.deliveries.last
@@ -332,8 +332,8 @@ class SelfServiceRegistrationTest < ActiveSupport::TestCase
     SelfServiceRegistration.new({
       name: "  New   Owner  ",
       email_address: " New-Owner@Example.Test ",
-      password: "correct horse battery staple",
-      password_confirmation: "correct horse battery staple"
+      password: TEST_PASSWORD,
+      password_confirmation: TEST_PASSWORD
     }.merge(overrides))
   end
 

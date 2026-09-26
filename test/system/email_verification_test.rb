@@ -9,8 +9,8 @@ class EmailVerificationSystemTest < ApplicationSystemTestCase
     @registration = SelfServiceRegistration.new(
       name: "Browser Verification Owner",
       email_address: "browser-verification@example.test",
-      password: "correct horse battery staple",
-      password_confirmation: "correct horse battery staple"
+      password: TEST_PASSWORD,
+      password_confirmation: TEST_PASSWORD
     ).call
     @user = @registration.user.reload
     ActionMailer::Base.deliveries.clear

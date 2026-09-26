@@ -41,7 +41,8 @@ class CompromisedPasswordCheckerTest < ActiveSupport::TestCase
 
   test "matching suffix is compromised and only the five-character prefix is disclosed" do
     password = "a private password phrase"
-    digest = Digest::SHA1.hexdigest(password).upcase
+    # Fixed SHA-1 fixture for HIBP's protocol; application passwords remain bcrypt-backed.
+    digest = "7EE73412C7C7AA6CB9636C786BAC5660782E602D"
     client = RecordingClient.new("#{digest.last(35)}:42\r\n#{"A" * 35}:1\r\n")
 
     assert CompromisedPasswordChecker.call(password, client:)
@@ -52,7 +53,8 @@ class CompromisedPasswordCheckerTest < ActiveSupport::TestCase
 
   test "nonmatching and lowercase suffixes are handled locally" do
     password = "another private password phrase"
-    digest = Digest::SHA1.hexdigest(password).upcase
+    # Fixed SHA-1 fixture for HIBP's protocol; application passwords remain bcrypt-backed.
+    digest = "469A7C093E03AE2DCCBF4E4C9675C17F7AB3344B"
     nonmatch = RecordingClient.new("#{"B" * 35}:3\n")
     lowercase_match = RecordingClient.new("#{digest.last(35).downcase}:3\n")
 

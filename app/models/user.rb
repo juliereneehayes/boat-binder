@@ -3,7 +3,8 @@ class User < ApplicationRecord
   INVITATION_EXPIRES_IN = 7.days
   EMAIL_VERIFICATION_EXPIRES_IN = 24.hours
   PASSWORD_RESET_EXPIRES_IN = 15.minutes
-  PASSWORD_LENGTH = 15..72
+  PASSWORD_MINIMUM_LENGTH = 15
+  PASSWORD_MAXIMUM_BYTES = 72
   COMPROMISED_PASSWORD_MESSAGE = "has appeared in known data breaches. Choose a different password."
 
   class_attribute :password_compromise_checker, default: ->(password) { CompromisedPasswordChecker.call(password) }
@@ -33,8 +34,9 @@ class User < ApplicationRecord
   validates :email_address, presence: true, uniqueness: true, format: { with: URI::MailTo::EMAIL_REGEXP }
   validates :role, inclusion: { in: ROLES }
   validates :name, length: { maximum: 120 }
-  validates :password, confirmation: true, length: { in: PASSWORD_LENGTH }, allow_nil: true
+  validates :password, confirmation: true, length: { minimum: PASSWORD_MINIMUM_LENGTH }, allow_nil: true
   validates :password_confirmation, presence: true, if: -> { password.present? }
+  validate :password_fits_bcrypt_byte_limit
   validate :password_digest_required_unless_pending_invitation
   validate :password_has_not_been_compromised
   validate :email_verification_lifecycle_is_consistent
@@ -84,6 +86,12 @@ class User < ApplicationRecord
   end
 
   private
+
+  def password_fits_bcrypt_byte_limit
+    return if password.nil? || password.bytesize <= PASSWORD_MAXIMUM_BYTES
+
+    errors.add(:password, "is too long (maximum is #{PASSWORD_MAXIMUM_BYTES} bytes)")
+  end
 
   def password_has_not_been_compromised
     return unless password.present?

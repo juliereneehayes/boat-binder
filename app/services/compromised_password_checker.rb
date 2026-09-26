@@ -67,6 +67,10 @@ class CompromisedPasswordChecker
   end
 
   def call(password)
+    # HIBP's Pwned Passwords range protocol mandates SHA-1 for this lookup. It is
+    # not used for password storage or authentication (User uses bcrypt via
+    # has_secure_password), and only the first five hexadecimal characters leave
+    # the server; the remaining suffix is compared locally.
     digest = Digest::SHA1.hexdigest(password).upcase
     prefix = digest.first(5)
     suffix = digest.delete_prefix(prefix)

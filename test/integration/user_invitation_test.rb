@@ -303,8 +303,8 @@ class UserInvitationTest < ActionDispatch::IntegrationTest
       user: invite_params(
         email_address: "manual-active@example.test",
         send_invitation: "0",
-        password: "manual-password",
-        password_confirmation: "manual-password"
+        password: TEST_PASSWORD,
+        password_confirmation: TEST_PASSWORD
       )
     }
 
@@ -313,7 +313,7 @@ class UserInvitationTest < ActionDispatch::IntegrationTest
     assert_equal "User added.", flash[:notice]
     assert user.active?
     assert_not user.invitation_pending?
-    assert user.authenticate("manual-password")
+    assert user.authenticate(TEST_PASSWORD)
   end
 
   test "admin password assignment and change enforce the minimum length" do
@@ -357,8 +357,8 @@ class UserInvitationTest < ActionDispatch::IntegrationTest
         user: invite_params(
           email_address: existing_user.email_address,
           send_invitation: "0",
-          password: "manual-password",
-          password_confirmation: "manual-password"
+          password: TEST_PASSWORD,
+          password_confirmation: TEST_PASSWORD
         )
       }
     end
@@ -376,15 +376,15 @@ class UserInvitationTest < ActionDispatch::IntegrationTest
       user: invite_params(
         email_address: "corrected-manual@example.test",
         send_invitation: "0",
-        password: "manual-password",
-        password_confirmation: "manual-password"
+        password: TEST_PASSWORD,
+        password_confirmation: TEST_PASSWORD
       )
     }
 
     user = User.find_by!(email_address: "corrected-manual@example.test")
     assert_redirected_to admin_users_path
     assert user.active?
-    assert user.authenticate("manual-password")
+    assert user.authenticate(TEST_PASSWORD)
   end
 
   test "invitation validation error keeps active checkbox checked while passwords stay disabled" do
@@ -433,8 +433,8 @@ class UserInvitationTest < ActionDispatch::IntegrationTest
         email_address: "manual-inactive@example.test",
         active: "0",
         send_invitation: "0",
-        password: "manual-password",
-        password_confirmation: "manual-password"
+        password: TEST_PASSWORD,
+        password_confirmation: TEST_PASSWORD
       )
     }
 
@@ -442,7 +442,7 @@ class UserInvitationTest < ActionDispatch::IntegrationTest
     assert_redirected_to admin_users_path
     assert_not user.active?
     assert_not user.invitation_pending?
-    assert user.authenticate("manual-password")
+    assert user.authenticate(TEST_PASSWORD)
   end
 
   test "authenticated user cannot view invitation acceptance form" do
@@ -571,8 +571,8 @@ class UserInvitationTest < ActionDispatch::IntegrationTest
     invited_user.update!(
       active: true,
       invitation_accepted_at: nil,
-      password: "active-password",
-      password_confirmation: "active-password"
+      password: TEST_PASSWORD,
+      password_confirmation: TEST_PASSWORD
     )
 
     assert_not invited_user.invitation_pending?

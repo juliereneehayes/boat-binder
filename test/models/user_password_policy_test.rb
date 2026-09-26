@@ -2,24 +2,32 @@ require "test_helper"
 require "stringio"
 
 class UserPasswordPolicyTest < ActiveSupport::TestCase
-  test "new passwords must contain between 15 and 72 characters" do
+  test "new passwords require at least 15 characters and no more than 72 bytes" do
     short_user = build_user(password: "a" * 14)
     minimum_user = build_user(email: "minimum@example.test", password: "a" * 15)
     long_user = build_user(email: "long@example.test", password: "a" * 73)
+    multibyte_too_long = build_user(email: "multibyte-long@example.test", password: "船" * 25)
 
     assert_not short_user.valid?
     assert_includes short_user.errors[:password], "is too short (minimum is 15 characters)"
     assert minimum_user.valid?
     assert_not long_user.valid?
-    assert_includes long_user.errors[:password], "is too long (maximum is 72 characters)"
+    assert_includes long_user.errors[:password], "is too long (maximum is 72 bytes)"
+    assert_operator multibyte_too_long.password.length, :<=, User::PASSWORD_MAXIMUM_BYTES
+    assert_operator multibyte_too_long.password.bytesize, :>, User::PASSWORD_MAXIMUM_BYTES
+    assert_not multibyte_too_long.valid?
+    assert_includes multibyte_too_long.errors[:password], "is too long (maximum is 72 bytes)"
   end
 
   test "passphrases with spaces are accepted and confirmation is required" do
     passphrase = build_user(password: "many calm words together")
+    unicode_passphrase = build_user(email: "unicode@example.test", password: "航海 安全 passphrase")
     missing_confirmation = build_user(email: "missing-confirmation@example.test", password: "fifteen characters", confirmation: nil)
     mismatch = build_user(email: "mismatch@example.test", password: "fifteen characters", confirmation: "a different phrase")
 
     assert passphrase.valid?
+    assert_operator unicode_passphrase.password.bytesize, :<=, User::PASSWORD_MAXIMUM_BYTES
+    assert unicode_passphrase.valid?
     assert_not missing_confirmation.valid?
     assert_includes missing_confirmation.errors[:password_confirmation], "can't be blank"
     assert_not mismatch.valid?
