@@ -11,7 +11,7 @@
     <div>
       <%= form.label :password, "Password", class: "text-sm font-semibold text-slate-700" %>
       <%= form.password_field :password, required: true, autocomplete: "new-password", minlength: User::PASSWORD_MINIMUM_LENGTH, maxlength: User::PASSWORD_MAXIMUM_BYTES, class: "mt-2 block min-h-12 w-full rounded-md border border-slate-300 bg-white px-4 py-3 text-base shadow-sm focus:border-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-700/20" %>
-      <p class="mt-2 text-xs text-slate-500">Use at least 15 characters and no more than 72 bytes. Spaces, Unicode, and passphrases are welcome.</p>
+      <p class="mt-2 text-xs text-slate-500">Use at least 15 characters. Passphrases are welcome.</p>
     </div>
 
     <div>

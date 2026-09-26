@@ -12,11 +12,11 @@ class UserPasswordPolicyTest < ActiveSupport::TestCase
     assert_includes short_user.errors[:password], "is too short (minimum is 15 characters)"
     assert minimum_user.valid?
     assert_not long_user.valid?
-    assert_includes long_user.errors[:password], "is too long (maximum is 72 bytes)"
+    assert_includes long_user.errors[:password], "is too long. Please use a shorter password."
     assert_operator multibyte_too_long.password.length, :<=, User::PASSWORD_MAXIMUM_BYTES
     assert_operator multibyte_too_long.password.bytesize, :>, User::PASSWORD_MAXIMUM_BYTES
     assert_not multibyte_too_long.valid?
-    assert_includes multibyte_too_long.errors[:password], "is too long (maximum is 72 bytes)"
+    assert_includes multibyte_too_long.errors[:password], "is too long. Please use a shorter password."
   end
 
   test "passphrases with spaces are accepted and confirmation is required" do

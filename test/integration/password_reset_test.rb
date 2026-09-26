@@ -40,6 +40,7 @@ class PasswordResetTest < ActionDispatch::IntegrationTest
     assert_response :success
     assert_select "input[name='password'][minlength='15'][maxlength='72']"
     assert_select "input[name='password_confirmation'][minlength='15'][maxlength='72']"
+    assert_includes response.body, "Use at least 15 characters. Passphrases are welcome."
   end
 
   test "password reset rejects a 14-character new password" do
@@ -73,7 +74,7 @@ class PasswordResetTest < ActionDispatch::IntegrationTest
     }
 
     assert_redirected_to edit_password_path(token)
-    assert_includes flash[:alert], "Password is too long (maximum is 72 bytes)"
+    assert_equal "Password is too long. Please use a shorter password.", flash[:alert]
     assert_equal original_digest, user.reload.password_digest
   end
 
