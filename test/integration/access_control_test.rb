@@ -25,8 +25,8 @@ class AccessControlTest < ActionDispatch::IntegrationTest
           email_address: "maya@example.test",
           role: "owner",
           active: "1",
-          password: "password",
-          password_confirmation: "password",
+          password: TEST_PASSWORD,
+          password_confirmation: TEST_PASSWORD,
           account_ids: [ new_owner.id ]
         }
       }
@@ -186,8 +186,8 @@ class AccessControlTest < ActionDispatch::IntegrationTest
           email_address: "captain-created@example.test",
           role: "owner",
           active: "1",
-          password: "password",
-          password_confirmation: "password",
+          password: TEST_PASSWORD,
+          password_confirmation: TEST_PASSWORD,
           account_ids: [ @owner_a_account.id ]
         }
       }
@@ -243,7 +243,7 @@ class AccessControlTest < ActionDispatch::IntegrationTest
     assert_no_difference -> { Session.count } do
       post session_path, params: {
         email_address: other_user.email_address,
-        password: "password"
+        password: TEST_PASSWORD
       }
     end
 
@@ -260,7 +260,7 @@ class AccessControlTest < ActionDispatch::IntegrationTest
     assert_no_difference -> { Session.count } do
       post session_path, params: {
         email_address: inactive_user.email_address,
-        password: "password"
+        password: TEST_PASSWORD
       }
     end
 
@@ -277,7 +277,7 @@ class AccessControlTest < ActionDispatch::IntegrationTest
     assert_difference -> { Session.count }, 1 do
       post session_path, params: {
         email_address: active_user.email_address,
-        password: "password"
+        password: TEST_PASSWORD
       }
     end
 
@@ -484,7 +484,7 @@ class AccessControlTest < ActionDispatch::IntegrationTest
         email_address: @owner_a_user.email_address,
         role: "owner",
         active: "1",
-        password: "new-password",
+        password: NEW_TEST_PASSWORD,
         password_confirmation: "different-password",
         account_ids: [ @owner_b_account.id ]
       }
@@ -506,8 +506,8 @@ class AccessControlTest < ActionDispatch::IntegrationTest
           email_address: "invalid-role@example.test",
           role: "super_admin",
           active: "1",
-          password: "password",
-          password_confirmation: "password",
+          password: TEST_PASSWORD,
+          password_confirmation: TEST_PASSWORD,
           account_ids: [ @owner_a_account.id ]
         }
       }
@@ -545,8 +545,8 @@ class AccessControlTest < ActionDispatch::IntegrationTest
             email_address: "#{role}-created@example.test",
             role: role,
             active: "1",
-            password: "password",
-            password_confirmation: "password",
+            password: TEST_PASSWORD,
+            password_confirmation: TEST_PASSWORD,
             account_ids: [ owner_target_account.id ]
           }
         }

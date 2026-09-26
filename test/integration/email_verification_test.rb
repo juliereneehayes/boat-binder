@@ -420,8 +420,8 @@ class EmailVerificationTest < ActionDispatch::IntegrationTest
     registration = SelfServiceRegistration.new(
       name: "Verification Owner",
       email_address: email,
-      password: "correct horse battery staple",
-      password_confirmation: "correct horse battery staple"
+      password: TEST_PASSWORD,
+      password_confirmation: TEST_PASSWORD
     ).call
     assert registration.created?
     ActionMailer::Base.deliveries.clear

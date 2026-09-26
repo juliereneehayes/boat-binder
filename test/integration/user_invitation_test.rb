@@ -46,10 +46,12 @@ class UserInvitationTest < ActionDispatch::IntegrationTest
     get edit_invitation_path(token)
     assert_response :success
     assert_includes response.body, invited_user.email_address
+    assert_select "input[name='password'][minlength='15'][maxlength='72']"
+    assert_select "input[name='password_confirmation'][minlength='15'][maxlength='72']"
 
     put invitation_path(token), params: {
-      password: "new-password",
-      password_confirmation: "new-password"
+      password: NEW_TEST_PASSWORD,
+      password_confirmation: NEW_TEST_PASSWORD
     }
 
     assert_redirected_to root_path
@@ -60,9 +62,25 @@ class UserInvitationTest < ActionDispatch::IntegrationTest
     delete session_path
     post session_path, params: {
       email_address: invited_user.email_address,
-      password: "new-password"
+      password: NEW_TEST_PASSWORD
     }
     assert_redirected_to root_path
+  end
+
+  test "invitation acceptance rejects a 14-character password" do
+    invited_user = create_invited_user
+    token = invited_user.generate_token_for(:invitation)
+    short_password = "a" * 14
+
+    put invitation_path(token), params: {
+      password: short_password,
+      password_confirmation: short_password
+    }
+
+    assert_response :unprocessable_entity
+    assert_includes response.body, "Password is too short (minimum is 15 characters)"
+    assert invited_user.reload.invitation_pending?
+    assert_nil invited_user.password_digest
   end
 
   test "blank-password user creation defaults to invitation consistently after save" do
@@ -186,14 +204,14 @@ class UserInvitationTest < ActionDispatch::IntegrationTest
     assert_response :success
 
     put invitation_path(new_token), params: {
-      password: "new-password",
-      password_confirmation: "new-password"
+      password: NEW_TEST_PASSWORD,
+      password_confirmation: NEW_TEST_PASSWORD
     }
 
     assert_redirected_to root_path
     assert invited_user.reload.active?
     assert invited_user.invitation_accepted?
-    assert invited_user.authenticate("new-password")
+    assert invited_user.authenticate(NEW_TEST_PASSWORD)
   end
 
   test "admin user index shows resend action only for pending invited users" do
@@ -285,8 +303,8 @@ class UserInvitationTest < ActionDispatch::IntegrationTest
       user: invite_params(
         email_address: "manual-active@example.test",
         send_invitation: "0",
-        password: "manual-password",
-        password_confirmation: "manual-password"
+        password: TEST_PASSWORD,
+        password_confirmation: TEST_PASSWORD
       )
     }
 
@@ -295,7 +313,39 @@ class UserInvitationTest < ActionDispatch::IntegrationTest
     assert_equal "User added.", flash[:notice]
     assert user.active?
     assert_not user.invitation_pending?
-    assert user.authenticate("manual-password")
+    assert user.authenticate(TEST_PASSWORD)
+  end
+
+  test "admin password assignment and change enforce the minimum length" do
+    sign_in_as @admin
+    short_password = "a" * 14
+
+    assert_no_difference -> { User.count } do
+      post admin_users_path, params: {
+        user: invite_params(
+          email_address: "short-admin-password@example.test",
+          send_invitation: "0",
+          password: short_password,
+          password_confirmation: short_password
+        )
+      }
+    end
+    assert_response :unprocessable_entity
+    assert_includes response.body, "Password is too short (minimum is 15 characters)"
+
+    original_digest = @admin.password_digest
+    patch admin_user_path(@admin), params: {
+      user: {
+        name: @admin.name,
+        email_address: @admin.email_address,
+        role: @admin.role,
+        active: "1",
+        password: short_password,
+        password_confirmation: short_password
+      }
+    }
+    assert_response :unprocessable_entity
+    assert_equal original_digest, @admin.reload.password_digest
   end
 
   test "manual duplicate email error preserves active checkbox and corrected resubmit creates active user" do
@@ -307,8 +357,8 @@ class UserInvitationTest < ActionDispatch::IntegrationTest
         user: invite_params(
           email_address: existing_user.email_address,
           send_invitation: "0",
-          password: "manual-password",
-          password_confirmation: "manual-password"
+          password: TEST_PASSWORD,
+          password_confirmation: TEST_PASSWORD
         )
       }
     end
@@ -326,15 +376,15 @@ class UserInvitationTest < ActionDispatch::IntegrationTest
       user: invite_params(
         email_address: "corrected-manual@example.test",
         send_invitation: "0",
-        password: "manual-password",
-        password_confirmation: "manual-password"
+        password: TEST_PASSWORD,
+        password_confirmation: TEST_PASSWORD
       )
     }
 
     user = User.find_by!(email_address: "corrected-manual@example.test")
     assert_redirected_to admin_users_path
     assert user.active?
-    assert user.authenticate("manual-password")
+    assert user.authenticate(TEST_PASSWORD)
   end
 
   test "invitation validation error keeps active checkbox checked while passwords stay disabled" do
@@ -383,8 +433,8 @@ class UserInvitationTest < ActionDispatch::IntegrationTest
         email_address: "manual-inactive@example.test",
         active: "0",
         send_invitation: "0",
-        password: "manual-password",
-        password_confirmation: "manual-password"
+        password: TEST_PASSWORD,
+        password_confirmation: TEST_PASSWORD
       )
     }
 
@@ -392,7 +442,7 @@ class UserInvitationTest < ActionDispatch::IntegrationTest
     assert_redirected_to admin_users_path
     assert_not user.active?
     assert_not user.invitation_pending?
-    assert user.authenticate("manual-password")
+    assert user.authenticate(TEST_PASSWORD)
   end
 
   test "authenticated user cannot view invitation acceptance form" do
@@ -422,8 +472,8 @@ class UserInvitationTest < ActionDispatch::IntegrationTest
 
     assert_no_difference -> { Session.count } do
       put invitation_path(token), params: {
-        password: "new-password",
-        password_confirmation: "new-password"
+        password: NEW_TEST_PASSWORD,
+        password_confirmation: NEW_TEST_PASSWORD
       }
     end
 
@@ -459,8 +509,8 @@ class UserInvitationTest < ActionDispatch::IntegrationTest
     token = invited_user.generate_token_for(:invitation)
 
     put invitation_path(token), params: {
-      password: "new-password",
-      password_confirmation: "new-password"
+      password: NEW_TEST_PASSWORD,
+      password_confirmation: NEW_TEST_PASSWORD
     }
 
     assert_redirected_to root_path
@@ -521,8 +571,8 @@ class UserInvitationTest < ActionDispatch::IntegrationTest
     invited_user.update!(
       active: true,
       invitation_accepted_at: nil,
-      password: "active-password",
-      password_confirmation: "active-password"
+      password: TEST_PASSWORD,
+      password_confirmation: TEST_PASSWORD
     )
 
     assert_not invited_user.invitation_pending?

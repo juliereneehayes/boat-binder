@@ -309,8 +309,8 @@ class AdminOwnerAccessLevelTest < ActionDispatch::IntegrationTest
       role: "owner",
       active: "1",
       send_invitation: "0",
-      password: "password",
-      password_confirmation: "password",
+      password: TEST_PASSWORD,
+      password_confirmation: TEST_PASSWORD,
       account_ids: [ @account.id ]
     }.merge(overrides)
   end

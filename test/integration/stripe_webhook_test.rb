@@ -61,7 +61,7 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
     with_forgery_protection do
       post session_path, params: {
         email_address: "captain@example.test",
-        password: "password"
+        password: TEST_PASSWORD
       }
     end
 

@@ -2,6 +2,10 @@ ENV["RAILS_ENV"] ||= "test"
 require_relative "../config/environment"
 require "rails/test_help"
 
+TEST_PASSWORD = "correct horse battery staple"
+NEW_TEST_PASSWORD = "a newly chosen passphrase"
+User.password_compromise_checker = ->(_password) { false }
+
 module ActiveSupport
   class TestCase
     # Run tests in parallel with specified workers
@@ -25,8 +29,8 @@ module ActiveSupport
       User.create!(
         name: name,
         email_address: email,
-        password: "password",
-        password_confirmation: "password",
+        password: TEST_PASSWORD,
+        password_confirmation: TEST_PASSWORD,
         role: role,
         active: active
       )
@@ -89,7 +93,7 @@ module ActiveSupport
 
       post session_path, params: {
         email_address: user.email_address,
-        password: "password"
+        password: TEST_PASSWORD
       }
     end
 

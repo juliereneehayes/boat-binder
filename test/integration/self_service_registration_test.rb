@@ -104,7 +104,7 @@ class SelfServiceRegistrationIntegrationTest < ActionDispatch::IntegrationTest
     assert_no_difference -> { Session.count } do
       post session_path, params: {
         email_address: user.email_address,
-        password: "correct horse battery staple"
+        password: TEST_PASSWORD
       }
     end
     assert_redirected_to new_session_path
@@ -451,8 +451,8 @@ class SelfServiceRegistrationIntegrationTest < ActionDispatch::IntegrationTest
     {
       name: "New Registration",
       email_address: "new-registration@example.test",
-      password: "correct horse battery staple",
-      password_confirmation: "correct horse battery staple"
+      password: TEST_PASSWORD,
+      password_confirmation: TEST_PASSWORD
     }.merge(overrides)
   end
 

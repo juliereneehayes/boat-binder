@@ -66,7 +66,7 @@ class SelfServiceRegistrationTest < ActiveSupport::TestCase
     assert_not user.active?
     assert user.email_verification_pending?
     assert_not user.invitation_pending?
-    assert user.authenticate("correct horse battery staple")
+    assert user.authenticate(TEST_PASSWORD)
     assert_equal "New Owner", user.name
     assert_equal "new-owner@example.test", user.email_address
 
@@ -95,6 +95,48 @@ class SelfServiceRegistrationTest < ActiveSupport::TestCase
     assert_equal 0, Session.where(user:).count
     assert_equal 1, user.account_memberships.count
     assert_equal 1, account.account_memberships.count
+  end
+
+  test "reports the User policy error for a compromised password" do
+    registration = build_registration(email_address: "compromised@example.test")
+    registration.user.password_compromise_checker = ->(_password) { true }
+
+    assert_no_difference -> { User.count } do
+      registration.call
+    end
+
+    assert_not registration.accepted?
+    assert_includes registration.errors[:password], User::COMPROMISED_PASSWORD_MESSAGE
+  end
+
+  test "compromised-password validation does not reveal whether an email is registered" do
+    create_user(email: "registered-compromised@example.test")
+    registrations = [
+      build_registration(email_address: "new-compromised@example.test"),
+      build_registration(email_address: "registered-compromised@example.test")
+    ]
+    registrations.each do |registration|
+      registration.user.password_compromise_checker = ->(_password) { true }
+    end
+
+    registrations.each(&:call)
+
+    assert_equal registrations.first.errors.to_hash, registrations.second.errors.to_hash
+    registrations.each { |registration| assert_not registration.accepted? }
+  end
+
+  test "checks a valid password once even though registration validates before saving" do
+    registration = build_registration(email_address: "single-check@example.test")
+    checks = 0
+    registration.user.password_compromise_checker = lambda do |_password|
+      checks += 1
+      false
+    end
+
+    registration.call
+
+    assert registration.created?
+    assert_equal 1, checks
   end
 
   test "rolls the whole graph back at every persistence failure point" do
@@ -148,7 +190,7 @@ class SelfServiceRegistrationTest < ActiveSupport::TestCase
     assert_not registration.created?
     assert_not registration.delivery_failed?
     assert_empty registration.errors
-    assert registration.user.authenticate("correct horse battery staple")
+    assert registration.user.authenticate(TEST_PASSWORD)
     assert_equal existing_user_state, existing_user.reload.attributes
 
     mail = ActionMailer::Base.deliveries.last
@@ -290,8 +332,8 @@ class SelfServiceRegistrationTest < ActiveSupport::TestCase
     SelfServiceRegistration.new({
       name: "  New   Owner  ",
       email_address: " New-Owner@Example.Test ",
-      password: "correct horse battery staple",
-      password_confirmation: "correct horse battery staple"
+      password: TEST_PASSWORD,
+      password_confirmation: TEST_PASSWORD
     }.merge(overrides))
   end
 
