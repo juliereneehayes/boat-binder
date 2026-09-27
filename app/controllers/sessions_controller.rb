@@ -1,9 +1,49 @@
 class SessionsController < ApplicationController
+  EMAIL_RATE_LIMIT_KEY_PURPOSE = "sign-in-email-rate-limit"
+  RATE_LIMIT_STORE_OVERRIDE_KEY = :sessions_controller_rate_limit_store
+  THROTTLED_LOGIN_MESSAGE = "Try again later."
+
+  # Resolve the backing cache per execution so focused tests can inject an
+  # isolated store while all normal requests continue to use Rails.cache.
+  class RateLimitStore
+    def increment(...)
+      SessionsController.rate_limit_store.increment(...)
+    end
+  end
+
+  private_constant :RATE_LIMIT_STORE_OVERRIDE_KEY, :RateLimitStore
+  RATE_LIMIT_STORE = RateLimitStore.new
+
+  class << self
+    def rate_limit_store
+      ActiveSupport::IsolatedExecutionState[RATE_LIMIT_STORE_OVERRIDE_KEY] || Rails.cache
+    end
+
+    def with_rate_limit_store(store)
+      had_previous_store = ActiveSupport::IsolatedExecutionState.key?(RATE_LIMIT_STORE_OVERRIDE_KEY)
+      previous_store = ActiveSupport::IsolatedExecutionState[RATE_LIMIT_STORE_OVERRIDE_KEY]
+      ActiveSupport::IsolatedExecutionState[RATE_LIMIT_STORE_OVERRIDE_KEY] = store
+      yield
+    ensure
+      if had_previous_store
+        ActiveSupport::IsolatedExecutionState[RATE_LIMIT_STORE_OVERRIDE_KEY] = previous_store
+      else
+        ActiveSupport::IsolatedExecutionState.delete(RATE_LIMIT_STORE_OVERRIDE_KEY)
+      end
+    end
+  end
+
   allow_unauthenticated_access only: %i[ new create ]
   # Keep this before rate_limit: signed-in browsers must be redirected without
   # consuming login attempts, and credentials must never replace the current identity.
   before_action :redirect_authenticated_user, only: %i[ new create ]
-  rate_limit to: 10, within: 3.minutes, only: :create, with: -> { redirect_to new_session_path, alert: "Try again later." }
+  rate_limit to: 10, within: 3.minutes, only: :create, name: "ip",
+    store: RATE_LIMIT_STORE,
+    with: :throttled_login
+  rate_limit to: 10, within: 15.minutes, only: :create, name: "email",
+    by: :sign_in_email_rate_limit_key,
+    store: RATE_LIMIT_STORE,
+    with: :throttled_login
 
   def new
   end
@@ -28,6 +68,14 @@ class SessionsController < ApplicationController
   end
 
   private
+
+  def sign_in_email_rate_limit_key
+    EmailRateLimitKey.call(params[:email_address], purpose: EMAIL_RATE_LIMIT_KEY_PURPOSE)
+  end
+
+  def throttled_login
+    redirect_to new_session_path, alert: THROTTLED_LOGIN_MESSAGE
+  end
 
   def redirect_authenticated_user
     redirect_to root_path if authenticated?

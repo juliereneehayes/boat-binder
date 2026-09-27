@@ -1,5 +1,3 @@
-require "openssl"
-
 class EmailVerificationsController < ApplicationController
   AUTHENTICATED_VERIFICATION_MESSAGE = "Sign out before verifying another account."
   VERIFICATION_FAILURE_MESSAGE =
@@ -74,12 +72,10 @@ class EmailVerificationsController < ApplicationController
   end
 
   def normalized_resend_email
-    email_address = params[:email_address]
-    email_address.is_a?(String) ? email_address.strip.downcase : ""
+    EmailRateLimitKey.normalize(params[:email_address])
   end
 
   def resend_email_rate_limit_key
-    key = Rails.application.key_generator.generate_key(EMAIL_RATE_LIMIT_KEY_PURPOSE, 32)
-    OpenSSL::HMAC.hexdigest("SHA256", key, normalized_resend_email)
+    EmailRateLimitKey.call(params[:email_address], purpose: EMAIL_RATE_LIMIT_KEY_PURPOSE)
   end
 end
