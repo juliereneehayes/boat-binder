@@ -146,7 +146,7 @@ module ApplicationHelper
   end
 
   def app_nav_items
-    items = [ [ "Dashboard", root_path, "D" ] ]
+    items = [ [ "Dashboard", root_path, "D" ], [ "Active Sessions", active_sessions_path, "A" ] ]
     return items if owner_lifecycle_restricted?
 
     items << [ "Vessels", vessels_path, "V" ]

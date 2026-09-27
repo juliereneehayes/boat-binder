@@ -169,6 +169,7 @@ module Admin
 
     def save_user_with_memberships
       saved = false
+      revoke_sessions = security_identity_changed?
 
       User.transaction do
         user_valid = admin_managed_user_valid?
@@ -176,6 +177,7 @@ module Admin
         lock_membership_accounts! if account_access_valid
 
         if user_valid && account_access_valid && @user.save && sync_account_memberships
+          @user.sessions.destroy_all if revoke_sessions
           saved = true
         else
           raise ActiveRecord::Rollback
@@ -183,6 +185,14 @@ module Admin
       end
 
       saved
+    end
+
+    def security_identity_changed?
+      @user.persisted? && (
+        @user.will_save_change_to_password_digest? ||
+        @user.will_save_change_to_active? ||
+        @user.will_save_change_to_role?
+      )
     end
 
     # Account locks make seat validation and membership writes one serialized operation.
