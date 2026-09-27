@@ -72,14 +72,6 @@ module Authorization
     end
   end
 
-  def ensure_active_user!
-    return unless authenticated?
-    return if current_user&.active?
-
-    terminate_session
-    redirect_to new_session_path, alert: Authentication::GENERIC_LOGIN_FAILURE_MESSAGE
-  end
-
   def scoped_accounts
     return Account.all if internal_user?
 

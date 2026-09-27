@@ -66,10 +66,10 @@ class OwnerReadLifecycleTest < ActionDispatch::IntegrationTest
   test "read only grace preserves reads at entitlement end and immediately before ninety days" do
     ended_at = @now
     configure_ended_entitlement(ended_at:)
-    sign_in_as @owner
 
     [ ended_at, ended_at + 90.days - BOUNDARY_DELTA ].each do |evaluation_time|
       travel_to evaluation_time do
+        sign_in_as @owner
         assert_owner_read_paths_available
 
         patch vessel_path(@vessel), params: { asset: { name: "Blocked Grace Update" } }
@@ -82,11 +82,11 @@ class OwnerReadLifecycleTest < ActionDispatch::IntegrationTest
   test "retained inactive phase denies reads at ninety days without changing records or attachments" do
     ended_at = @now
     configure_ended_entitlement(ended_at:)
-    sign_in_as @owner
     original_state = persisted_state
 
     [ ended_at + 90.days, ended_at + 90.days + 1.second ].each do |evaluation_time|
       travel_to evaluation_time do
+        sign_in_as @owner
         assert_restricted_owner_state
       end
     end
@@ -97,11 +97,11 @@ class OwnerReadLifecycleTest < ActionDispatch::IntegrationTest
   test "archive eligible phase remains restricted without archiving or deleting data" do
     ended_at = @now
     configure_ended_entitlement(ended_at:)
-    sign_in_as @owner
     original_state = persisted_state
 
     [ ended_at + 12.months, ended_at + 12.months + 1.second ].each do |evaluation_time|
       travel_to evaluation_time do
+        sign_in_as @owner
         assert_restricted_owner_state
       end
     end

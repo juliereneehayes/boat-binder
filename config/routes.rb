@@ -1,5 +1,7 @@
 Rails.application.routes.draw do
   resource :session
+  get "active-sessions", to: "active_sessions#show", as: :active_sessions
+  delete "active-sessions/others", to: "active_sessions#destroy_others", as: :other_active_sessions
   resource :registration, only: %i[new create]
   get "email-verifications", to: "email_verifications#show", as: :email_verification
   post "email-verifications", to: "email_verifications#create"
