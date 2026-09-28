@@ -12,8 +12,8 @@ Already-established Action Cable connections are not force-disconnected when the
 
 1. Sign in and sign out normally as an Owner.
 2. Sign in and sign out normally as an Admin and a Captain.
-3. Sign in to the same user in two browsers and confirm both appear under Active Sessions.
-4. Confirm Active Sessions contains only the current user's sessions and exposes no session IDs or IP addresses.
+3. Sign in to the same user in two browsers and confirm both appear under Settings > Security.
+4. Confirm Settings > Security contains only the current user's sessions and exposes no session IDs or IP addresses.
 5. Sign out other sessions and confirm the current browser remains signed in while the other browser must reauthenticate.
 6. Reset a password and confirm all prior sessions require reauthentication.
 7. Deactivate a user as an Admin and confirm all of that user's sessions are revoked.

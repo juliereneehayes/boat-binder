@@ -1,7 +1,9 @@
 Rails.application.routes.draw do
   resource :session
-  get "active-sessions", to: "active_sessions#show", as: :active_sessions
-  delete "active-sessions/others", to: "active_sessions#destroy_others", as: :other_active_sessions
+  resource :settings, only: %i[show update]
+  post "settings/email-change", to: "email_changes#create", as: :settings_email_change
+  delete "settings/sessions/others", to: "settings#destroy_other_sessions", as: :other_settings_sessions
+  resource :email_change_confirmation, only: %i[show create], path: "email-change-confirmation"
   resource :registration, only: %i[new create]
   get "email-verifications", to: "email_verifications#show", as: :email_verification
   post "email-verifications", to: "email_verifications#create"

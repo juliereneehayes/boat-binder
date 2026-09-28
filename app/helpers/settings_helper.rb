@@ -1,4 +1,4 @@
-module ActiveSessionsHelper
+module SettingsHelper
   PLATFORM_NAMES = {
     "Android" => "Android device",
     "iPad" => "iPad",

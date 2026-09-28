@@ -1,0 +1,28 @@
+<section class="mx-auto max-w-md pt-10 text-center" data-controller="email-change-confirmation">
+  <div class="mx-auto mb-6 flex justify-center">
+    <%= render "shared/brand_mark", class_name: "h-16 w-16" %>
+  </div>
+
+  <div data-email-change-confirmation-target="working" aria-live="polite">
+    <p class="text-sm font-bold uppercase tracking-normal text-cyan-700">Account security</p>
+    <h1 class="mt-2 text-3xl font-black tracking-normal text-slate-950">Verifying your new email</h1>
+    <p class="mt-4 text-base leading-7 text-slate-600">Please wait while Boat Binder completes the change.</p>
+  </div>
+
+  <div class="hidden" data-email-change-confirmation-target="failure" aria-live="polite">
+    <p class="text-sm font-bold uppercase tracking-normal text-cyan-700">Account security</p>
+    <h1 class="mt-2 text-3xl font-black tracking-normal text-slate-950">Verification link unavailable</h1>
+    <p class="mt-4 text-base leading-7 text-slate-600"><%= EmailChangeConfirmationsController::FAILURE_MESSAGE %></p>
+    <%= link_to "Sign in", new_session_path, class: "mt-6 inline-block rounded-md bg-cyan-700 px-5 py-3 text-sm font-bold text-white shadow-sm" %>
+  </div>
+
+  <%= form_with url: email_change_confirmation_path, method: :post,
+    data: { turbo: false, email_change_confirmation_target: "form" }, class: "hidden" do |form| %>
+    <%= form.hidden_field :token, value: nil, data: { email_change_confirmation_target: "token" } %>
+  <% end %>
+
+  <noscript>
+    <p class="mt-4 text-base leading-7 text-slate-600"><%= EmailChangeConfirmationsController::FAILURE_MESSAGE %></p>
+    <%= link_to "Sign in", new_session_path, class: "mt-6 inline-block rounded-md bg-cyan-700 px-5 py-3 text-sm font-bold text-white shadow-sm" %>
+  </noscript>
+</section>
