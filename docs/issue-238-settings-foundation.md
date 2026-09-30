@@ -3,9 +3,10 @@
 ## Schema and deployment
 
 The migration adds two nullable `users` columns: `pending_email_address` and
-`email_change_requested_at`. A partial unique index protects non-null pending
-addresses, and a check constraint requires the two fields to be present or null
-together. No existing user, account, membership, billing, or session data is
+`email_change_requested_at`. A check constraint requires the two fields to be
+present or null together. Pending addresses do not reserve a login address;
+authoritative uniqueness remains enforced on `users.email_address` when a change
+is confirmed. No existing user, account, membership, billing, or session data is
 rewritten or deleted.
 
 Deploy the additive migration before or with the application code. The previous
@@ -36,4 +37,4 @@ remain unchanged.
 11. Confirm the old email no longer signs in.
 12. Confirm the new email signs in.
 13. Confirm malformed, expired, replayed, and superseded links fail with the same generic recovery.
-14. Confirm the UI and logs expose no user IDs, session IDs, IP addresses, passwords, or verification tokens.
+14. Confirm feature-specific logging contains no submitted passwords, verification tokens, or submitted/current/pending email addresses. Confirm Settings exposes no raw session IDs or session IP metadata. Request IPs may remain in standard infrastructure logs, and justified operational errors may contain internal user IDs without direct PII or tokens.

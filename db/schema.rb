@@ -536,7 +536,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_28_010000) do
     t.datetime "updated_at", null: false
     t.index ["active"], name: "index_users_on_active"
     t.index ["email_address"], name: "index_users_on_email_address", unique: true
-    t.index ["pending_email_address"], name: "index_users_on_pending_email_address", unique: true, where: "(pending_email_address IS NOT NULL)"
     t.check_constraint "(pending_email_address IS NULL) = (email_change_requested_at IS NULL)", name: "chk_users_pending_email_change_pair"
     t.check_constraint "email_verified_at IS NULL OR email_verification_sent_at IS NOT NULL", name: "chk_users_email_verification_sequence"
   end

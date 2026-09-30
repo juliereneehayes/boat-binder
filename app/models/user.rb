@@ -1,3 +1,5 @@
+require "openssl"
+
 class User < ApplicationRecord
   ROLES = %w[admin captain owner].freeze
   INVITATION_EXPIRES_IN = 7.days
@@ -19,7 +21,9 @@ class User < ApplicationRecord
     [ email_verification_sent_at&.to_f, email_verified_at&.to_f, active? ]
   end
   generates_token_for :email_change, expires_in: EMAIL_CHANGE_EXPIRES_IN do
-    [ email_address, pending_email_address, email_change_requested_at&.to_f, active? ]
+    state = [ email_address, pending_email_address, email_change_requested_at&.to_f, active? ].to_json
+    key = Rails.application.key_generator.generate_key("email-change-token-state", 32)
+    OpenSSL::HMAC.hexdigest("SHA256", key, state)
   end
 
   has_many :sessions, dependent: :destroy
@@ -36,7 +40,7 @@ class User < ApplicationRecord
   normalizes :email_address, :pending_email_address, with: ->(value) { value.strip.downcase }
 
   validates :email_address, presence: true, uniqueness: true, format: { with: URI::MailTo::EMAIL_REGEXP }
-  validates :pending_email_address, uniqueness: true, format: { with: URI::MailTo::EMAIL_REGEXP }, allow_nil: true
+  validates :pending_email_address, format: { with: URI::MailTo::EMAIL_REGEXP }, allow_nil: true
   validates :role, inclusion: { in: ROLES }
   validates :name, length: { maximum: 120 }
   validates :password, confirmation: true, length: { minimum: PASSWORD_MINIMUM_LENGTH }, allow_nil: true
@@ -93,7 +97,8 @@ class User < ApplicationRecord
   end
 
   def email_change_pending?
-    pending_email_address.present? && email_change_requested_at.present?
+    pending_email_address.present? && email_change_requested_at.present? &&
+      email_change_requested_at > EMAIL_CHANGE_EXPIRES_IN.ago
   end
 
   def active_sessions

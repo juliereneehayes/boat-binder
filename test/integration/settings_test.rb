@@ -1,5 +1,6 @@
 require "test_helper"
 require "cgi"
+require "stringio"
 
 class SettingsTest < ActionDispatch::IntegrationTest
   setup do
@@ -142,6 +143,22 @@ class SettingsTest < ActionDispatch::IntegrationTest
     assert_equal "email-change-existing@example.test", existing.reload.email_address
   end
 
+  test "an expired pending target does not reserve the address for another user" do
+    expired_holder = create_user(email: "expired-pending-holder@example.test")
+    expired_holder.update!(
+      pending_email_address: "reusable-pending-target@example.test",
+      email_change_requested_at: 25.hours.ago
+    )
+    user = create_user(email: "reusable-pending-requester@example.test")
+    sign_in_as(user)
+
+    assert_not expired_holder.email_change_pending?
+    request_email_change("reusable-pending-target@example.test")
+
+    assert_equal "reusable-pending-target@example.test", user.reload.pending_email_address
+    assert_equal [ "reusable-pending-target@example.test" ], ActionMailer::Base.deliveries.last.to
+  end
+
   test "delivery failure restores the previous pending request" do
     user = create_user(email: "email-change-delivery-failure@example.test")
     user.update!(
@@ -151,20 +168,31 @@ class SettingsTest < ActionDispatch::IntegrationTest
     previous_state = user.slice(:pending_email_address, :email_change_requested_at)
     sign_in_as(user)
     failed_delivery = Object.new
-    failed_delivery.define_singleton_method(:deliver_now) { raise IOError, "mail unavailable" }
+    failed_delivery.define_singleton_method(:deliver_now) do
+      raise IOError, "recipient=failed-delivery-new@example.test token=raw-mail-secret"
+    end
 
-    with_singleton_method(EmailChangesMailer, :verify, ->(*) { failed_delivery }) do
-      assert_no_difference -> { ActionMailer::Base.deliveries.size } do
-        post settings_email_change_path, params: { email_change: {
-          email_address: "failed-delivery-new@example.test",
-          current_password: TEST_PASSWORD
-        } }
+    logs = capture_request_logs do
+      with_singleton_method(EmailChangesMailer, :verify, ->(*) { failed_delivery }) do
+        assert_no_difference -> { ActionMailer::Base.deliveries.size } do
+          post settings_email_change_path, params: { email_change: {
+            email_address: "failed-delivery-new@example.test",
+            current_password: TEST_PASSWORD
+          } }
+        end
       end
     end
 
     assert_response :unprocessable_entity
     assert_select "[role=alert]", text: EmailChangesController::DELIVERY_FAILURE_MESSAGE
     assert_equal previous_state, user.reload.slice(:pending_email_address, :email_change_requested_at)
+    assert_includes logs, "[FILTERED]"
+    assert_includes logs, "user_id=#{user.id} exception_class=IOError"
+    assert_not_includes logs, user.email_address
+    assert_not_includes logs, "previous-delivery-pending@example.test"
+    assert_not_includes logs, "failed-delivery-new@example.test"
+    assert_not_includes logs, TEST_PASSWORD
+    assert_not_includes logs, "raw-mail-secret"
   end
 
   test "a newer request invalidates the previous token" do
@@ -213,6 +241,27 @@ class SettingsTest < ActionDispatch::IntegrationTest
     assert_redirected_to new_session_path
     post session_path, params: { email_address: user.email_address, password: TEST_PASSWORD }
     assert_redirected_to root_path
+  end
+
+  test "late confirmation fails safely when the pending address became an authoritative login" do
+    user = create_user(email: "late-confirmation-owner@example.test")
+    user.update!(
+      pending_email_address: "late-confirmation-target@example.test",
+      email_change_requested_at: Time.current
+    )
+    token = user.generate_token_for(:email_change)
+    existing_session = Session.create_for!(user:, user_agent: "Existing browser", ip_address: "192.0.2.42")
+    taker = create_user(email: "late-confirmation-taker@example.test")
+    taker.update!(email_address: "late-confirmation-target@example.test")
+
+    post email_change_confirmation_path, params: { token: }
+
+    assert_redirected_to new_session_path
+    assert_equal EmailChangeConfirmationsController::FAILURE_MESSAGE, flash[:alert]
+    assert_equal "late-confirmation-owner@example.test", user.reload.email_address
+    assert_equal "late-confirmation-target@example.test", user.pending_email_address
+    assert Session.exists?(existing_session.id)
+    assert_equal "late-confirmation-target@example.test", taker.reload.email_address
   end
 
   test "malformed expired replayed and superseded confirmations fail closed" do
@@ -290,12 +339,27 @@ class SettingsTest < ActionDispatch::IntegrationTest
     assert_equal EmailChangeConfirmationsController::FAILURE_MESSAGE, flash[:alert]
   end
 
-
   def with_singleton_method(receiver, method_name, replacement)
     original_method = receiver.method(method_name)
     receiver.define_singleton_method(method_name, replacement)
     yield
   ensure
     receiver.define_singleton_method(method_name, original_method)
+  end
+
+  def capture_request_logs
+    output = StringIO.new
+    logger = ActiveSupport::Logger.new(output)
+    logger.level = Logger::DEBUG
+    previous_rails_logger = Rails.logger
+    previous_controller_logger = ActionController::Base.logger
+    Rails.logger = logger
+    ActionController::Base.logger = logger
+
+    yield
+    output.string
+  ensure
+    ActionController::Base.logger = previous_controller_logger if previous_controller_logger
+    Rails.logger = previous_rails_logger if previous_rails_logger
   end
 end
