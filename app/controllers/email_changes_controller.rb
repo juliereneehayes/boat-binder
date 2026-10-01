@@ -114,21 +114,19 @@ class EmailChangesController < ApplicationController
       )
       Current.user.update!(pending_email_address: nil, email_change_requested_at: nil) unless restored
     end
-  rescue ActiveRecord::RecordNotUnique
-    Current.user.with_lock do
-      Current.user.reload
-      next unless Current.user.pending_email_address == rotation.pending_email
-      next unless Current.user.email_change_requested_at == rotation.requested_at
-
-      Current.user.update!(pending_email_address: nil, email_change_requested_at: nil)
-    end
   end
 
   def render_settings_validation_errors
-    messages = Current.user.errors.full_messages_for(:pending_email_address)
-    messages += Current.user.errors.full_messages_for(:email_change_requested_at)
+    message = if Current.user.errors.of_kind?(:pending_email_address, :taken)
+      FAILURE_MESSAGE
+    else
+      messages = Current.user.errors.full_messages_for(:pending_email_address)
+      messages += Current.user.errors.full_messages_for(:email_change_requested_at)
+      messages.to_sentence.presence || FAILURE_MESSAGE
+    end
     Current.user.reload
-    render_settings_error(messages.to_sentence.presence || FAILURE_MESSAGE)
+    Current.user.errors.clear
+    render_settings_error(message)
   end
 
   def render_settings_error(message)

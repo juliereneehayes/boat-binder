@@ -26,7 +26,7 @@ class EmailChangeConfirmationsController < ApplicationController
       user.sessions.destroy_all
     end
 
-    terminate_session if resume_session
+    Current.session = nil
     clear_session_cookie
     redirect_to new_session_path, notice: "Email changed. Sign in with your new email address."
   rescue ActiveSupport::MessageVerifier::InvalidSignature, ActiveRecord::RecordNotFound,

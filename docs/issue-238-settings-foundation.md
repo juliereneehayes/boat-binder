@@ -9,18 +9,25 @@ authoritative uniqueness remains enforced on `users.email_address` when a change
 is confirmed. No existing user, account, membership, billing, or session data is
 rewritten or deleted.
 
-Deploy the additive migration before or with the application code. The previous
-application version safely ignores both nullable columns, so it remains compatible
-during a rolling deploy. The new application keeps `users.email_address`
-authoritative until a pending address is verified.
+Apply the additive migration before new application code begins serving traffic.
+During a rolling deploy, old code may safely continue serving with both nullable
+columns present. Start new application processes and route traffic to them only
+after migration `20260928010000` has completed successfully. The new application
+keeps `users.email_address` authoritative until a pending address is verified.
 
 Prefer a forward fix if authentication behavior needs correction after deployment.
 If the application is rolled back while the columns remain, pending requests are
 inert because old code neither reads nor confirms them. A later forward deploy can
-resume them until their 24-hour signed tokens expire. If the migration itself must
-be rolled back, pending email-change state is discarded when the two new columns
-are removed; authoritative email addresses and all existing customer/account data
-remain unchanged.
+resume them until their 24-hour signed tokens expire. Before rolling back the
+migration, first restore or drain every new-code process. Removing the columns then
+discards only pending email-change state; authoritative email addresses and all
+existing customer/account data remain unchanged.
+
+## Pre-launch follow-up
+
+Track a separate focused change to notify the previous email address after a
+verified login-email change. Recovery and reversal tooling remain out of scope for
+this PR.
 
 ## Manual staging plan
 

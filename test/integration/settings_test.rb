@@ -100,11 +100,13 @@ class SettingsTest < ActionDispatch::IntegrationTest
     user = create_user(email: "email-change-request@example.test", name: "Email Changer")
     sign_in_as(user)
 
-    assert_difference -> { ActionMailer::Base.deliveries.size }, 1 do
-      post settings_email_change_path, params: { email_change: {
-        email_address: "  NEW-EMAIL-CHANGE@EXAMPLE.TEST  ",
-        current_password: TEST_PASSWORD
-      } }
+    logs = capture_request_logs do
+      assert_difference -> { ActionMailer::Base.deliveries.size }, 1 do
+        post settings_email_change_path, params: { email_change: {
+          email_address: "  NEW-EMAIL-CHANGE@EXAMPLE.TEST  ",
+          current_password: TEST_PASSWORD
+        } }
+      end
     end
 
     assert_redirected_to settings_path
@@ -116,30 +118,54 @@ class SettingsTest < ActionDispatch::IntegrationTest
     assert_nil User.authenticate_by(email_address: user.pending_email_address, password: TEST_PASSWORD)
 
     mail = ActionMailer::Base.deliveries.last
+    token = token_from(mail)
+    verification_url = mail_body(mail).match(%r{https?://[^\s<]+/email-change-confirmation#token=[^\s<]+})[0]
     assert_equal [ "new-email-change@example.test" ], mail.to
     assert_includes mail_body(mail), "/email-change-confirmation#token="
     assert_not_includes mail_body(mail), user.email_address
-    assert_equal user, User.find_by_token_for!(:email_change, token_from(mail))
+    assert_equal user, User.find_by_token_for!(:email_change, token)
+    assert_includes logs, "[FILTERED]"
+    assert_not_includes logs, user.email_address
+    assert_not_includes logs, user.pending_email_address
+    assert_not_includes logs, TEST_PASSWORD
+    assert_not_includes logs, token
+    assert_not_includes logs, verification_url
+    assert_not_includes logs, "/email-change-confirmation#token="
   end
 
-  test "malformed and duplicate email change requests fail without replacing authoritative email" do
-    existing = create_user(email: "email-change-existing@example.test")
+  test "malformed email change requests fail without replacing authoritative email" do
     user = create_user(email: "email-change-invalid@example.test")
     sign_in_as(user)
 
-    [ "not-an-email", "  EMAIL-CHANGE-EXISTING@EXAMPLE.TEST  " ].each do |submitted_email|
-      assert_no_difference -> { ActionMailer::Base.deliveries.size } do
-        post settings_email_change_path, params: { email_change: {
-          email_address: submitted_email,
-          current_password: TEST_PASSWORD
-        } }
-      end
-
-      assert_response :unprocessable_entity
-      assert_nil user.reload.pending_email_address
-      assert_equal "email-change-invalid@example.test", user.email_address
+    assert_no_difference -> { ActionMailer::Base.deliveries.size } do
+      post settings_email_change_path, params: { email_change: {
+        email_address: "not-an-email",
+        current_password: TEST_PASSWORD
+      } }
     end
 
+    assert_response :unprocessable_entity
+    assert_nil user.reload.pending_email_address
+    assert_equal "email-change-invalid@example.test", user.email_address
+  end
+
+  test "authoritative email duplicates use the generic failure without exposing account existence" do
+    existing = create_user(email: "email-change-existing@example.test")
+    user = create_user(email: "email-change-duplicate@example.test")
+    sign_in_as(user)
+
+    assert_no_difference -> { ActionMailer::Base.deliveries.size } do
+      post settings_email_change_path, params: { email_change: {
+        email_address: "  EMAIL-CHANGE-EXISTING@EXAMPLE.TEST  ",
+        current_password: TEST_PASSWORD
+      } }
+    end
+
+    assert_response :unprocessable_entity
+    assert_select "[role=alert]", text: EmailChangesController::FAILURE_MESSAGE
+    assert_not_includes response.body, "has already been taken"
+    assert_nil user.reload.pending_email_address
+    assert_equal "email-change-duplicate@example.test", user.email_address
     assert_equal "email-change-existing@example.test", existing.reload.email_address
   end
 
@@ -195,6 +221,103 @@ class SettingsTest < ActionDispatch::IntegrationTest
     assert_not_includes logs, "raw-mail-secret"
   end
 
+  test "an older delivery failure does not overwrite a newer pending request" do
+    user = create_user(email: "concurrent-email-change@example.test")
+    sign_in_as(user)
+    newer_requested_at = nil
+    newer_token = nil
+    failed_delivery = Object.new
+    failed_delivery.define_singleton_method(:deliver_now) do
+      user.reload
+      newer_requested_at = user.email_change_requested_at + 1.second
+      user.update!(
+        pending_email_address: "newer-pending-email@example.test",
+        email_change_requested_at: newer_requested_at
+      )
+      newer_token = user.generate_token_for(:email_change)
+      raise IOError, "mail unavailable"
+    end
+
+    with_singleton_method(EmailChangesMailer, :verify, ->(*) { failed_delivery }) do
+      post settings_email_change_path, params: { email_change: {
+        email_address: "older-pending-email@example.test",
+        current_password: TEST_PASSWORD
+      } }
+    end
+
+    assert_response :unprocessable_entity
+    user.reload
+    assert_equal "newer-pending-email@example.test", user.pending_email_address
+    assert_equal newer_requested_at, user.email_change_requested_at
+    assert_equal user, User.find_by_token_for!(:email_change, newer_token)
+    assert_equal "concurrent-email-change@example.test", user.email_address
+  end
+
+  test "an older delivery failure does not overwrite a newer request for the same pending address" do
+    user = create_user(email: "same-target-concurrent-email-change@example.test")
+    sign_in_as(user)
+    newer_requested_at = nil
+    newer_token = nil
+    failed_delivery = Object.new
+    failed_delivery.define_singleton_method(:deliver_now) do
+      user.reload
+      newer_requested_at = user.email_change_requested_at + 1.second
+      user.update!(email_change_requested_at: newer_requested_at)
+      newer_token = user.generate_token_for(:email_change)
+      raise IOError, "mail unavailable"
+    end
+
+    with_singleton_method(EmailChangesMailer, :verify, ->(*) { failed_delivery }) do
+      post settings_email_change_path, params: { email_change: {
+        email_address: "same-pending-email@example.test",
+        current_password: TEST_PASSWORD
+      } }
+    end
+
+    assert_response :unprocessable_entity
+    user.reload
+    assert_equal "same-pending-email@example.test", user.pending_email_address
+    assert_equal newer_requested_at, user.email_change_requested_at
+    assert_equal user, User.find_by_token_for!(:email_change, newer_token)
+    assert_equal "same-target-concurrent-email-change@example.test", user.email_address
+  end
+
+  test "delivery failure clears pending state when the previous target can no longer be restored" do
+    user = create_user(
+      email: "invalid-restore-email-change@example.test",
+      name: "Restore User",
+      role: "captain"
+    )
+    user.update!(
+      pending_email_address: "claimed-previous-pending@example.test",
+      email_change_requested_at: 1.hour.ago
+    )
+    claimant = create_user(email: "pending-claimant@example.test")
+    sign_in_as(user)
+    current_session = user.sessions.sole
+    original_identity = user.slice(:email_address, :name, :role, :active, :password_digest)
+    failed_delivery = Object.new
+    failed_delivery.define_singleton_method(:deliver_now) do
+      claimant.update!(email_address: "claimed-previous-pending@example.test")
+      raise IOError, "mail unavailable"
+    end
+
+    with_singleton_method(EmailChangesMailer, :verify, ->(*) { failed_delivery }) do
+      post settings_email_change_path, params: { email_change: {
+        email_address: "replacement-pending@example.test",
+        current_password: TEST_PASSWORD
+      } }
+    end
+
+    assert_response :unprocessable_entity
+    user.reload
+    assert_nil user.pending_email_address
+    assert_nil user.email_change_requested_at
+    assert_equal original_identity, user.slice(:email_address, :name, :role, :active, :password_digest)
+    assert Session.exists?(current_session.id)
+    assert_equal "claimed-previous-pending@example.test", claimant.reload.email_address
+  end
+
   test "a newer request invalidates the previous token" do
     user = create_user(email: "email-change-rotation@example.test")
     sign_in_as(user)
@@ -241,6 +364,31 @@ class SettingsTest < ActionDispatch::IntegrationTest
     assert_redirected_to new_session_path
     post session_path, params: { email_address: user.email_address, password: TEST_PASSWORD }
     assert_redirected_to root_path
+  end
+
+  test "confirming one user's email clears the browser cookie without destroying another user's session" do
+    changing_user = create_user(email: "cross-user-email-change@example.test")
+    changing_user.update!(
+      pending_email_address: "cross-user-email-change-confirmed@example.test",
+      email_change_requested_at: Time.current
+    )
+    token = changing_user.generate_token_for(:email_change)
+    changing_sessions = [
+      Session.create_for!(user: changing_user, user_agent: "Changing browser one", ip_address: "192.0.2.61"),
+      Session.create_for!(user: changing_user, user_agent: "Changing browser two", ip_address: "192.0.2.62")
+    ]
+    browser_user = create_user(email: "cross-user-browser@example.test")
+    sign_in_as(browser_user)
+    browser_session = browser_user.sessions.sole
+
+    post email_change_confirmation_path, params: { token: }
+
+    assert_redirected_to new_session_path
+    assert cookies[:session_id].blank?
+    assert_equal "cross-user-email-change-confirmed@example.test", changing_user.reload.email_address
+    changing_sessions.each { |session| assert_not Session.exists?(session.id) }
+    assert Session.exists?(browser_session.id)
+    assert_equal "cross-user-browser@example.test", browser_user.reload.email_address
   end
 
   test "late confirmation fails safely when the pending address became an authoritative login" do
@@ -353,12 +501,15 @@ class SettingsTest < ActionDispatch::IntegrationTest
     logger.level = Logger::DEBUG
     previous_rails_logger = Rails.logger
     previous_controller_logger = ActionController::Base.logger
+    previous_mailer_logger = ActionMailer::Base.logger
     Rails.logger = logger
     ActionController::Base.logger = logger
+    ActionMailer::Base.logger = logger
 
     yield
     output.string
   ensure
+    ActionMailer::Base.logger = previous_mailer_logger
     ActionController::Base.logger = previous_controller_logger if previous_controller_logger
     Rails.logger = previous_rails_logger if previous_rails_logger
   end
