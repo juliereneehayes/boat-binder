@@ -3,6 +3,7 @@ require "test_helper"
 class OwnerLifecycleRecoveryIntegrationTest < ActionDispatch::IntegrationTest
   setup do
     @now = Time.zone.local(2026, 8, 29, 12)
+    travel_to @now
     @account = create_account(name: "Owner Recovery Account")
     @owner = create_user(email: "owner-recovery@example.test", role: "owner")
     @membership = create_account_membership(user: @owner, account: @account, access_level: "editor")
