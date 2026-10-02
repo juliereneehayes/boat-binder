@@ -46,7 +46,7 @@ gem "aws-sdk-s3", require: false
 gem "net-imap", ">= 0.6.4.1"
 
 # Official Stripe Ruby SDK for verified webhook receipt and future billing integration.
-gem "stripe", "~> 19.3"
+gem "stripe", "~> 19.6"
 
 group :development, :test do
   # See https://guides.rubyonrails.org/debugging_rails_applications.html#debugging-with-the-debug-gem
