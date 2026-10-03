@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_03_170000) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_03_230000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -549,6 +549,10 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_03_170000) do
     t.datetime "email_verified_at"
     t.datetime "invitation_accepted_at"
     t.datetime "invitation_sent_at"
+    t.datetime "mfa_enrolled_at"
+    t.bigint "mfa_last_accepted_timestep"
+    t.text "mfa_recovery_code_digests", default: [], null: false, array: true
+    t.text "mfa_totp_secret"
     t.string "name"
     t.string "password_digest"
     t.string "pending_email_address"
@@ -558,6 +562,9 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_03_170000) do
     t.index ["email_address"], name: "index_users_on_email_address", unique: true
     t.check_constraint "(pending_email_address IS NULL) = (email_change_requested_at IS NULL)", name: "chk_users_pending_email_change_pair"
     t.check_constraint "email_verified_at IS NULL OR email_verification_sent_at IS NOT NULL", name: "chk_users_email_verification_sequence"
+    t.check_constraint "mfa_enrolled_at IS NOT NULL OR cardinality(mfa_recovery_code_digests) = 0", name: "chk_users_mfa_recovery_requires_enrollment"
+    t.check_constraint "mfa_enrolled_at IS NULL OR mfa_totp_secret IS NOT NULL", name: "chk_users_mfa_enrollment_has_secret"
+    t.check_constraint "mfa_last_accepted_timestep IS NULL OR mfa_enrolled_at IS NOT NULL", name: "chk_users_mfa_timestep_requires_enrollment"
   end
 
   add_foreign_key "account_export_requests", "accounts"

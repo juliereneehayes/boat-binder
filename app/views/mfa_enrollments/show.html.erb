@@ -1,0 +1,44 @@
+<section class="mx-auto max-w-2xl space-y-8 pt-6">
+  <div>
+    <p class="text-sm font-bold uppercase tracking-normal text-cyan-700">Settings · Security</p>
+    <h1 class="mt-2 text-3xl font-black tracking-normal text-slate-950">Set up two-factor authentication</h1>
+    <p class="mt-2 max-w-xl text-sm leading-6 text-slate-600">
+      Save this account in a compatible authenticator or password manager, such as Apple Passwords or 1Password.
+      You can scan the QR code or enter the secret manually.
+    </p>
+  </div>
+
+  <div class="grid gap-6 md:grid-cols-2">
+    <div class="<%= app_card_class("p-5") %>">
+      <h2 class="text-lg font-black">Scan the QR code</h2>
+      <div class="mt-4 inline-block rounded-md bg-white p-3 ring-1 ring-slate-200">
+        <%= raw @qr_svg %>
+      </div>
+    </div>
+
+    <div class="<%= app_card_class("p-5") %>">
+      <h2 class="text-lg font-black">Enter it manually</h2>
+      <p class="mt-2 text-sm text-slate-600">Keep this secret private. It will not be shown again after setup.</p>
+      <code class="mt-4 block break-all rounded-md bg-slate-100 p-3 font-mono text-sm font-bold"><%= @manual_secret %></code>
+    </div>
+  </div>
+
+  <div class="<%= app_card_class("p-5") %>">
+    <h2 class="text-lg font-black">Confirm setup</h2>
+    <p class="mt-1 text-sm leading-6 text-slate-600">Enter a current six-digit code. MFA is not active until this succeeds.</p>
+    <%= form_with url: settings_mfa_enrollment_path, method: :patch, scope: :mfa, class: "mt-5 space-y-4" do |form| %>
+      <div>
+        <%= form.label :code, "Verification code", class: "text-sm font-semibold text-slate-700" %>
+        <%= form.text_field :code, required: true, autofocus: true, autocomplete: "one-time-code",
+          inputmode: "numeric", pattern: "[0-9 -]*", maxlength: 12,
+          class: "mt-2 block min-h-12 w-full rounded-md border border-slate-300 bg-white px-4 py-3 text-lg tracking-widest shadow-sm focus:border-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-700/20" %>
+      </div>
+      <%= form.submit "Confirm and enable MFA", class: primary_button_class, data: { turbo_submits_with: "Verifying..." } %>
+    <% end %>
+  </div>
+
+  <% unless authenticated? %>
+    <%= button_to "Cancel and sign out", mfa_challenge_path, method: :delete,
+      class: "block w-full py-2 text-center text-sm font-semibold text-slate-600 underline" %>
+  <% end %>
+</section>

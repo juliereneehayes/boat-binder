@@ -2,7 +2,7 @@
   <div>
     <p class="text-sm font-black uppercase tracking-normal text-[#1E5A7A]">Your account</p>
     <h1 class="mt-2 text-3xl font-black tracking-normal">Settings</h1>
-    <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Manage your profile, sign-in email, and active sessions.</p>
+    <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Manage your profile, sign-in email, two-factor authentication, and active sessions.</p>
   </div>
 
   <section aria-labelledby="account-heading" class="space-y-5">
@@ -76,10 +76,67 @@
     <div class="flex flex-wrap items-end justify-between gap-4">
       <div>
         <p class="text-sm font-black uppercase tracking-normal text-[#1E5A7A]">Security</p>
-        <h2 id="security-heading" class="mt-1 text-2xl font-black">Active Sessions</h2>
-        <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Browsers and devices currently signed in to your account.</p>
+        <h2 id="security-heading" class="mt-1 text-2xl font-black">Security</h2>
+        <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-600">Protect your account and manage signed-in browsers and devices.</p>
+      </div>
+    </div>
+
+    <div class="<%= app_card_class("p-5") %>">
+      <div class="flex flex-wrap items-start justify-between gap-4">
+        <div>
+          <h3 class="text-lg font-black">Two-factor authentication</h3>
+          <% if @user.mfa_enrolled? %>
+            <p class="mt-1 text-sm leading-6 text-slate-600">Enabled. <%= pluralize(@user.mfa_recovery_codes_remaining, "recovery code") %> remaining.</p>
+          <% elsif @user.mfa_enrollment_pending? %>
+            <p class="mt-1 text-sm leading-6 text-slate-600">Setup has not been confirmed yet.</p>
+          <% else %>
+            <p class="mt-1 text-sm leading-6 text-slate-600">
+              Add a verification code from an authenticator or compatible password manager when you sign in.
+            </p>
+          <% end %>
+        </div>
+
+        <% if @user.mfa_enrollment_pending? %>
+          <%= link_to "Continue setup", settings_mfa_enrollment_path, class: primary_button_class %>
+        <% elsif !@user.mfa_enrolled? %>
+          <%= button_to "Set up MFA", settings_mfa_enrollment_path, method: :post, class: primary_button_class %>
+        <% end %>
       </div>
 
+      <% if @user.mfa_enrolled? %>
+        <div class="mt-6 grid gap-6 border-t border-slate-200 pt-6 lg:grid-cols-2">
+          <%= form_with url: settings_mfa_recovery_codes_path, scope: :mfa, class: "space-y-3" do |form| %>
+            <div>
+              <h4 class="font-black">Regenerate recovery codes</h4>
+              <p class="mt-1 text-sm text-slate-600">This invalidates every unused recovery code.</p>
+            </div>
+            <%= form.label :current_password, "Current password", class: "text-sm font-semibold text-slate-700" %>
+            <%= form.password_field :current_password, required: true, autocomplete: "current-password", maxlength: 72,
+              class: "block min-h-11 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-base shadow-sm focus:border-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-700/20" %>
+            <%= form.submit "Generate new recovery codes", class: secondary_button_class,
+              data: { turbo_submits_with: "Generating..." } %>
+          <% end %>
+
+          <%= form_with url: settings_mfa_reenrollment_path, scope: :mfa, class: "space-y-3" do |form| %>
+            <div>
+              <h4 class="font-black">Replace authenticator</h4>
+              <p class="mt-1 text-sm text-slate-600">This signs out every session and requires immediate MFA setup again.</p>
+            </div>
+            <%= form.label :current_password, "Current password", class: "text-sm font-semibold text-slate-700" %>
+            <%= form.password_field :current_password, required: true, autocomplete: "current-password", maxlength: 72,
+              class: "block min-h-11 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-base shadow-sm focus:border-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-700/20" %>
+            <%= form.submit "Reset and re-enroll MFA", class: secondary_button_class,
+              data: { turbo_confirm: "This will sign out every session and replace your current MFA setup.", turbo_submits_with: "Resetting..." } %>
+          <% end %>
+        </div>
+      <% end %>
+    </div>
+
+    <div class="flex flex-wrap items-end justify-between gap-4 pt-2">
+      <div>
+        <h3 class="text-xl font-black">Active Sessions</h3>
+        <p class="mt-1 text-sm leading-6 text-slate-600">Browsers and devices currently signed in to your account.</p>
+      </div>
       <% if @active_sessions.many? %>
         <%= button_to "Sign out other sessions", other_settings_sessions_path, method: :delete,
           class: primary_button_class %>
