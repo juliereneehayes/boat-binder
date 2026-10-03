@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_09_28_010000) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_03_170000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -265,6 +265,26 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_28_010000) do
     t.index ["completed_at"], name: "index_reminders_on_completed_at"
     t.index ["status", "due_date"], name: "index_reminders_on_status_and_due_date"
     t.check_constraint "status::text = ANY (ARRAY['pending'::character varying, 'completed'::character varying]::text[])", name: "chk_reminders_status"
+  end
+
+  create_table "security_audit_events", force: :cascade do |t|
+    t.bigint "account_id"
+    t.string "action", null: false
+    t.bigint "actor_user_id"
+    t.string "changed_fields", default: [], null: false, array: true
+    t.datetime "created_at", default: -> { "CURRENT_TIMESTAMP" }, null: false
+    t.string "outcome", null: false
+    t.string "request_id"
+    t.inet "source_ip"
+    t.bigint "target_id"
+    t.string "target_type"
+    t.index ["account_id", "created_at"], name: "index_security_audit_events_on_account_id_and_created_at"
+    t.index ["action", "created_at"], name: "index_security_audit_events_on_action_and_created_at"
+    t.index ["actor_user_id", "created_at"], name: "index_security_audit_events_on_actor_user_id_and_created_at"
+    t.index ["request_id"], name: "index_security_audit_events_on_request_id"
+    t.index ["target_type", "target_id", "created_at"], name: "idx_security_audit_events_target_created_at"
+    t.check_constraint "(target_type IS NULL) = (target_id IS NULL)", name: "chk_security_audit_events_target_pair"
+    t.check_constraint "outcome::text = ANY (ARRAY['succeeded'::character varying, 'failed'::character varying, 'denied'::character varying]::text[])", name: "chk_security_audit_events_outcome"
   end
 
   create_table "service_visit_battery_checks", force: :cascade do |t|
@@ -562,6 +582,8 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_28_010000) do
   add_foreign_key "documents", "accounts"
   add_foreign_key "documents", "assets"
   add_foreign_key "reminders", "assets"
+  add_foreign_key "security_audit_events", "accounts"
+  add_foreign_key "security_audit_events", "users", column: "actor_user_id"
   add_foreign_key "service_visit_battery_checks", "asset_batteries"
   add_foreign_key "service_visit_battery_checks", "service_visits"
   add_foreign_key "service_visit_engine_readings", "asset_engines"
