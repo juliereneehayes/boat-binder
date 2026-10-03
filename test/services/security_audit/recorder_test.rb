@@ -51,16 +51,21 @@ module SecurityAudit
       assert_equal 0, SecurityAuditEvent.count
     end
 
-    test "rejects values disguised as changed field names" do
-      error = assert_raises(ActiveRecord::RecordInvalid) do
-        Recorder.record!(
-          action: "mfa.reset_completed",
-          target: @target,
-          changed_fields: [ "token=do-not-store" ]
-        )
+    test "rejects unknown and value-shaped changed field names" do
+      [ "email_address", "password_is_some_secret", TEST_PASSWORD ].each do |unsafe_field|
+        error = assert_raises(ActiveRecord::RecordInvalid) do
+          Recorder.record!(
+            action: "mfa.reset_completed",
+            target: @target,
+            changed_fields: [ unsafe_field ]
+          )
+        end
+
+        assert_includes error.record.errors[:changed_fields],
+          "must contain only approved semantic field names"
       end
 
-      assert_includes error.record.errors[:changed_fields], "must contain field names without values"
+      assert_equal 0, SecurityAuditEvent.count
     end
 
     test "schema has no generic payload or secret value columns" do

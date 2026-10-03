@@ -1,4 +1,6 @@
 class SecurityAuditEvent < ApplicationRecord
+  # Application-layer guardrails only. Deliberate raw SQL, unscoped mutations,
+  # bulk insert/upsert APIs, and database-owner access remain outside this scope.
   module AppendOnlyRelation
     MUTATION_ERROR = "SecurityAuditEvent is append-only"
 
@@ -24,10 +26,12 @@ class SecurityAuditEvent < ApplicationRecord
   end
 
   OUTCOMES = %w[succeeded failed denied].freeze
+  CHANGED_FIELDS = %w[active password role].freeze
   ACTION_FORMAT = /\A[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+\z/
-  FIELD_NAME_FORMAT = /\A[a-z][a-z0-9_]*\z/
   TARGET_TYPE_FORMAT = /\A[A-Z][A-Za-z0-9:]*\z/
 
+  # These associations resolve historical scalar identifiers when the source
+  # rows still exist; missing historical rows are valid and resolve to nil.
   belongs_to :actor_user, class_name: "User", optional: true
   belongs_to :account, optional: true
 
@@ -45,6 +49,12 @@ class SecurityAuditEvent < ApplicationRecord
     persisted?
   end
 
+  def delete
+    raise ActiveRecord::ReadOnlyRecord, AppendOnlyRelation::MUTATION_ERROR if persisted?
+
+    super
+  end
+
   private
 
   def target_reference_is_complete
@@ -59,8 +69,8 @@ class SecurityAuditEvent < ApplicationRecord
       return
     end
 
-    return if changed_fields.all? { |field| field.is_a?(String) && FIELD_NAME_FORMAT.match?(field) }
+    return if changed_fields.all? { |field| field.is_a?(String) && field.in?(CHANGED_FIELDS) }
 
-    errors.add(:changed_fields, "must contain field names without values")
+    errors.add(:changed_fields, "must contain only approved semantic field names")
   end
 end

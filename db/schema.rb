@@ -582,8 +582,6 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_03_170000) do
   add_foreign_key "documents", "accounts"
   add_foreign_key "documents", "assets"
   add_foreign_key "reminders", "assets"
-  add_foreign_key "security_audit_events", "accounts"
-  add_foreign_key "security_audit_events", "users", column: "actor_user_id"
   add_foreign_key "service_visit_battery_checks", "asset_batteries"
   add_foreign_key "service_visit_battery_checks", "service_visits"
   add_foreign_key "service_visit_engine_readings", "asset_engines"

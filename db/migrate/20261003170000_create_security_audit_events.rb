@@ -1,8 +1,10 @@
 class CreateSecurityAuditEvents < ActiveRecord::Migration[8.1]
   def up
     create_table :security_audit_events do |t|
-      t.references :actor_user, foreign_key: { to_table: :users }, index: false
-      t.references :account, foreign_key: true, index: false
+      # Historical identifiers intentionally have no foreign keys. Audit
+      # attribution survives future deletion of the referenced live rows.
+      t.bigint :actor_user_id
+      t.bigint :account_id
       t.string :action, null: false
       t.string :target_type
       t.bigint :target_id

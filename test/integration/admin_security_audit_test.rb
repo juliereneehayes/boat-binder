@@ -68,30 +68,54 @@ class AdminSecurityAuditTest < ActionDispatch::IntegrationTest
     assert_not_includes event.attributes.to_json, TEST_PASSWORD
   end
 
-  test "owner security changes are attributed to every affected account" do
-    first_account = create_account(name: "First Audited Owner Account")
-    second_account = create_account(name: "Second Audited Owner Account")
+  test "owner security and membership changes write one global event" do
+    account = create_account(name: "Audited Owner Account")
     owner = create_user(email: "audited-owner@example.test", role: "owner", name: "Audited Owner")
-    create_account_membership(user: owner, account: first_account)
-    create_account_membership(user: owner, account: second_account)
+    membership = create_account_membership(user: owner, account:)
 
-    assert_difference -> { SecurityAuditEvent.count }, 2 do
+    assert_difference -> { SecurityAuditEvent.count }, 1 do
       patch admin_user_path(owner), params: { user: {
         name: owner.name,
         email_address: owner.email_address,
         role: "captain",
         active: "1",
         password: "",
-        password_confirmation: ""
+        password_confirmation: "",
+        account_ids: []
       } }
     end
 
-    events = SecurityAuditEvent.where(target_type: "User", target_id: owner.id).order(:account_id)
+    event = SecurityAuditEvent.where(target_type: "User", target_id: owner.id).sole
     assert_redirected_to admin_users_path
-    assert_equal [ first_account.id, second_account.id ], events.pluck(:account_id)
-    assert_equal [ "role" ], events.first.changed_fields
-    assert_equal events.first, SecurityAuditEvent.for_account(first_account).sole
-    assert_equal events.second, SecurityAuditEvent.for_account(second_account).sole
+    assert owner.reload.captain?
+    assert_not membership.reload.active?
+    assert_nil event.account_id
+    assert_equal [ "role" ], event.changed_fields
+  end
+
+  test "owner creation with memberships writes one global event" do
+    first_account = create_account(name: "First New Owner Account")
+    second_account = create_account(name: "Second New Owner Account")
+
+    assert_difference -> { SecurityAuditEvent.count }, 1 do
+      post admin_users_path, params: { user: {
+        name: "New Audited Owner",
+        email_address: "new-audited-owner@example.test",
+        role: "owner",
+        active: "1",
+        send_invitation: "0",
+        password: TEST_PASSWORD,
+        password_confirmation: TEST_PASSWORD,
+        account_ids: [ first_account.id, second_account.id ]
+      } }
+    end
+
+    owner = User.find_by!(email_address: "new-audited-owner@example.test")
+    event = SecurityAuditEvent.where(target_type: "User", target_id: owner.id).sole
+    assert_redirected_to admin_users_path
+    assert_equal [ first_account.id, second_account.id ], owner.account_memberships.active.order(:account_id).pluck(:account_id)
+    assert_nil event.account_id
+    assert_equal %w[active password role], event.changed_fields
   end
 
   test "profile-only update does not create a security event" do
@@ -130,6 +154,38 @@ class AdminSecurityAuditTest < ActionDispatch::IntegrationTest
 
     with_audit_recorder(->(**) { raise "audit unavailable" }) do
       assert_raises(RuntimeError) do
+        patch admin_user_path(@target), params: { user: target_params(role: "admin") }
+      end
+    end
+
+    assert @target.reload.captain?
+    assert Session.exists?(target_session.id)
+    assert_equal 0, SecurityAuditEvent.count
+  end
+
+  test "audit persistence failure rolls back the security change and session revocation" do
+    target_session = Session.create_for!(
+      user: @target,
+      user_agent: "Persistence rollback target browser",
+      ip_address: "192.0.2.33"
+    )
+
+    persistence_failure = lambda do |**attributes|
+      SecurityAuditEvent.transaction(requires_new: true) do
+        SecurityAuditEvent.new(
+          action: nil,
+          outcome: "succeeded",
+          actor_user: attributes[:actor],
+          target_type: attributes[:target]&.model_name&.name,
+          target_id: attributes[:target]&.id,
+          request_id: attributes[:request_id],
+          changed_fields: attributes.fetch(:changed_fields)
+        ).save!(validate: false)
+      end
+    end
+
+    with_audit_recorder(persistence_failure) do
+      assert_raises(ActiveRecord::NotNullViolation) do
         patch admin_user_path(@target), params: { user: target_params(role: "admin") }
       end
     end

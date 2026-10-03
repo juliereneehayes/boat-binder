@@ -11,6 +11,7 @@ class SecurityAuditEventTest < ActiveSupport::TestCase
 
     assert_raises(ActiveRecord::ReadOnlyRecord) { event.update!(outcome: "failed") }
     assert_raises(ActiveRecord::ReadOnlyRecord) { event.destroy! }
+    assert_raises(ActiveRecord::ReadOnlyRecord) { event.delete }
     assert_raises(ActiveRecord::ReadOnlyRecord) do
       SecurityAuditEvent.where(id: event.id).update_all(outcome: "failed")
     end
@@ -29,15 +30,43 @@ class SecurityAuditEventTest < ActiveSupport::TestCase
     assert_includes event.errors[:target], "type and id must be provided together"
   end
 
-  test "changed fields accept names but reject embedded values" do
-    safe_event = SecurityAuditEvent.new(base_attributes.merge(changed_fields: %w[active role]))
-    unsafe_event = SecurityAuditEvent.new(
-      base_attributes.merge(changed_fields: [ "email_address=private@example.test" ])
-    )
+  test "changed fields accept only the approved semantic allowlist" do
+    assert_equal %w[active password role], SecurityAuditEvent::CHANGED_FIELDS
+    assert SecurityAuditEvent.new(
+      base_attributes.merge(changed_fields: %w[active password role])
+    ).valid?
 
-    assert safe_event.valid?
-    assert_not unsafe_event.valid?
-    assert_includes unsafe_event.errors[:changed_fields], "must contain field names without values"
+    unsafe_fields = [
+      "email_address",
+      "password_is_some_secret",
+      TEST_PASSWORD,
+      BCrypt::Password.create(TEST_PASSWORD).to_s
+    ]
+
+    unsafe_fields.each do |unsafe_field|
+      event = SecurityAuditEvent.new(base_attributes.merge(changed_fields: [ unsafe_field ]))
+      assert_not event.valid?, unsafe_field
+      assert_includes event.errors[:changed_fields], "must contain only approved semantic field names"
+    end
+  end
+
+  test "historical identifiers survive deletion of referenced rows" do
+    account = Account.create!(name: "Historical Audit Account", account_type: "client")
+    event = SecurityAuditEvent.create!(base_attributes.merge(account:))
+    actor_user_id = event.actor_user_id
+    account_id = event.account_id
+    target_id = event.target_id
+
+    User.delete(@actor.id)
+    User.delete(@target.id)
+    Account.delete(account.id)
+    event.reload
+
+    assert_equal actor_user_id, event.actor_user_id
+    assert_equal account_id, event.account_id
+    assert_equal target_id, event.target_id
+    assert_nil event.actor_user
+    assert_nil event.account
   end
 
   private
