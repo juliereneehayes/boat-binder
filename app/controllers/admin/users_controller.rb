@@ -169,7 +169,9 @@ module Admin
 
     def save_user_with_memberships
       saved = false
-      revoke_sessions = security_identity_changed?
+      new_user = @user.new_record?
+      security_changed_fields = admin_security_changed_fields(new_user:)
+      revoke_sessions = !new_user && security_changed_fields.any?
 
       User.transaction do
         user_valid = admin_managed_user_valid?
@@ -178,6 +180,7 @@ module Admin
 
         if user_valid && account_access_valid && @user.save && sync_account_memberships
           @user.sessions.destroy_all if revoke_sessions
+          record_admin_security_event!(new_user:, changed_fields: security_changed_fields)
           saved = true
         else
           raise ActiveRecord::Rollback
@@ -187,11 +190,29 @@ module Admin
       saved
     end
 
-    def security_identity_changed?
-      @user.persisted? && (
-        @user.will_save_change_to_password_digest? ||
-        @user.will_save_change_to_active? ||
-        @user.will_save_change_to_role?
+    def admin_security_changed_fields(new_user:)
+      if new_user
+        %w[active role].tap do |fields|
+          fields << "password" if @user.password_digest.present?
+        end
+      else
+        [].tap do |fields|
+          fields << "active" if @user.will_save_change_to_active?
+          fields << "password" if @user.will_save_change_to_password_digest?
+          fields << "role" if @user.will_save_change_to_role?
+        end
+      end
+    end
+
+    def record_admin_security_event!(new_user:, changed_fields:)
+      return if changed_fields.empty?
+
+      SecurityAudit::Recorder.record!(
+        action: new_user ? "admin.user_created" : "admin.user_security_changed",
+        actor: current_user,
+        target: @user,
+        request_id: request.request_id,
+        changed_fields:
       )
     end
 
