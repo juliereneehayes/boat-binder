@@ -1,7 +1,10 @@
+require "openssl"
+
 class User < ApplicationRecord
   ROLES = %w[admin captain owner].freeze
   INVITATION_EXPIRES_IN = 7.days
   EMAIL_VERIFICATION_EXPIRES_IN = 24.hours
+  EMAIL_CHANGE_EXPIRES_IN = 24.hours
   PASSWORD_RESET_EXPIRES_IN = 15.minutes
   PASSWORD_MINIMUM_LENGTH = 15
   PASSWORD_MAXIMUM_BYTES = 72
@@ -17,6 +20,11 @@ class User < ApplicationRecord
   generates_token_for :email_verification, expires_in: EMAIL_VERIFICATION_EXPIRES_IN do
     [ email_verification_sent_at&.to_f, email_verified_at&.to_f, active? ]
   end
+  generates_token_for :email_change, expires_in: EMAIL_CHANGE_EXPIRES_IN do
+    state = [ email_address, pending_email_address, email_change_requested_at&.to_f, active? ].to_json
+    key = Rails.application.key_generator.generate_key("email-change-token-state", 32)
+    OpenSSL::HMAC.hexdigest("SHA256", key, state)
+  end
 
   has_many :sessions, dependent: :destroy
   has_many :account_memberships, dependent: :destroy
@@ -29,9 +37,10 @@ class User < ApplicationRecord
     dependent: :restrict_with_exception
 
   normalizes :name, with: ->(value) { value.squish.presence }
-  normalizes :email_address, with: ->(e) { e.strip.downcase }
+  normalizes :email_address, :pending_email_address, with: ->(value) { value.strip.downcase }
 
   validates :email_address, presence: true, uniqueness: true, format: { with: URI::MailTo::EMAIL_REGEXP }
+  validates :pending_email_address, format: { with: URI::MailTo::EMAIL_REGEXP }, allow_nil: true
   validates :role, inclusion: { in: ROLES }
   validates :name, length: { maximum: 120 }
   validates :password, confirmation: true, length: { minimum: PASSWORD_MINIMUM_LENGTH }, allow_nil: true
@@ -40,6 +49,8 @@ class User < ApplicationRecord
   validate :password_digest_required_unless_pending_invitation
   validate :password_has_not_been_compromised
   validate :email_verification_lifecycle_is_consistent
+  validate :email_change_lifecycle_is_consistent
+  validate :pending_email_address_is_available, if: :will_save_change_to_pending_email_address?
   validate :owner_user_limits_allow_role_change
 
   def email
@@ -85,6 +96,15 @@ class User < ApplicationRecord
     email_verification_sent_at.present? && email_verified_at.blank? && !active?
   end
 
+  def email_change_pending?
+    pending_email_address.present? && email_change_requested_at.present? &&
+      email_change_requested_at > EMAIL_CHANGE_EXPIRES_IN.ago
+  end
+
+  def active_sessions
+    sessions.includes(:user).order(created_at: :desc).select(&:valid_at?)
+  end
+
   private
 
   def password_fits_bcrypt_byte_limit
@@ -124,6 +144,23 @@ class User < ApplicationRecord
     return if email_verified_at.blank? || email_verification_sent_at.present?
 
     errors.add(:email_verified_at, "requires a verification email timestamp")
+  end
+
+  def email_change_lifecycle_is_consistent
+    if pending_email_address.present? && email_change_requested_at.blank?
+      errors.add(:email_change_requested_at, "is required for a pending email change")
+    elsif pending_email_address.blank? && email_change_requested_at.present?
+      errors.add(:pending_email_address, "can't be blank")
+    end
+  end
+
+  def pending_email_address_is_available
+    return if pending_email_address.blank?
+
+    if pending_email_address == email_address ||
+        User.where(email_address: pending_email_address).where.not(id:).exists?
+      errors.add(:pending_email_address, :taken)
+    end
   end
 
   def owner_user_limits_allow_role_change

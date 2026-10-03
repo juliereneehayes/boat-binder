@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_09_27_180000) do
+ActiveRecord::Schema[8.1].define(version: 2026_09_28_010000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -336,9 +336,9 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_27_180000) do
     t.index ["follow_up_needed", "follow_up_completed_at"], name: "index_service_visits_on_open_follow_up"
     t.index ["performed_by_user_id"], name: "index_service_visits_on_performed_by_user_id"
     t.index ["visit_date"], name: "index_service_visits_on_visit_date"
+    t.check_constraint "(follow_up_completed_at IS NULL) = (follow_up_completed_by_user_id IS NULL)", name: "chk_service_visits_follow_up_completion_pair"
     t.check_constraint "engine_hours IS NULL OR engine_hours >= 0::numeric", name: "chk_service_visits_engine_hours_non_negative"
     t.check_constraint "follow_up_completed_at IS NULL OR follow_up_needed", name: "chk_service_visits_follow_up_completion_needed"
-    t.check_constraint "(follow_up_completed_at IS NULL) = (follow_up_completed_by_user_id IS NULL)", name: "chk_service_visits_follow_up_completion_pair"
   end
 
   create_table "sessions", force: :cascade do |t|
@@ -524,16 +524,19 @@ ActiveRecord::Schema[8.1].define(version: 2026_09_27_180000) do
     t.boolean "active", default: true, null: false
     t.datetime "created_at", null: false
     t.string "email_address", null: false
+    t.datetime "email_change_requested_at"
+    t.datetime "email_verification_sent_at"
+    t.datetime "email_verified_at"
     t.datetime "invitation_accepted_at"
     t.datetime "invitation_sent_at"
     t.string "name"
     t.string "password_digest"
+    t.string "pending_email_address"
     t.string "role", default: "captain", null: false
     t.datetime "updated_at", null: false
-    t.datetime "email_verification_sent_at"
-    t.datetime "email_verified_at"
     t.index ["active"], name: "index_users_on_active"
     t.index ["email_address"], name: "index_users_on_email_address", unique: true
+    t.check_constraint "(pending_email_address IS NULL) = (email_change_requested_at IS NULL)", name: "chk_users_pending_email_change_pair"
     t.check_constraint "email_verified_at IS NULL OR email_verification_sent_at IS NOT NULL", name: "chk_users_email_verification_sequence"
   end
 

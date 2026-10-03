@@ -97,7 +97,7 @@ class SessionLifecycleTest < ActionDispatch::IntegrationTest
     assert_not Session.exists?(inactive_session.id)
   end
 
-  test "active sessions page shows only current user sessions without identifiers" do
+  test "settings shows only current user sessions without identifiers" do
     user = create_user(email: "session-list@example.test", role: "owner")
     other_user = create_user(email: "other-session-list@example.test", role: "owner")
     sign_in_as(user)
@@ -113,7 +113,7 @@ class SessionLifecycleTest < ActionDispatch::IntegrationTest
       ip_address: "192.0.2.11"
     )
 
-    get active_sessions_path
+    get settings_path
 
     assert_response :success
     assert_select "article", count: 2
@@ -122,7 +122,7 @@ class SessionLifecycleTest < ActionDispatch::IntegrationTest
     assert_not_includes response.body, "Chrome"
     assert_not_includes response.body, "192.0.2.10"
     assert_not_includes response.body, "session_id"
-    assert_not_includes response.body, active_sessions_path + "/#{own_other.id}"
+    assert_not_includes response.body, settings_path + "/#{own_other.id}"
     assert Session.exists?(current_session.id)
     assert Session.exists?(other_session.id)
   end
@@ -135,9 +135,9 @@ class SessionLifecycleTest < ActionDispatch::IntegrationTest
     own_other = Session.create_for!(user:, user_agent: "Firefox", ip_address: "192.0.2.20")
     unrelated = Session.create_for!(user: other_user, user_agent: "Chrome", ip_address: "192.0.2.21")
 
-    delete other_active_sessions_path, params: { user_id: other_user.id }
+    delete other_settings_sessions_path, params: { user_id: other_user.id }
 
-    assert_redirected_to active_sessions_path
+    assert_redirected_to settings_path(anchor: "security")
     assert Session.exists?(current_session.id)
     assert_not Session.exists?(own_other.id)
     assert Session.exists?(unrelated.id)
