@@ -27,6 +27,13 @@ class SolidDatabaseConfigurationTest < ActiveSupport::TestCase
     assert_nil cable_config.dig("production", "connects_to")
   end
 
+  test "production uses shared Solid Cache for MFA challenge state and throttles" do
+    production_source = Rails.root.join("config/environments/production.rb").read
+
+    assert_includes production_source, "config.cache_store = :solid_cache_store"
+    assert Rails.application.config_for(:cache, env: "production").key?(:store_options)
+  end
+
   test "primary schema contains every Solid table" do
     SOLID_TABLES.each do |table|
       assert ActiveRecord::Base.connection.data_source_exists?(table), "Expected #{table} in the primary schema"

@@ -1,4 +1,6 @@
 require "openssl"
+require "rotp"
+require "securerandom"
 
 class User < ApplicationRecord
   ROLES = %w[admin captain owner].freeze
@@ -8,12 +10,18 @@ class User < ApplicationRecord
   PASSWORD_RESET_EXPIRES_IN = 15.minutes
   PASSWORD_MINIMUM_LENGTH = 15
   PASSWORD_MAXIMUM_BYTES = 72
+  MFA_TOTP_PERIOD = 30
+  MFA_TOTP_DIGITS = 6
+  MFA_TOTP_DRIFT = 1
+  MFA_RECOVERY_CODE_COUNT = 10
+  MFA_RECOVERY_CODE_BYTES = 16
   COMPROMISED_PASSWORD_MESSAGE = "has appeared in known data breaches. Choose a different password."
 
   class_attribute :password_compromise_checker, default: ->(password) { CompromisedPasswordChecker.call(password) }
   attr_writer :password_compromise_checker
 
   has_secure_password validations: false, reset_token: { expires_in: PASSWORD_RESET_EXPIRES_IN }
+  encrypts :mfa_totp_secret
   generates_token_for :invitation, expires_in: INVITATION_EXPIRES_IN do
     [ invitation_sent_at&.to_f, invitation_accepted_at&.to_f, active? ]
   end
@@ -52,6 +60,7 @@ class User < ApplicationRecord
   validate :email_change_lifecycle_is_consistent
   validate :pending_email_address_is_available, if: :will_save_change_to_pending_email_address?
   validate :owner_user_limits_allow_role_change
+  validate :mfa_state_is_consistent
 
   def email
     email_address
@@ -105,7 +114,190 @@ class User < ApplicationRecord
     sessions.includes(:user).order(created_at: :desc).select(&:valid_at?)
   end
 
+  def mfa_enrolled?
+    mfa_enrolled_at.present?
+  end
+
+  def mfa_enrollment_pending?
+    !mfa_enrolled? && mfa_totp_secret.present?
+  end
+
+  def mfa_reenrollment_pending?
+    mfa_enrollment_pending? && mfa_reenrollment_started_at.present?
+  end
+
+  def mfa_enrollment_cancellable?(privileged_enforcement: Mfa::Policy.privileged_enforcement?)
+    return false unless mfa_enrollment_pending? && !mfa_reenrollment_pending?
+
+    owner? || (internal? && !privileged_enforcement)
+  end
+
+  def begin_mfa_enrollment!
+    with_lock do
+      update!(
+        mfa_totp_secret: ROTP::Base32.random_base32(32),
+        mfa_enrolled_at: nil,
+        mfa_reenrollment_started_at: nil,
+        mfa_last_accepted_timestep: nil,
+        mfa_recovery_code_digests: []
+      )
+    end
+  end
+
+  def mfa_enrollment_secret
+    mfa_totp_secret if mfa_enrollment_pending?
+  end
+
+  def mfa_enrollment_provisioning_uri
+    return unless mfa_enrollment_pending?
+
+    mfa_totp.provisioning_uri(email_address)
+  end
+
+  def confirm_mfa_enrollment!(code, at: Time.current)
+    with_lock do
+      reload
+      next unless mfa_enrollment_pending?
+
+      accepted_timestep = verify_mfa_totp(code, at:)
+      next unless accepted_timestep
+
+      recovery_codes = self.class.generate_mfa_recovery_codes
+      update!(
+        mfa_enrolled_at: at,
+        mfa_reenrollment_started_at: nil,
+        mfa_last_accepted_timestep: accepted_timestep,
+        mfa_recovery_code_digests: recovery_codes.map { |recovery_code| mfa_recovery_digest(recovery_code) }
+      )
+      recovery_codes
+    end
+  end
+
+  def accept_mfa_totp!(code, at: Time.current)
+    with_lock do
+      reload
+      next false unless mfa_enrolled?
+
+      accepted_timestep = verify_mfa_totp(code, at:)
+      next false unless accepted_timestep
+
+      update!(mfa_last_accepted_timestep: accepted_timestep)
+      true
+    end
+  end
+
+  def consume_mfa_recovery_code!(code)
+    candidate = self.class.normalize_mfa_recovery_code(code)
+    return false unless /\A[0-9A-F]{32}\z/.match?(candidate)
+
+    with_lock do
+      reload
+      next false unless mfa_enrolled?
+
+      matching_index = nil
+      mfa_recovery_code_digests.each_with_index do |digest, index|
+        matching_index ||= index if BCrypt::Password.new(digest).is_password?(candidate)
+      end
+      next false unless matching_index
+
+      remaining_digests = mfa_recovery_code_digests.dup
+      remaining_digests.delete_at(matching_index)
+      update!(mfa_recovery_code_digests: remaining_digests)
+      true
+    end
+  rescue BCrypt::Errors::InvalidHash
+    false
+  end
+
+  def regenerate_mfa_recovery_codes!
+    with_lock do
+      reload
+      raise ActiveRecord::RecordInvalid, self unless mfa_enrolled?
+
+      recovery_codes = self.class.generate_mfa_recovery_codes
+      update!(
+        mfa_recovery_code_digests: recovery_codes.map { |recovery_code| mfa_recovery_digest(recovery_code) }
+      )
+      recovery_codes
+    end
+  end
+
+  def reset_mfa_for_reenrollment!(at: Time.current)
+    with_lock do
+      update!(
+        mfa_totp_secret: ROTP::Base32.random_base32(32),
+        mfa_enrolled_at: nil,
+        mfa_reenrollment_started_at: at,
+        mfa_last_accepted_timestep: nil,
+        mfa_recovery_code_digests: []
+      )
+    end
+  end
+
+  def cancel_pending_mfa_enrollment!
+    with_lock do
+      reload
+      next false unless mfa_enrollment_cancellable?
+
+      update!(
+        mfa_totp_secret: nil,
+        mfa_enrolled_at: nil,
+        mfa_reenrollment_started_at: nil,
+        mfa_last_accepted_timestep: nil,
+        mfa_recovery_code_digests: []
+      )
+      true
+    end
+  end
+
+  def mfa_recovery_codes_remaining
+    mfa_recovery_code_digests.length
+  end
+
+  class << self
+    def normalize_mfa_totp(code)
+      code.to_s.gsub(/[\s-]/, "")
+    end
+
+    def normalize_mfa_recovery_code(code)
+      code.to_s.gsub(/[\s-]/, "").upcase
+    end
+
+    def generate_mfa_recovery_codes
+      Array.new(MFA_RECOVERY_CODE_COUNT) do
+        SecureRandom.hex(MFA_RECOVERY_CODE_BYTES).upcase.scan(/.{4}/).join("-")
+      end
+    end
+  end
+
   private
+
+  def mfa_totp
+    ROTP::TOTP.new(
+      mfa_totp_secret,
+      issuer: "Boat Binder",
+      digits: MFA_TOTP_DIGITS,
+      interval: MFA_TOTP_PERIOD
+    )
+  end
+
+  def verify_mfa_totp(code, at:)
+    normalized_code = self.class.normalize_mfa_totp(code)
+    return unless /\A\d{#{MFA_TOTP_DIGITS}}\z/.match?(normalized_code)
+
+    accepted_at = mfa_totp.verify(
+      normalized_code,
+      at: at.to_i,
+      drift_behind: MFA_TOTP_DRIFT * MFA_TOTP_PERIOD,
+      drift_ahead: MFA_TOTP_DRIFT * MFA_TOTP_PERIOD,
+      after: mfa_last_accepted_timestep && mfa_last_accepted_timestep * MFA_TOTP_PERIOD
+    )
+    accepted_at && accepted_at / MFA_TOTP_PERIOD
+  end
+
+  def mfa_recovery_digest(code)
+    BCrypt::Password.create(self.class.normalize_mfa_recovery_code(code))
+  end
 
   def password_fits_bcrypt_byte_limit
     return if password.nil? || password.bytesize <= PASSWORD_MAXIMUM_BYTES
@@ -179,6 +371,21 @@ class User < ApplicationRecord
         errors.add(:role, Billing::OwnerUserLimit::ERROR_MESSAGE)
         break
       end
+    end
+  end
+
+  def mfa_state_is_consistent
+    if mfa_enrolled? && mfa_totp_secret.blank?
+      errors.add(:mfa_totp_secret, "is required for MFA enrollment")
+    end
+    if mfa_last_accepted_timestep.present? && !mfa_enrolled?
+      errors.add(:mfa_last_accepted_timestep, "requires MFA enrollment")
+    end
+    if mfa_recovery_code_digests.any? && !mfa_enrolled?
+      errors.add(:mfa_recovery_code_digests, "require MFA enrollment")
+    end
+    if mfa_reenrollment_started_at.present? && !mfa_enrollment_pending?
+      errors.add(:mfa_reenrollment_started_at, "requires pending MFA enrollment")
     end
   end
 end

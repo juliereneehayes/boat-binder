@@ -42,6 +42,20 @@ module Authentication
       session.delete(:return_to_after_authenticating) || root_url
     end
 
+    def establish_session_after_primary_authentication(user, session_redirect:)
+      if Mfa::Policy.required_for_sign_in?(user)
+        user.begin_mfa_enrollment! unless user.mfa_enrolled? || user.mfa_enrollment_pending?
+        Mfa::Challenge.issue!(cookies:, user:)
+        user.mfa_enrolled? ? new_mfa_challenge_path : settings_mfa_enrollment_path
+      else
+        Mfa::Challenge.clear!(cookies)
+        start_new_session_for(user)
+        session_redirect.respond_to?(:call) ? session_redirect.call : session_redirect
+      end
+    end
+
+    # Low-level Session creation for callers that have already passed the MFA
+    # policy gate or have just completed MFA successfully.
     def start_new_session_for(user)
       Session.create_for!(user:, user_agent: request.user_agent, ip_address: request.remote_ip).tap do |session|
         Current.session = session

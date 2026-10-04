@@ -9,6 +9,7 @@ Rails.application.config.filter_parameters += [
   /\Acustomer_email\z/, /\Acustomer_name\z/, /\Acustomer_phone\z/, /\Acustomer_shipping\z/,
   /\Acustomer_tax_ids\z/, /\Acustomer_id\z/, /\Adata\z/, :hosted_invoice_url, :invoice_pdf, /\Alines\z/,
   /\Aprice_id\z/,
+  :code, :verification_code, :recovery_code, :mfa_code, :provisioning_uri,
   :payment_intent, :payment_method, :receipt_url, /\Asource\z/, /\Asubscription_id\z/,
   /\Aaccount_reference\z/
 ]

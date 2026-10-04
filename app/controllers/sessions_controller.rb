@@ -55,8 +55,10 @@ class SessionsController < ApplicationController
         return
       end
 
-      start_new_session_for user
-      redirect_to after_authentication_url
+      redirect_to establish_session_after_primary_authentication(
+        user,
+        session_redirect: -> { after_authentication_url }
+      )
     else
       redirect_to new_session_path, alert: Authentication::GENERIC_LOGIN_FAILURE_MESSAGE
     end

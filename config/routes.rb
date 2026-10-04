@@ -1,7 +1,15 @@
 Rails.application.routes.draw do
   resource :session
+  resource :mfa_challenge, only: %i[new create destroy], path: "mfa"
   resource :settings, only: %i[show update]
   post "settings/email-change", to: "email_changes#create", as: :settings_email_change
+  resource :settings_mfa_enrollment, only: %i[show create update destroy],
+    path: "settings/security/mfa/enrollment",
+    controller: "mfa_enrollments"
+  post "settings/security/mfa/recovery-codes", to: "mfa_recovery_codes#create",
+    as: :settings_mfa_recovery_codes
+  post "settings/security/mfa/re-enrollment", to: "mfa_reenrollments#create",
+    as: :settings_mfa_reenrollment
   delete "settings/sessions/others", to: "settings#destroy_other_sessions", as: :other_settings_sessions
   resource :email_change_confirmation, only: %i[show create], path: "email-change-confirmation"
   resource :registration, only: %i[new create]
