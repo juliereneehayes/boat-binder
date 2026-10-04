@@ -214,6 +214,21 @@ class User < ApplicationRecord
     begin_mfa_enrollment!
   end
 
+  def cancel_pending_mfa_enrollment!
+    with_lock do
+      reload
+      next false unless owner? && mfa_enrollment_pending? && !mfa_enrolled?
+
+      update!(
+        mfa_totp_secret: nil,
+        mfa_enrolled_at: nil,
+        mfa_last_accepted_timestep: nil,
+        mfa_recovery_code_digests: []
+      )
+      true
+    end
+  end
+
   def mfa_recovery_codes_remaining
     mfa_recovery_code_digests.length
   end

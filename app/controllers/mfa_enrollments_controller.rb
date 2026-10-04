@@ -1,6 +1,8 @@
 class MfaEnrollmentsController < ApplicationController
   CONFIRMATION_FAILURE_MESSAGE = "We couldn't verify that code. Try again."
+  CANCELLATION_DENIED_MESSAGE = "MFA setup cannot be cancelled for this account."
 
+  include NoStoreResponse
   allow_unauthenticated_access
   before_action :load_mfa_context
 
@@ -47,8 +49,7 @@ class MfaEnrollmentsController < ApplicationController
         action: "authentication.mfa_enrolled",
         actor: Current.user,
         target: @user,
-        request_id: request.request_id,
-        source_ip: request.remote_ip
+        request_id: request.request_id
       )
       completed = true
     end
@@ -62,6 +63,35 @@ class MfaEnrollmentsController < ApplicationController
       prepare_enrollment
       flash.now[:alert] = CONFIRMATION_FAILURE_MESSAGE
       render :show, status: :unprocessable_entity
+    end
+  end
+
+  def destroy
+    unless @user.owner? && @user.mfa_enrollment_pending? && !@user.mfa_enrolled?
+      redirect_to cancellation_denied_path, alert: CANCELLATION_DENIED_MESSAGE, status: :see_other
+      return
+    end
+
+    completed = false
+    User.transaction do
+      next unless @user.cancel_pending_mfa_enrollment!
+      raise ActiveRecord::Rollback if @challenge && !Mfa::Challenge.consume!(@challenge)
+
+      start_new_session_for(@user) if @challenge
+      completed = true
+    end
+
+    unless completed
+      Mfa::Challenge.clear!(cookies)
+      redirect_to new_session_path, alert: Authentication::GENERIC_LOGIN_FAILURE_MESSAGE
+      return
+    end
+
+    if @challenge
+      Mfa::Challenge.clear!(cookies)
+      redirect_to after_authentication_url
+    else
+      redirect_to settings_path(anchor: "security"), notice: "MFA setup cancelled.", status: :see_other
     end
   end
 
@@ -99,5 +129,9 @@ class MfaEnrollmentsController < ApplicationController
 
   def redirect_after_existing_enrollment
     redirect_to @challenge ? new_mfa_challenge_path : settings_path(anchor: "security")
+  end
+
+  def cancellation_denied_path
+    @challenge ? settings_mfa_enrollment_path : settings_path(anchor: "security")
   end
 end

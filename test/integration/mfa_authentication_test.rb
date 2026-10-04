@@ -31,6 +31,8 @@ class MfaAuthenticationTest < ActionDispatch::IntegrationTest
     end
     assert_response :success
     assert owner.reload.mfa_enrolled?
+    enrollment_event = SecurityAuditEvent.where(action: "authentication.mfa_enrolled").order(:id).last
+    assert_nil enrollment_event.source_ip
     assert_select "ol li", count: 10
     assert_not_includes response.body, secret
 
@@ -77,12 +79,14 @@ class MfaAuthenticationTest < ActionDispatch::IntegrationTest
       secret = admin.reload.mfa_enrollment_secret
       get settings_mfa_enrollment_path
       assert_response :success
+      assert_includes response.headers["Cache-Control"], "no-store"
       assert_includes response.body, secret
 
       assert_difference -> { admin.sessions.count }, 1 do
         patch settings_mfa_enrollment_path, params: { mfa: { code: current_totp(secret) } }
       end
       assert_response :success
+      assert_includes response.headers["Cache-Control"], "no-store"
       assert admin.reload.mfa_enrolled?
       assert_select "ol li", count: 10
 
@@ -143,6 +147,34 @@ class MfaAuthenticationTest < ActionDispatch::IntegrationTest
     end
   end
 
+  test "MFA reset invalidates copied challenges without invalidating the new enrollment challenge" do
+    user, = enrolled_user(email: "stale-reset-challenge@example.test", role: "admin")
+
+    with_challenge_store do
+      begin_mfa_sign_in(user)
+      old_challenge = cookies[Mfa::Challenge::COOKIE_NAME]
+
+      Mfa::Reset.call!(user:)
+      new_secret = user.reload.mfa_enrollment_secret
+      post session_path, params: { email_address: user.email_address, password: TEST_PASSWORD }
+      assert_redirected_to settings_mfa_enrollment_path
+      new_challenge = cookies[Mfa::Challenge::COOKIE_NAME]
+      assert_not_equal old_challenge, new_challenge
+
+      cookies[Mfa::Challenge::COOKIE_NAME] = old_challenge
+      assert_no_difference -> { user.sessions.count } do
+        get settings_mfa_enrollment_path
+      end
+      assert_redirected_to new_session_path
+      assert_not_includes response.body, new_secret
+
+      cookies[Mfa::Challenge::COOKIE_NAME] = new_challenge
+      get settings_mfa_enrollment_path
+      assert_response :success
+      assert_includes response.body, new_secret
+    end
+  end
+
   test "challenge preserves the return-to destination" do
     user, secret = enrolled_user(email: "mfa-return-to@example.test", role: "owner")
 
@@ -185,6 +217,7 @@ class MfaAuthenticationTest < ActionDispatch::IntegrationTest
       assert_equal "authentication.mfa_recovery_code_used", event.action
       assert_equal user.id, event.actor_user_id
       assert_nil event.account_id
+      assert_nil event.source_ip
       assert_equal user.id, event.target_id
       assert_not_includes event.attributes.to_json, recovery_code
 
@@ -195,6 +228,55 @@ class MfaAuthenticationTest < ActionDispatch::IntegrationTest
       end
       assert_equal MfaChallengesController::VERIFICATION_FAILURE_MESSAGE, flash[:alert]
     end
+  end
+
+  test "pending Owner enrollment can be cancelled after password verification" do
+    owner = create_user(email: "cancel-pending-owner@example.test", role: "owner")
+    sign_in_as(owner)
+    post settings_mfa_enrollment_path
+    assert owner.reload.mfa_enrollment_pending?
+    delete session_path
+
+    post session_path, params: { email_address: owner.email_address, password: TEST_PASSWORD }
+    assert_redirected_to settings_mfa_enrollment_path
+    assert_no_difference -> { SecurityAuditEvent.count } do
+      assert_difference -> { owner.sessions.count }, 1 do
+        delete settings_mfa_enrollment_path
+      end
+    end
+
+    assert_redirected_to root_path
+    assert_not owner.reload.mfa_enrollment_pending?
+    assert_nil owner.mfa_totp_secret
+    delete session_path
+
+    assert_difference -> { owner.sessions.count }, 1 do
+      post session_path, params: { email_address: owner.email_address, password: TEST_PASSWORD }
+    end
+    assert_redirected_to root_path
+  end
+
+  test "privileged and enrolled Owner credentials cannot use pending enrollment cancellation" do
+    admin = create_user(email: "cancel-pending-admin@example.test", role: "admin")
+
+    with_mfa_enforcement do
+      post session_path, params: { email_address: admin.email_address, password: TEST_PASSWORD }
+    end
+    admin_secret = admin.reload.mfa_enrollment_secret
+    delete settings_mfa_enrollment_path
+    assert_redirected_to settings_mfa_enrollment_path
+    assert_equal MfaEnrollmentsController::CANCELLATION_DENIED_MESSAGE, flash[:alert]
+    assert_equal admin_secret, admin.reload.mfa_enrollment_secret
+    assert_empty admin.sessions
+
+    delete mfa_challenge_path
+    owner, = enrolled_user(email: "cancel-enrolled-owner@example.test", role: "owner")
+    complete_mfa_sign_in(owner)
+    delete settings_mfa_enrollment_path
+    assert_redirected_to settings_path(anchor: "security")
+    assert_equal MfaEnrollmentsController::CANCELLATION_DENIED_MESSAGE, flash[:alert]
+    assert owner.reload.mfa_enrolled?
+    assert owner.mfa_totp_secret.present?
   end
 
   test "role changes revoke sessions and the next login follows the new MFA policy" do
@@ -269,6 +351,12 @@ class MfaAuthenticationTest < ActionDispatch::IntegrationTest
   def begin_mfa_sign_in(user)
     post session_path, params: { email_address: user.email_address, password: TEST_PASSWORD }
     assert_redirected_to new_mfa_challenge_path
+  end
+
+  def complete_mfa_sign_in(user)
+    begin_mfa_sign_in(user)
+    post mfa_challenge_path, params: { mfa: { code: current_totp(user.mfa_totp_secret) } }
+    assert_redirected_to root_path
   end
 
   def current_totp(secret, at: Time.current)

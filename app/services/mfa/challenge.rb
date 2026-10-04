@@ -92,7 +92,14 @@ module Mfa
       end
 
       def credential_state(user)
-        state = [ user.id, user.password_digest, user.role, user.active? ].join("\0")
+        state = [
+          user.id,
+          user.password_digest,
+          user.role,
+          user.active?,
+          user.ciphertext_for(:mfa_totp_secret),
+          user.mfa_enrolled_at&.to_f
+        ].join("\0")
         private_identifier(state, purpose: CREDENTIAL_KEY_PURPOSE)
       end
 

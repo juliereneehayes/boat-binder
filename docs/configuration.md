@@ -32,11 +32,26 @@ verified database backup instead of attempting to roll them back.
 ## Rails Application Secrets
 
 - `SECRET_KEY_BASE` - required in production and stored as a Heroku config var.
+- `ACTIVE_RECORD_ENCRYPTION_PRIMARY_KEY` - current dedicated key material used to encrypt MFA TOTP secrets.
+- `ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT` - stable, environment-specific Active Record Encryption derivation salt.
+- `ACTIVE_RECORD_ENCRYPTION_PREVIOUS_PRIMARY_KEYS` - optional comma-separated old MFA encryption keys retained temporarily during rotation.
 
 Production intentionally does not use `RAILS_MASTER_KEY`, and `config/credentials.yml.enc` is no
 longer part of the production secret model. Do not restore the retired signing secret or master key
 as fallbacks. If Rails encrypted credentials are introduced again, they must use a new, independent
 master key and must not reuse retired production secrets.
+
+Production and staging processes running with `RAILS_ENV=production` fail boot unless the current
+Active Record Encryption key and derivation salt are configured. Set both before deploying the MFA
+capability or running its release migration. Generate independent, environment-specific values of at
+least 32 bytes (for example, separate outputs from `bin/rails secret`); never reuse `SECRET_KEY_BASE`.
+Local development and test derive disposable/local material from the local Rails secret when these
+variables are absent. Key rotation and re-encryption are documented in
+[Issue #233: TOTP MFA rollout and operations](issue-233-mfa.md).
+
+MFA challenge replay markers and MFA attempt/password-reprompt throttles use the shared Rails cache.
+Production must retain `config.cache_store = :solid_cache_store`; `NullStore`, memory-only, or another
+per-process cache is not safe for multi-process production MFA enforcement.
 
 ## SMTP / Mailgun
 

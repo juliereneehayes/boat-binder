@@ -5,7 +5,7 @@ module Mfa
 
     class << self
       def required_for_sign_in?(user)
-        user.mfa_enrolled? || user.mfa_enrollment_pending? || privileged_enforcement? && user.internal?
+        user.mfa_enrolled? || user.mfa_enrollment_pending? || (privileged_enforcement? && user.internal?)
       end
 
       def privileged_enforcement?

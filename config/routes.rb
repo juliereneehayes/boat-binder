@@ -3,7 +3,7 @@ Rails.application.routes.draw do
   resource :mfa_challenge, only: %i[new create destroy], path: "mfa"
   resource :settings, only: %i[show update]
   post "settings/email-change", to: "email_changes#create", as: :settings_email_change
-  resource :settings_mfa_enrollment, only: %i[show create update],
+  resource :settings_mfa_enrollment, only: %i[show create update destroy],
     path: "settings/security/mfa/enrollment",
     controller: "mfa_enrollments"
   post "settings/security/mfa/recovery-codes", to: "mfa_recovery_codes#create",

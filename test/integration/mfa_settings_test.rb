@@ -17,6 +17,7 @@ class MfaSettingsTest < ActionDispatch::IntegrationTest
     }
 
     assert_response :success
+    assert_includes response.headers["Cache-Control"], "no-store"
     assert owner.reload.mfa_enrolled?
     assert_equal [ account.id ], owner.account_memberships.active.pluck(:account_id)
     assert_equal "editor", membership.reload.access_level
@@ -35,6 +36,7 @@ class MfaSettingsTest < ActionDispatch::IntegrationTest
     end
 
     assert_response :success
+    assert_includes response.headers["Cache-Control"], "no-store"
     assert_select "ol li", count: 10
     rendered_codes = css_select("ol li code").map { |element| element.text.strip }
     assert_equal 10, rendered_codes.length
@@ -45,6 +47,7 @@ class MfaSettingsTest < ActionDispatch::IntegrationTest
     assert_equal "authentication.mfa_recovery_codes_regenerated", event.action
     assert_equal owner.id, event.actor_user_id
     assert_equal owner.id, event.target_id
+    assert_nil event.source_ip
     rendered_codes.each { |code| assert_not_includes event.attributes.to_json, code }
   end
 
@@ -90,6 +93,44 @@ class MfaSettingsTest < ActionDispatch::IntegrationTest
     get settings_mfa_enrollment_path
     assert_response :success
     assert_includes response.body, user.mfa_enrollment_secret
+    event = SecurityAuditEvent.where(action: "authentication.mfa_reenrollment_started").order(:id).last
+    assert_nil event.source_ip
+  end
+
+  test "recovery-code regeneration password re-prompt is throttled per user" do
+    owner, = enrolled_user(email: "mfa-regeneration-throttle@example.test", role: "owner")
+    complete_mfa_sign_in(owner)
+
+    with_password_rate_limit_store do
+      5.times do
+        post settings_mfa_recovery_codes_path, params: { mfa: { current_password: "wrong password" } }
+        assert_equal MfaRecoveryCodesController::FAILURE_MESSAGE, flash[:alert]
+      end
+
+      post settings_mfa_recovery_codes_path, params: { mfa: { current_password: "wrong password" } }
+      assert_redirected_to settings_path(anchor: "security")
+      assert_equal MfaRecoveryCodesController::THROTTLED_MESSAGE, flash[:alert]
+      assert owner.reload.mfa_enrolled?
+    end
+  end
+
+  test "re-enrollment password re-prompt is throttled per user" do
+    owner, = enrolled_user(email: "mfa-reenrollment-throttle@example.test", role: "owner")
+    complete_mfa_sign_in(owner)
+    original_secret = owner.mfa_totp_secret
+
+    with_password_rate_limit_store do
+      5.times do
+        post settings_mfa_reenrollment_path, params: { mfa: { current_password: "wrong password" } }
+        assert_equal MfaReenrollmentsController::FAILURE_MESSAGE, flash[:alert]
+      end
+
+      post settings_mfa_reenrollment_path, params: { mfa: { current_password: "wrong password" } }
+      assert_redirected_to settings_path(anchor: "security")
+      assert_equal MfaReenrollmentsController::THROTTLED_MESSAGE, flash[:alert]
+      assert_equal original_secret, owner.reload.mfa_totp_secret
+      assert owner.mfa_enrolled?
+    end
   end
 
   test "MFA secrets and submitted codes are filtered from request logs" do
@@ -166,5 +207,9 @@ class MfaSettingsTest < ActionDispatch::IntegrationTest
   ensure
     Rails.logger = original_logger
     ActionController::Base.logger = original_action_controller_logger
+  end
+
+  def with_password_rate_limit_store(&)
+    Mfa::PasswordReauthenticationRateLimit.with_store(ActiveSupport::Cache::MemoryStore.new, &)
   end
 end

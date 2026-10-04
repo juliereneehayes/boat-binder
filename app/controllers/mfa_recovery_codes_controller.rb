@@ -1,5 +1,12 @@
 class MfaRecoveryCodesController < ApplicationController
   FAILURE_MESSAGE = "We couldn't regenerate recovery codes. Check your password and try again."
+  THROTTLED_MESSAGE = "Try again later."
+
+  include NoStoreResponse
+  rate_limit to: 5, within: 15.minutes, only: :create, name: "authenticated-user",
+    by: :password_rate_limit_key,
+    store: Mfa::PasswordReauthenticationRateLimit::RATE_LIMIT_STORE,
+    with: :throttled_reauthentication
 
   def create
     unless Current.user.mfa_enrolled? && Current.user.authenticate(recovery_code_params[:current_password])
@@ -14,8 +21,7 @@ class MfaRecoveryCodesController < ApplicationController
         action: "authentication.mfa_recovery_codes_regenerated",
         actor: Current.user,
         target: Current.user,
-        request_id: request.request_id,
-        source_ip: request.remote_ip
+        request_id: request.request_id
       )
     end
 
@@ -28,5 +34,13 @@ class MfaRecoveryCodesController < ApplicationController
 
   def recovery_code_params
     params.fetch(:mfa, ActionController::Parameters.new).permit(:current_password)
+  end
+
+  def password_rate_limit_key
+    Mfa::PasswordReauthenticationRateLimit.key(Current.user)
+  end
+
+  def throttled_reauthentication
+    redirect_to settings_path(anchor: "security"), alert: THROTTLED_MESSAGE, status: :see_other
   end
 end

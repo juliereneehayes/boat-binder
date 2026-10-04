@@ -37,6 +37,13 @@
     <% end %>
   </div>
 
+  <% if @user.owner? %>
+    <%= button_to(@challenge ? "Cancel MFA setup and continue" : "Cancel MFA setup",
+      settings_mfa_enrollment_path,
+      method: :delete,
+      class: "block w-full py-2 text-center text-sm font-semibold text-slate-600 underline") %>
+  <% end %>
+
   <% unless authenticated? %>
     <%= button_to "Cancel and sign out", mfa_challenge_path, method: :delete,
       class: "block w-full py-2 text-center text-sm font-semibold text-slate-600 underline" %>

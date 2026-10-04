@@ -97,8 +97,7 @@ class MfaChallengesController < ApplicationController
       action: "authentication.mfa_recovery_code_used",
       actor: Current.user,
       target: @user,
-      request_id: request.request_id,
-      source_ip: request.remote_ip
+      request_id: request.request_id
     )
   end
 end
