@@ -13,6 +13,7 @@ class UserMfaTest < ActiveSupport::TestCase
     assert user.mfa_enrollment_pending?
     assert_not user.mfa_enrolled?
     assert_nil user.mfa_enrolled_at
+    assert_nil user.mfa_reenrollment_started_at
     assert_empty user.mfa_recovery_code_digests
     assert_not_equal secret, ciphertext
     assert_not_includes ciphertext, secret
@@ -34,6 +35,7 @@ class UserMfaTest < ActiveSupport::TestCase
     assert_equal recovery_codes.uniq, recovery_codes
     assert recovery_codes.all? { |code| /\A(?:[0-9A-F]{4}-){7}[0-9A-F]{4}\z/.match?(code) }
     assert user.reload.mfa_enrolled?
+    assert_nil user.mfa_reenrollment_started_at
     assert_nil user.mfa_enrollment_secret
     assert_nil user.mfa_enrollment_provisioning_uri
     assert_equal 10, user.mfa_recovery_code_digests.length
@@ -77,6 +79,27 @@ class UserMfaTest < ActiveSupport::TestCase
     assert_equal 10, user.reload.mfa_recovery_codes_remaining
     assert_not user.consume_mfa_recovery_code!(original_codes.second)
     assert user.consume_mfa_recovery_code!(replacement_codes.first)
+  end
+
+  test "successful re-enrollment clears the durable pending marker" do
+    user, old_secret = enrolled_user(email: "mfa-reenrollment-state@example.test")
+    started_at = Time.zone.parse("2026-10-03 12:05:00")
+
+    user.reset_mfa_for_reenrollment!(at: started_at)
+    new_secret = user.reload.mfa_enrollment_secret
+
+    assert user.mfa_enrollment_pending?
+    assert user.mfa_reenrollment_pending?
+    assert_equal started_at, user.mfa_reenrollment_started_at
+    assert_not_equal old_secret, new_secret
+    assert_not user.cancel_pending_mfa_enrollment!
+
+    recovery_codes = user.confirm_mfa_enrollment!(totp_code(new_secret, at: started_at), at: started_at)
+
+    assert_equal 10, recovery_codes.length
+    assert user.reload.mfa_enrolled?
+    assert_not user.mfa_reenrollment_pending?
+    assert_nil user.mfa_reenrollment_started_at
   end
 
   test "outer transaction rollback leaves enrollment and recovery state unchanged" do

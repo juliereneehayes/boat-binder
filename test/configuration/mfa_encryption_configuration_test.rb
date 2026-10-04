@@ -27,6 +27,32 @@ class MfaEncryptionConfigurationTest < ActiveSupport::TestCase
     assert_equal salt, configuration.key_derivation_salt
   end
 
+  test "production rejects current keys and derivation salts shorter than 32 bytes" do
+    valid_material = SecureRandom.hex(32)
+
+    primary_key_error = assert_raises(ArgumentError) do
+      MfaEncryptionConfiguration.build(
+        environment: "production",
+        env: {
+          MfaEncryptionConfiguration::PRIMARY_KEY_ENV => "short",
+          MfaEncryptionConfiguration::KEY_DERIVATION_SALT_ENV => valid_material
+        }
+      )
+    end
+    assert_includes primary_key_error.message, MfaEncryptionConfiguration::PRIMARY_KEY_ENV
+
+    salt_error = assert_raises(ArgumentError) do
+      MfaEncryptionConfiguration.build(
+        environment: "production",
+        env: {
+          MfaEncryptionConfiguration::PRIMARY_KEY_ENV => valid_material,
+          MfaEncryptionConfiguration::KEY_DERIVATION_SALT_ENV => "short"
+        }
+      )
+    end
+    assert_includes salt_error.message, MfaEncryptionConfiguration::KEY_DERIVATION_SALT_ENV
+  end
+
   test "Rails multi-key provider decrypts old ciphertext and supports re-encryption with the new key" do
     old_key = SecureRandom.hex(32)
     new_key = SecureRandom.hex(32)

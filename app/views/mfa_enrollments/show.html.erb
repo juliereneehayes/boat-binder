@@ -37,7 +37,7 @@
     <% end %>
   </div>
 
-  <% if @user.owner? %>
+  <% if @user.owner? && !@user.mfa_reenrollment_pending? %>
     <%= button_to(@challenge ? "Cancel MFA setup and continue" : "Cancel MFA setup",
       settings_mfa_enrollment_path,
       method: :delete,

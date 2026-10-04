@@ -19,6 +19,11 @@ class Mfa::EnforcementActivationTest < ActiveSupport::TestCase
     revoked_sessions.each { |session| assert_not Session.exists?(session.id) }
     preserved_sessions.each { |session| assert Session.exists?(session.id) }
     assert_equal 0, Mfa::EnforcementActivation.remaining_session_count
+
+    rerun = Mfa::EnforcementActivation.revoke_unenrolled_privileged_sessions!
+    assert_equal 0, rerun.session_count
+    assert_equal 0, Mfa::EnforcementActivation.remaining_session_count
+    preserved_sessions.each { |session| assert Session.exists?(session.id) }
   end
 
   private

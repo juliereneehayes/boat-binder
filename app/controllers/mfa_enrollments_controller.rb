@@ -67,7 +67,7 @@ class MfaEnrollmentsController < ApplicationController
   end
 
   def destroy
-    unless @user.owner? && @user.mfa_enrollment_pending? && !@user.mfa_enrolled?
+    unless @user.owner? && @user.mfa_enrollment_pending? && !@user.mfa_reenrollment_pending?
       redirect_to cancellation_denied_path, alert: CANCELLATION_DENIED_MESSAGE, status: :see_other
       return
     end

@@ -256,6 +256,41 @@ class MfaAuthenticationTest < ActionDispatch::IntegrationTest
     assert_redirected_to root_path
   end
 
+  test "Owner re-enrollment cannot be cancelled into an MFA-disabled session" do
+    owner, old_secret = enrolled_user(email: "cancel-owner-reenrollment@example.test", role: "owner")
+    complete_mfa_sign_in(owner)
+
+    post settings_mfa_reenrollment_path, params: { mfa: { current_password: TEST_PASSWORD } }
+
+    assert_redirected_to settings_mfa_enrollment_path
+    new_secret = owner.reload.mfa_enrollment_secret
+    assert owner.mfa_enrollment_pending?
+    assert owner.mfa_reenrollment_pending?
+    assert_not_equal old_secret, new_secret
+    assert_empty owner.sessions
+
+    assert_no_difference -> { owner.sessions.count } do
+      delete settings_mfa_enrollment_path
+    end
+    assert_redirected_to settings_mfa_enrollment_path
+    assert_equal MfaEnrollmentsController::CANCELLATION_DENIED_MESSAGE, flash[:alert]
+    assert owner.reload.mfa_reenrollment_pending?
+    assert_equal new_secret, owner.mfa_enrollment_secret
+    assert_empty owner.sessions
+
+    get settings_mfa_enrollment_path
+    assert_response :success
+    assert_includes response.body, new_secret
+    assert_not_includes response.body, "Cancel MFA setup and continue"
+
+    delete mfa_challenge_path
+    assert_no_difference -> { owner.sessions.count } do
+      post session_path, params: { email_address: owner.email_address, password: TEST_PASSWORD }
+    end
+    assert_redirected_to settings_mfa_enrollment_path
+    assert owner.reload.mfa_reenrollment_pending?
+  end
+
   test "privileged and enrolled Owner credentials cannot use pending enrollment cancellation" do
     admin = create_user(email: "cancel-pending-admin@example.test", role: "admin")
 

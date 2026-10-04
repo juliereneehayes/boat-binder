@@ -122,11 +122,16 @@ class User < ApplicationRecord
     !mfa_enrolled? && mfa_totp_secret.present?
   end
 
+  def mfa_reenrollment_pending?
+    mfa_enrollment_pending? && mfa_reenrollment_started_at.present?
+  end
+
   def begin_mfa_enrollment!
     with_lock do
       update!(
         mfa_totp_secret: ROTP::Base32.random_base32(32),
         mfa_enrolled_at: nil,
+        mfa_reenrollment_started_at: nil,
         mfa_last_accepted_timestep: nil,
         mfa_recovery_code_digests: []
       )
@@ -154,6 +159,7 @@ class User < ApplicationRecord
       recovery_codes = self.class.generate_mfa_recovery_codes
       update!(
         mfa_enrolled_at: at,
+        mfa_reenrollment_started_at: nil,
         mfa_last_accepted_timestep: accepted_timestep,
         mfa_recovery_code_digests: recovery_codes.map { |recovery_code| mfa_recovery_digest(recovery_code) }
       )
@@ -210,18 +216,27 @@ class User < ApplicationRecord
     end
   end
 
-  def reset_mfa_for_reenrollment!
-    begin_mfa_enrollment!
+  def reset_mfa_for_reenrollment!(at: Time.current)
+    with_lock do
+      update!(
+        mfa_totp_secret: ROTP::Base32.random_base32(32),
+        mfa_enrolled_at: nil,
+        mfa_reenrollment_started_at: at,
+        mfa_last_accepted_timestep: nil,
+        mfa_recovery_code_digests: []
+      )
+    end
   end
 
   def cancel_pending_mfa_enrollment!
     with_lock do
       reload
-      next false unless owner? && mfa_enrollment_pending? && !mfa_enrolled?
+      next false unless owner? && mfa_enrollment_pending? && !mfa_reenrollment_pending?
 
       update!(
         mfa_totp_secret: nil,
         mfa_enrolled_at: nil,
+        mfa_reenrollment_started_at: nil,
         mfa_last_accepted_timestep: nil,
         mfa_recovery_code_digests: []
       )
@@ -362,6 +377,9 @@ class User < ApplicationRecord
     end
     if mfa_recovery_code_digests.any? && !mfa_enrolled?
       errors.add(:mfa_recovery_code_digests, "require MFA enrollment")
+    end
+    if mfa_reenrollment_started_at.present? && !mfa_enrollment_pending?
+      errors.add(:mfa_reenrollment_started_at, "requires pending MFA enrollment")
     end
   end
 end

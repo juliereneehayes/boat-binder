@@ -6,14 +6,15 @@ MFA is one `User`-scoped credential for Admins, Captains, and voluntarily enroll
 
 The MFA challenge is single-use through a privacy-preserving nonce key in the application cache. A successful TOTP, recovery-code, or enrollment confirmation consumes that challenge before `Authentication#start_new_session_for` creates the existing authoritative `Session`. Role, active-state, password, enrollment state, or encrypted MFA credential changes invalidate an outstanding challenge through its keyed credential-state digest. A copied challenge from before reset therefore cannot reveal or confirm the replacement credential.
 
-`PRIVILEGED_MFA_ENFORCEMENT` is the single rollout control. It defaults to false. Enrolled users always use MFA, regardless of role or rollout state. A User with an in-progress enrollment or re-enrollment must finish it before receiving another Session, except that an Owner may explicitly cancel unconfirmed setup and continue under the optional Owner policy. Admins and Captains cannot cancel pending setup. When the control is true, every unenrolled Admin or Captain receives only the restricted enrollment challenge after password authentication.
+`PRIVILEGED_MFA_ENFORCEMENT` is the single rollout control. It defaults to false. Enrolled users always use MFA, regardless of role or rollout state. An Owner may explicitly cancel only first-time, unconfirmed setup and continue under the optional Owner policy. Once reset/re-enrollment starts, the old TOTP credential is immediately invalidated and the durable re-enrollment marker prevents cancellation into an MFA-disabled state. Admins and Captains cannot cancel pending setup. When the control is true, every unenrolled Admin or Captain receives only the restricted enrollment challenge after password authentication.
 
 ## Schema and secret storage
 
-The additive User migration adds:
+The additive User migrations add:
 
 - `mfa_totp_secret`: non-deterministically encrypted by Rails Active Record Encryption;
 - `mfa_enrolled_at`: explicit activation state;
+- `mfa_reenrollment_started_at`: distinguishes required reset/re-enrollment from cancellable first-time Owner setup;
 - `mfa_last_accepted_timestep`: replay protection for accepted TOTP timesteps;
 - `mfa_recovery_code_digests`: PostgreSQL text array containing bcrypt hashes only.
 
@@ -82,8 +83,8 @@ This uses Rails' supported multi-key provider and does not require wiping MFA cr
    bin/rails runner 'result = Mfa::EnforcementActivation.revoke_unenrolled_privileged_sessions!; remaining = Mfa::EnforcementActivation.remaining_session_count; raise "unenrolled privileged Sessions remain" unless remaining.zero?; puts({ revoked_users: result.user_count, revoked_sessions: result.session_count, remaining: remaining }.inspect)'
    ```
 
-   It revokes Sessions only for Admin/Captain Users whose explicit `mfa_enrolled_at` is null. It does not revoke Owner Sessions or enrolled privileged Sessions.
-10. Confirm the reported remaining count is zero, verify an unenrolled Admin/Captain receives restricted enrollment with no Session, and verify enrolled privileged and Owner Sessions were not unnecessarily disrupted.
+   It revokes Sessions only for Admin/Captain Users whose explicit `mfa_enrolled_at` is null. It does not revoke Owner Sessions or enrolled privileged Sessions. The operation is safe to rerun: later runs simply find and revoke any newly discovered matching Sessions.
+10. Treat `Mfa::EnforcementActivation.remaining_session_count == 0` as the authoritative verification, then confirm an unenrolled Admin/Captain receives restricted enrollment with no Session and verify enrolled privileged and Owner Sessions were not unnecessarily disrupted.
 11. After privileged enrollment is complete and the rollout is stable, remove the temporary environment control in a focused cleanup change by making privileged enforcement unconditional. Do not introduce a replacement flag.
 
 ## Rollback
@@ -100,14 +101,14 @@ raise "privileged user required" unless user.internal?
 Mfa::Reset.call!(user: user)
 ```
 
-This is not a bypass: it revokes every Session, creates a new pending enrollment, and records `authentication.mfa_reenrollment_started`. The user must still pass their password and complete new MFA enrollment. Record the operator/ticket context outside the application event because this non-web procedure has no authenticated application actor.
+This is not a bypass: it immediately invalidates the old TOTP credential, revokes every Session, creates a durably marked pending re-enrollment, and records `authentication.mfa_reenrollment_started`. Re-enrollment cannot be cancelled into an MFA-disabled state; the user must pass their password and complete the replacement enrollment. Record the operator/ticket context outside the application event because this non-web procedure has no authenticated application actor.
 
 ## Manual staging checklist
 
 1. Confirm an unenrolled Owner signs in directly with the unchanged Session lifetime and cookie behavior.
 2. Enroll an Owner by scanning the locally rendered QR code.
 3. Enroll another Owner with the manual secret.
-4. Start and cancel an Owner's unconfirmed enrollment, then confirm password sign-in remains direct; confirm privileged and enrolled users cannot use cancellation.
+4. Start and cancel an Owner's first-time unconfirmed enrollment, then confirm password sign-in remains direct; start re-enrollment for an enrolled Owner and confirm cancellation is denied with no normal Session.
 5. Confirm the enrolled Owner's next sign-in requires TOTP.
 6. Sign in with one recovery code and save the remaining count.
 7. Confirm the consumed recovery code is rejected.
@@ -127,4 +128,4 @@ This is not a bypass: it revokes every Session, creates a new pending enrollment
 
 ## Explicit non-goals
 
-This change does not add trusted devices, mandatory Owner MFA, disabling active Owner MFA, passkeys, SMS/email OTP, an identity provider, a second Session system, persistent pre-auth records, broad Admin reset UI, or an MFA bypass. Only cancellation of an unconfirmed Owner setup is included. Optional disable of active Owner MFA and database-level audit tamper resistance remain separate work.
+This change does not add trusted devices, mandatory Owner MFA, disabling active Owner MFA, passkeys, SMS/email OTP, an identity provider, a second Session system, persistent pre-auth records, broad Admin reset UI, or an MFA bypass. Only cancellation of an unconfirmed first-time Owner setup is included. Optional disable of active Owner MFA and database-level audit tamper resistance remain separate work.
