@@ -24,6 +24,7 @@ class EmailVerificationsController < ApplicationController
   end
 
   def create
+    session_destination = nil
     User.transaction do
       @user.lock!
       @user.account_memberships.reset
@@ -31,10 +32,13 @@ class EmailVerificationsController < ApplicationController
 
       @user.update!(email_verified_at: Time.current, active: true)
       @user.sessions.destroy_all
-      start_new_session_for(@user)
+      session_destination = establish_session_after_primary_authentication(
+        @user,
+        session_redirect: billing_checkout_path
+      )
     end
 
-    redirect_to billing_checkout_path, notice: "Email verified. Choose your Self Managed plan."
+    redirect_to session_destination, notice: "Email verified. Choose your Self Managed plan."
   rescue ActiveRecord::RecordInvalid, IneligibleVerification
     verification_failed
   end

@@ -55,14 +55,10 @@ class SessionsController < ApplicationController
         return
       end
 
-      if Mfa::Policy.required_for_sign_in?(user)
-        user.begin_mfa_enrollment! unless user.mfa_enrolled? || user.mfa_enrollment_pending?
-        Mfa::Challenge.issue!(cookies:, user:)
-        redirect_to user.mfa_enrolled? ? new_mfa_challenge_path : settings_mfa_enrollment_path
-      else
-        start_new_session_for user
-        redirect_to after_authentication_url
-      end
+      redirect_to establish_session_after_primary_authentication(
+        user,
+        session_redirect: -> { after_authentication_url }
+      )
     else
       redirect_to new_session_path, alert: Authentication::GENERIC_LOGIN_FAILURE_MESSAGE
     end

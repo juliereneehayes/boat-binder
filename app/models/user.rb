@@ -126,6 +126,12 @@ class User < ApplicationRecord
     mfa_enrollment_pending? && mfa_reenrollment_started_at.present?
   end
 
+  def mfa_enrollment_cancellable?(privileged_enforcement: Mfa::Policy.privileged_enforcement?)
+    return false unless mfa_enrollment_pending? && !mfa_reenrollment_pending?
+
+    owner? || (internal? && !privileged_enforcement)
+  end
+
   def begin_mfa_enrollment!
     with_lock do
       update!(
@@ -231,7 +237,7 @@ class User < ApplicationRecord
   def cancel_pending_mfa_enrollment!
     with_lock do
       reload
-      next false unless owner? && mfa_enrollment_pending? && !mfa_reenrollment_pending?
+      next false unless mfa_enrollment_cancellable?
 
       update!(
         mfa_totp_secret: nil,

@@ -41,10 +41,12 @@ longer part of the production secret model. Do not restore the retired signing s
 as fallbacks. If Rails encrypted credentials are introduced again, they must use a new, independent
 master key and must not reuse retired production secrets.
 
-Production and staging processes running with `RAILS_ENV=production` fail boot unless the current
-Active Record Encryption key and derivation salt are configured. Set both before deploying the MFA
-capability or running its release migration. Generate independent, environment-specific values of at
-least 32 bytes (for example, separate outputs from `bin/rails secret`); never reuse `SECRET_KEY_BASE`.
+Every process or build running with `RAILS_ENV=production` fails boot unless the current Active
+Record Encryption key and derivation salt are configured. This includes production-mode asset build
+and precompile environments, not only web, worker, console, and release processes. Set both before
+deploying the MFA capability or running its release migration. Generate independent,
+environment-specific values of at least 32 bytes (for example, separate outputs from
+`bin/rails secret`); never reuse `SECRET_KEY_BASE`.
 Local development and test derive disposable/local material from the local Rails secret when these
 variables are absent. Key rotation and re-encryption are documented in
 [Issue #233: TOTP MFA rollout and operations](issue-233-mfa.md).

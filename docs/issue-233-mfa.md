@@ -4,9 +4,9 @@
 
 MFA is one `User`-scoped credential for Admins, Captains, and voluntarily enrolled Owners. Password authentication remains authoritative and runs before MFA. When MFA applies, the password step creates no `Session`; it creates a separate Rails encrypted cookie containing only a User ID, a random challenge nonce, a keyed credential-state digest, and a ten-minute expiry. Normal authentication continues to recognize only the signed `session_id` cookie.
 
-The MFA challenge is single-use through a privacy-preserving nonce key in the application cache. A successful TOTP, recovery-code, or enrollment confirmation consumes that challenge before `Authentication#start_new_session_for` creates the existing authoritative `Session`. Role, active-state, password, enrollment state, or encrypted MFA credential changes invalidate an outstanding challenge through its keyed credential-state digest. A copied challenge from before reset therefore cannot reveal or confirm the replacement credential.
+The MFA challenge is single-use through a privacy-preserving nonce key in the application cache. Every password, invitation-acceptance, or email-verification entry point uses the same post-primary-authentication gate to either create the existing authoritative `Session` or issue an MFA challenge. A successful TOTP, recovery-code, or enrollment confirmation consumes that challenge before the low-level `Authentication#start_new_session_for` method creates the Session. Role, active-state, password, enrollment state, or encrypted MFA credential changes invalidate an outstanding challenge through its keyed credential-state digest. A copied challenge from before reset therefore cannot reveal or confirm the replacement credential. Self-service email verification remains Owner-only because `SelfServiceRegistration.pending_verification?` authoritatively rejects internal roles before activation.
 
-`PRIVILEGED_MFA_ENFORCEMENT` is the single rollout control. It defaults to false. Enrolled users always use MFA, regardless of role or rollout state. An Owner may explicitly cancel only first-time, unconfirmed setup and continue under the optional Owner policy. Once reset/re-enrollment starts, the old TOTP credential is immediately invalidated and the durable re-enrollment marker prevents cancellation into an MFA-disabled state. Admins and Captains cannot cancel pending setup. When the control is true, every unenrolled Admin or Captain receives only the restricted enrollment challenge after password authentication.
+`PRIVILEGED_MFA_ENFORCEMENT` is the single rollout control. It defaults to false. Enrolled users and users in reset/re-enrollment always use MFA, regardless of role or rollout state. An Owner's first-time pending setup remains required until the Owner completes or explicitly cancels it. Once reset/re-enrollment starts, the old TOTP credential is immediately invalidated and the durable re-enrollment marker prevents cancellation into an MFA-disabled state. An Admin or Captain may cancel first-time pending setup only while enforcement is false. When enforcement is true, every unenrolled Admin or Captain—including one with first-time setup already pending—receives only the restricted enrollment challenge after password authentication.
 
 ## Schema and secret storage
 
@@ -24,7 +24,7 @@ Production and staging use dedicated environment-backed Rails Active Record Encr
 - `ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT`: stable environment-specific derivation salt;
 - `ACTIVE_RECORD_ENCRYPTION_PREVIOUS_PRIMARY_KEYS`: optional comma-separated previous keys, oldest to newest, used only for rotation.
 
-The first two variables must contain at least 32 bytes and must be configured before deploying this code or running the release migration. Production-mode boot fails when either is absent. Generate unique values for staging and production; do not reuse `SECRET_KEY_BASE`. Local development/test use purpose-derived local material only when dedicated values are absent. Rails stores key references in new ciphertext, uses the last configured primary key for encryption, and can decrypt with the temporary previous-key list.
+The first two variables must contain at least 32 bytes and must be configured before deploying this code or running the release migration. Every process or build that boots with `RAILS_ENV=production`, including production-mode asset build/precompile environments, fails when either value is absent or too short. Generate unique values for staging and production; do not reuse `SECRET_KEY_BASE`. Local development/test use purpose-derived local material only when dedicated values are absent. Rails stores key references in new ciphertext, uses the last configured primary key for encryption, and can decrypt with the temporary previous-key list.
 
 Enrollment uses a 32-character cryptographically random Base32 secret, six digits, a 30-second period, and at most one timestep of clock skew. Activation requires a valid code. QR codes are rendered locally; provisioning URIs are never sent to a third party. The manual secret and QR are reachable only while enrollment is pending.
 
@@ -89,19 +89,19 @@ This uses Rails' supported multi-key provider and does not require wiping MFA cr
 
 ## Rollback
 
-Prefer a forward fix. To suspend mandatory privileged enforcement without discarding credentials, set `PRIVILEGED_MFA_ENFORCEMENT=false` and restart all processes. Enrolled users still require MFA; unenrolled privileged users regain the pre-enforcement password flow. This is the intended emergency application rollback.
+Prefer a forward fix. To suspend mandatory privileged enforcement without discarding credentials, set `PRIVILEGED_MFA_ENFORCEMENT=false` and restart all processes. Enrolled users and users in reset/re-enrollment still require MFA. Unenrolled privileged users regain the pre-enforcement password-to-Session flow, including Admins or Captains left in first-time pending enrollment; those users may cancel that first-time setup while enforcement remains false. Owner first-time pending setup remains required until completion or explicit cancellation. This is the intended emergency application rollback.
 
 Do not reverse the migration or clear MFA columns merely to roll back application code. The schema is additive, and the encrypted secret plus recovery hashes must be retained. If older application code must temporarily run, keep the columns in place; it ignores them. Retain the configured Active Record Encryption key and salt through rollback; `SECRET_KEY_BASE` can be rotated independently without losing MFA secrets.
 
-If an enrolled privileged user loses both authenticator and recovery codes, use a production console with a narrowly selected numeric User ID:
+If any enrolled active user, including an Owner, loses both authenticator and recovery codes, first complete out-of-band identity verification and create a support/ticket record identifying the operator and reason. Then use a production console with a narrowly selected numeric User ID:
 
 ```ruby
 user = User.find(123)
-raise "privileged user required" unless user.internal?
+raise "active enrolled user required" unless user.active? && user.mfa_enrolled?
 Mfa::Reset.call!(user: user)
 ```
 
-This is not a bypass: it immediately invalidates the old TOTP credential, revokes every Session, creates a durably marked pending re-enrollment, and records `authentication.mfa_reenrollment_started`. Re-enrollment cannot be cancelled into an MFA-disabled state; the user must pass their password and complete the replacement enrollment. Record the operator/ticket context outside the application event because this non-web procedure has no authenticated application actor.
+This is not a bypass: it immediately invalidates the old TOTP credential and every recovery code, revokes every Session, creates a durably marked mandatory pending re-enrollment, and records the authoritative `authentication.mfa_reenrollment_started` event. Re-enrollment cannot be cancelled into an MFA-disabled state; the user must pass their password and complete the replacement enrollment before a new Session is created. Keep the operator, out-of-band verification, ticket, and reason in the support record because this non-web procedure has no authenticated application actor.
 
 ## Manual staging checklist
 
@@ -121,10 +121,11 @@ This is not a bypass: it immediately invalidates the old TOTP credential, revoke
 14. Confirm the sixth MFA attempt inside ten minutes and sixth Settings password attempt inside 15 minutes receive the generic throttle response.
 15. Change Owner to Captain/Admin, confirm existing Sessions are revoked, and confirm the next login requires enrollment/MFA.
 16. Change Captain/Admin to Owner, confirm Sessions are revoked, and confirm existing MFA enrollment remains required for that enrolled Owner.
-17. Reset/re-enroll MFA, restore a copied pre-reset challenge, and confirm it cannot reveal the new secret or create a Session.
-18. Inspect only action/outcome/actor/target/request metadata in the four MFA audit event types; confirm `source_ip` and credential material are absent.
-19. Confirm crafted User/Account IDs cannot read or change another User's MFA and Owner memberships are unchanged.
-20. Recheck idle/absolute Session expiry, Active Sessions, sign-out, and Action Cable authentication.
+17. Using staging's actual shared Solid Cache store, establish and successfully complete an MFA challenge, restore the consumed challenge cookie, replay it, and confirm it is rejected without creating another Session.
+18. Separately reset/re-enroll MFA, restore a copied pre-reset challenge, and confirm it cannot reveal the new secret or create a Session.
+19. Inspect only action/outcome/actor/target/request metadata in the four MFA audit event types; confirm `source_ip` and credential material are absent.
+20. Confirm crafted User/Account IDs cannot read or change another User's MFA and Owner memberships are unchanged.
+21. Recheck idle/absolute Session expiry, Active Sessions, sign-out, and Action Cable authentication.
 
 ## Explicit non-goals
 

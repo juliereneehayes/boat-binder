@@ -21,7 +21,7 @@
     <%= form_with url: mfa_challenge_path, scope: :mfa, class: "mt-4 space-y-4" do |form| %>
       <div>
         <%= form.label :recovery_code, "Recovery code", class: "text-sm font-semibold text-slate-700" %>
-        <%= form.text_field :recovery_code, required: true, autocomplete: "one-time-code", autocapitalize: "characters",
+        <%= form.text_field :recovery_code, required: true, autocomplete: "off", autocapitalize: "characters",
           class: "mt-2 block min-h-12 w-full rounded-md border border-slate-300 bg-white px-4 py-3 font-mono text-base uppercase shadow-sm focus:border-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-700/20" %>
       </div>
       <%= form.submit "Use recovery code", class: secondary_button_class, data: { turbo_submits_with: "Verifying..." } %>

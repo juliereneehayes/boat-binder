@@ -65,6 +65,72 @@ class MfaAuthenticationTest < ActionDispatch::IntegrationTest
     end
   end
 
+  test "enforcement rollback releases first-time pending Admin setup and permits cancellation" do
+    admin = create_user(email: "mfa-rollback-admin@example.test", role: "admin")
+
+    with_mfa_enforcement(true) do
+      assert_no_difference -> { admin.sessions.count } do
+        post session_path, params: { email_address: admin.email_address, password: TEST_PASSWORD }
+      end
+    end
+    assert_redirected_to settings_mfa_enrollment_path
+    assert admin.reload.mfa_enrollment_pending?
+    assert_not admin.mfa_reenrollment_pending?
+
+    with_mfa_enforcement(false) do
+      assert_difference -> { admin.sessions.count }, 1 do
+        post session_path, params: { email_address: admin.email_address, password: TEST_PASSWORD }
+      end
+    end
+    assert_redirected_to root_path
+    assert admin.reload.mfa_enrollment_pending?
+
+    with_mfa_enforcement(false) do
+      delete settings_mfa_enrollment_path
+    end
+    assert_redirected_to settings_path(anchor: "security")
+    assert_not admin.reload.mfa_enrollment_pending?
+    assert_nil admin.mfa_totp_secret
+    assert_equal 1, admin.sessions.count
+
+    delete session_path
+    with_mfa_enforcement(true) do
+      assert_no_difference -> { admin.sessions.count } do
+        post session_path, params: { email_address: admin.email_address, password: TEST_PASSWORD }
+      end
+    end
+    assert_redirected_to settings_mfa_enrollment_path
+    assert admin.reload.mfa_enrollment_pending?
+  end
+
+  test "enforcement rollback cannot bypass or cancel privileged re-enrollment" do
+    admin, = enrolled_user(email: "mfa-rollback-reenrollment@example.test", role: "admin")
+    complete_mfa_sign_in(admin)
+
+    post settings_mfa_reenrollment_path, params: { mfa: { current_password: TEST_PASSWORD } }
+    assert_redirected_to settings_mfa_enrollment_path
+    replacement_secret = admin.reload.mfa_enrollment_secret
+    assert admin.mfa_reenrollment_pending?
+    assert_empty admin.sessions
+
+    with_mfa_enforcement(false) do
+      assert_no_difference -> { admin.sessions.count } do
+        post session_path, params: { email_address: admin.email_address, password: TEST_PASSWORD }
+      end
+    end
+    assert_redirected_to settings_mfa_enrollment_path
+
+    with_mfa_enforcement(false) do
+      assert_no_difference -> { admin.sessions.count } do
+        delete settings_mfa_enrollment_path
+      end
+    end
+    assert_redirected_to settings_mfa_enrollment_path
+    assert_equal MfaEnrollmentsController::CANCELLATION_DENIED_MESSAGE, flash[:alert]
+    assert admin.reload.mfa_reenrollment_pending?
+    assert_equal replacement_secret, admin.mfa_enrollment_secret
+  end
+
   test "privileged enrollment challenge creates the first normal session only after confirmation" do
     admin = create_user(email: "first-mfa-admin@example.test", role: "admin")
 
@@ -101,6 +167,9 @@ class MfaAuthenticationTest < ActionDispatch::IntegrationTest
 
     with_challenge_store do
       begin_mfa_sign_in(user)
+      get new_mfa_challenge_path
+      assert_select "input[name='mfa[code]'][autocomplete='one-time-code'][inputmode='numeric']"
+      assert_select "input[name='mfa[recovery_code]'][autocomplete='off']"
       assert_no_difference -> { user.sessions.count } do
         post mfa_challenge_path, params: { mfa: { code: "000 000" } }
       end
@@ -298,7 +367,9 @@ class MfaAuthenticationTest < ActionDispatch::IntegrationTest
       post session_path, params: { email_address: admin.email_address, password: TEST_PASSWORD }
     end
     admin_secret = admin.reload.mfa_enrollment_secret
-    delete settings_mfa_enrollment_path
+    with_mfa_enforcement do
+      delete settings_mfa_enrollment_path
+    end
     assert_redirected_to settings_mfa_enrollment_path
     assert_equal MfaEnrollmentsController::CANCELLATION_DENIED_MESSAGE, flash[:alert]
     assert_equal admin_secret, admin.reload.mfa_enrollment_secret
@@ -403,8 +474,8 @@ class MfaAuthenticationTest < ActionDispatch::IntegrationTest
     " #{code.first(3)}-#{code.last(3)} "
   end
 
-  def with_mfa_enforcement(&)
-    Mfa::Policy.with_privileged_enforcement(true, &)
+  def with_mfa_enforcement(value = true, &)
+    Mfa::Policy.with_privileged_enforcement(value, &)
   end
 
   def with_challenge_store(&)

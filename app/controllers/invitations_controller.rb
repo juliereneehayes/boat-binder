@@ -15,8 +15,8 @@ class InvitationsController < ApplicationController
 
     if @user.save
       @user.sessions.destroy_all
-      start_new_session_for @user
-      redirect_to root_path, notice: "Invitation accepted. Welcome to Boat Binder."
+      redirect_to establish_session_after_primary_authentication(@user, session_redirect: root_path),
+        notice: "Invitation accepted. Welcome to Boat Binder."
     else
       render :edit, status: :unprocessable_entity
     end
