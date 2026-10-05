@@ -105,7 +105,8 @@
 
       <% if @user.mfa_enrolled? %>
         <div class="mt-6 grid gap-6 border-t border-slate-200 pt-6 lg:grid-cols-2">
-          <%= form_with url: settings_mfa_recovery_codes_path, scope: :mfa, class: "space-y-3" do |form| %>
+          <%= form_with url: settings_mfa_recovery_codes_path, scope: :mfa,
+            data: { turbo: false }, class: "space-y-3" do |form| %>
             <div>
               <h4 class="font-black">Regenerate recovery codes</h4>
               <p class="mt-1 text-sm text-slate-600">This invalidates every unused recovery code.</p>
@@ -113,8 +114,7 @@
             <%= form.label :current_password, "Current password", class: "text-sm font-semibold text-slate-700" %>
             <%= form.password_field :current_password, required: true, autocomplete: "current-password", maxlength: 72,
               class: "block min-h-11 w-full rounded-md border border-slate-300 bg-white px-3 py-2 text-base shadow-sm focus:border-cyan-700 focus:outline-none focus:ring-2 focus:ring-cyan-700/20" %>
-            <%= form.submit "Generate new recovery codes", class: secondary_button_class,
-              data: { turbo_submits_with: "Generating..." } %>
+            <%= form.submit "Generate new recovery codes", class: secondary_button_class %>
           <% end %>
 
           <%= form_with url: settings_mfa_reenrollment_path, scope: :mfa, class: "space-y-3" do |form| %>

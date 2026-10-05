@@ -23,6 +23,7 @@ class MfaAuthenticationTest < ActionDispatch::IntegrationTest
     assert_response :success
     assert_includes response.body, secret
     assert_select "input[autocomplete='one-time-code'][inputmode='numeric']"
+    assert_select "form[action='#{settings_mfa_enrollment_path}'][data-turbo='false']", count: 1
 
     travel_to(Time.zone.parse("2026-10-03 13:00:00")) do
       assert_difference -> { SecurityAuditEvent.where(action: "authentication.mfa_enrolled").count }, 1 do
@@ -30,10 +31,18 @@ class MfaAuthenticationTest < ActionDispatch::IntegrationTest
       end
     end
     assert_response :success
+    assert_includes response.headers["Cache-Control"], "no-store"
     assert owner.reload.mfa_enrolled?
     enrollment_event = SecurityAuditEvent.where(action: "authentication.mfa_enrolled").order(:id).last
     assert_nil enrollment_event.source_ip
     assert_select "ol li", count: 10
+    rendered_codes = css_select("ol li code").map { |element| element.text.strip }
+    assert_equal 10, rendered_codes.length
+    assert_nil response.location
+    rendered_codes.each do |code|
+      assert_not_includes owner.attributes.to_json, code
+      assert_not_includes request.original_url, code
+    end
     assert_not_includes response.body, secret
 
     delete session_path
