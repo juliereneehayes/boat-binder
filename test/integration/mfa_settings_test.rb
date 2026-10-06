@@ -28,6 +28,11 @@ class MfaSettingsTest < ActionDispatch::IntegrationTest
     owner, _, old_codes = enrolled_user(email: "mfa-regenerate@example.test", role: "owner")
     complete_mfa_sign_in(owner)
 
+    get settings_path
+    assert_response :success
+    assert_select "form[action='#{settings_mfa_recovery_codes_path}'][data-turbo='false']" \
+      "[data-controller='non-turbo-submit'][data-action='submit->non-turbo-submit#disable']", count: 1
+
     assert_difference -> { SecurityAuditEvent.count }, 1 do
       post settings_mfa_recovery_codes_path, params: {
         user_id: create_user(email: "ignored-regeneration-user@example.test").id,
@@ -41,7 +46,13 @@ class MfaSettingsTest < ActionDispatch::IntegrationTest
     rendered_codes = css_select("ol li code").map { |element| element.text.strip }
     assert_equal 10, rendered_codes.length
     assert_not_equal old_codes.sort, rendered_codes.sort
-    assert_not owner.reload.consume_mfa_recovery_code!(old_codes.first)
+    owner.reload
+    assert_not owner.consume_mfa_recovery_code!(old_codes.first)
+    assert_nil response.location
+    rendered_codes.each do |code|
+      assert_not_includes owner.attributes.to_json, code
+      assert_not_includes request.original_url, code
+    end
 
     event = SecurityAuditEvent.order(:id).last
     assert_equal "authentication.mfa_recovery_codes_regenerated", event.action

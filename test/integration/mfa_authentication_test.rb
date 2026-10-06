@@ -23,6 +23,8 @@ class MfaAuthenticationTest < ActionDispatch::IntegrationTest
     assert_response :success
     assert_includes response.body, secret
     assert_select "input[autocomplete='one-time-code'][inputmode='numeric']"
+    assert_select "form[action='#{settings_mfa_enrollment_path}'][data-turbo='false']" \
+      "[data-controller='non-turbo-submit'][data-action='submit->non-turbo-submit#disable']", count: 1
 
     travel_to(Time.zone.parse("2026-10-03 13:00:00")) do
       assert_difference -> { SecurityAuditEvent.where(action: "authentication.mfa_enrolled").count }, 1 do
@@ -30,11 +32,37 @@ class MfaAuthenticationTest < ActionDispatch::IntegrationTest
       end
     end
     assert_response :success
+    assert_includes response.headers["Cache-Control"], "no-store"
     assert owner.reload.mfa_enrolled?
     enrollment_event = SecurityAuditEvent.where(action: "authentication.mfa_enrolled").order(:id).last
     assert_nil enrollment_event.source_ip
     assert_select "ol li", count: 10
+    rendered_codes = css_select("ol li code").map { |element| element.text.strip }
+    assert_equal 10, rendered_codes.length
+    assert_nil response.location
+    rendered_codes.each do |code|
+      assert_not_includes owner.attributes.to_json, code
+      assert_not_includes request.original_url, code
+    end
     assert_not_includes response.body, secret
+
+    recovery_code_digests = owner.mfa_recovery_code_digests
+    session_ids = owner.sessions.ids
+    enrollment_events = SecurityAuditEvent.where(
+      action: "authentication.mfa_enrolled",
+      target_type: "User",
+      target_id: owner.id
+    )
+    audit_event_count = enrollment_events.count
+    assert_no_difference -> { owner.sessions.count } do
+      assert_no_difference -> { SecurityAuditEvent.count } do
+        patch settings_mfa_enrollment_path, params: { mfa: { code: formatted_totp(secret) } }
+      end
+    end
+    assert_redirected_to settings_path(anchor: "security")
+    assert_equal recovery_code_digests, owner.reload.mfa_recovery_code_digests
+    assert_equal session_ids, owner.sessions.ids
+    assert_equal audit_event_count, enrollment_events.reload.count
 
     delete session_path
     travel 31.seconds
@@ -42,6 +70,32 @@ class MfaAuthenticationTest < ActionDispatch::IntegrationTest
       post session_path, params: { email_address: owner.email_address, password: TEST_PASSWORD }
     end
     assert_redirected_to new_mfa_challenge_path
+  end
+
+  test "confirmation redirects when another request completes enrollment after the pending check" do
+    owner = create_user(email: "racing-mfa-confirmation@example.test", role: "owner")
+    sign_in_as(owner)
+    post settings_mfa_enrollment_path
+    secret = owner.reload.mfa_enrollment_secret
+    target_user_id = owner.id
+    original_confirmation = User.instance_method(:confirm_mfa_enrollment!)
+
+    User.define_method(:confirm_mfa_enrollment!) do |code, at: Time.current|
+      result = original_confirmation.bind_call(self, code, at:)
+      id == target_user_id ? nil : result
+    end
+
+    assert_no_difference -> { owner.sessions.count } do
+      assert_no_difference -> { SecurityAuditEvent.count } do
+        patch settings_mfa_enrollment_path, params: { mfa: { code: current_totp(secret) } }
+      end
+    end
+
+    assert_redirected_to settings_path(anchor: "security")
+    assert owner.reload.mfa_enrolled?
+    assert_equal 10, owner.mfa_recovery_code_digests.length
+  ensure
+    User.define_method(:confirm_mfa_enrollment!, original_confirmation) if original_confirmation
   end
 
   test "enforcement restricts unenrolled admins and captains without creating sessions" do

@@ -59,6 +59,8 @@ class MfaEnrollmentsController < ApplicationController
       @recovery_codes = recovery_codes
       @continue_url = @challenge ? after_authentication_url : settings_path(anchor: "security")
       render "mfa/recovery_codes"
+    elsif @user.reload.mfa_enrolled?
+      redirect_after_existing_enrollment
     else
       prepare_enrollment
       flash.now[:alert] = CONFIRMATION_FAILURE_MESSAGE
