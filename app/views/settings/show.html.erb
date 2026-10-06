@@ -106,7 +106,12 @@
       <% if @user.mfa_enrolled? %>
         <div class="mt-6 grid gap-6 border-t border-slate-200 pt-6 lg:grid-cols-2">
           <%= form_with url: settings_mfa_recovery_codes_path, scope: :mfa,
-            data: { turbo: false }, class: "space-y-3" do |form| %>
+            data: {
+              turbo: false,
+              controller: "non-turbo-submit",
+              action: "submit->non-turbo-submit#disable",
+              non_turbo_submit_submitting_text_value: "Generating..."
+            }, class: "space-y-3" do |form| %>
             <div>
               <h4 class="font-black">Regenerate recovery codes</h4>
               <p class="mt-1 text-sm text-slate-600">This invalidates every unused recovery code.</p>

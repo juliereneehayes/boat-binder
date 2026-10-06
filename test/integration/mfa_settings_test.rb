@@ -30,7 +30,8 @@ class MfaSettingsTest < ActionDispatch::IntegrationTest
 
     get settings_path
     assert_response :success
-    assert_select "form[action='#{settings_mfa_recovery_codes_path}'][data-turbo='false']", count: 1
+    assert_select "form[action='#{settings_mfa_recovery_codes_path}'][data-turbo='false']" \
+      "[data-controller='non-turbo-submit'][data-action='submit->non-turbo-submit#disable']", count: 1
 
     assert_difference -> { SecurityAuditEvent.count }, 1 do
       post settings_mfa_recovery_codes_path, params: {

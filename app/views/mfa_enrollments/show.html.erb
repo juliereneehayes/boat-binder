@@ -27,7 +27,12 @@
     <h2 class="text-lg font-black">Confirm setup</h2>
     <p class="mt-1 text-sm leading-6 text-slate-600">Enter a current six-digit code. MFA is not active until this succeeds.</p>
     <%= form_with url: settings_mfa_enrollment_path, method: :patch, scope: :mfa,
-      data: { turbo: false }, class: "mt-5 space-y-4" do |form| %>
+      data: {
+        turbo: false,
+        controller: "non-turbo-submit",
+        action: "submit->non-turbo-submit#disable",
+        non_turbo_submit_submitting_text_value: "Verifying..."
+      }, class: "mt-5 space-y-4" do |form| %>
       <div>
         <%= form.label :code, "Verification code", class: "text-sm font-semibold text-slate-700" %>
         <%= form.text_field :code, required: true, autofocus: true, autocomplete: "one-time-code",
