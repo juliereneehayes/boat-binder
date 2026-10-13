@@ -51,6 +51,7 @@ class PasswordsController < ApplicationController
 
   def create
     user = User.find_by(email_address: EmailRateLimitKey.normalize(params[:email_address]))
+    # Always queue an ID-or-nil job so known and unknown requests do equivalent queue work.
     enqueue_password_reset(user&.id)
 
     reset_request_response
@@ -82,11 +83,10 @@ class PasswordsController < ApplicationController
 
     def enqueue_password_reset(user_id)
       PasswordResetDeliveryJob.perform_later(user_id)
-      Rails.logger.info("Password reset delivery queued for user_id=#{user_id}")
+      Rails.logger.info("Password reset delivery job queued")
     rescue StandardError => error
       Rails.logger.error(
-        "Password reset delivery enqueue failed for user_id=#{user_id} " \
-        "exception_class=#{error.class.name}"
+        "Password reset delivery enqueue failed exception_class=#{error.class.name}"
       )
     end
 

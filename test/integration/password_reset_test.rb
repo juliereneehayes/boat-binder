@@ -248,25 +248,49 @@ class PasswordResetTest < ActionDispatch::IntegrationTest
   test "malformed or missing reset emails stay generic and enqueue privacy-preserving no-ops" do
     malformed_requests = [
       {},
-      { email_address: [] },
-      { email_address: {} }
+      { email_address: [ "malformed-array-private@example.test" ] },
+      { email_address: { private_key: "malformed-hash-private-value" } }
     ]
 
     malformed_requests.each do |submitted_params|
-      assert_enqueued_with(job: PasswordResetDeliveryJob, args: [ nil ]) do
-        assert_no_difference -> { User.count } do
-          assert_no_difference -> { ActionMailer::Base.deliveries.size } do
-            post passwords_path, params: submitted_params
+      log_output = StringIO.new
+      original_logger = Rails.logger
+      Rails.logger = ActiveSupport::Logger.new(log_output)
+
+      begin
+        assert_difference -> { enqueued_jobs.size }, 1 do
+          assert_enqueued_with(job: PasswordResetDeliveryJob, args: [ nil ]) do
+            assert_no_difference -> { User.count } do
+              assert_no_difference -> { ActionMailer::Base.deliveries.size } do
+                post passwords_path, params: submitted_params
+              end
+            end
           end
         end
+
+        assert_generic_reset_response
+        assert_equal [ nil ], enqueued_jobs.sole.fetch(:args)
+
+        Array.wrap(submitted_params[:email_address]).flat_map do |submitted_value|
+          if submitted_value.is_a?(Hash)
+            submitted_value.flat_map { |key, value| [ key.to_s, value ] }
+          else
+            submitted_value
+          end
+        end.each do |submitted_value|
+          assert_not_includes response.body, submitted_value
+          assert_not_includes log_output.string, submitted_value
+          assert_not_includes enqueued_jobs.sole.inspect, submitted_value
+        end
+
+        assert_no_difference -> { ActionMailer::Base.deliveries.size } do
+          perform_enqueued_jobs
+        end
+        clear_enqueued_jobs
+        clear_performed_jobs
+      ensure
+        Rails.logger = original_logger
       end
-
-      assert_generic_reset_response
-      assert_not_includes response.body, submitted_params.inspect
-    end
-
-    assert_no_difference -> { ActionMailer::Base.deliveries.size } do
-      perform_enqueued_jobs
     end
   end
 
@@ -298,27 +322,37 @@ class PasswordResetTest < ActionDispatch::IntegrationTest
         post_reset(email_address: "ip-reset-#{index}@example.test", ip_address: "192.0.2.10")
         assert_generic_reset_response
       end
+      assert_equal 10, enqueued_jobs.size
 
-      post_reset(email_address: "ip-reset-10@example.test", ip_address: "192.0.2.10")
-      assert_generic_reset_response
+      assert_no_enqueued_jobs do
+        post_reset(email_address: "ip-reset-10@example.test", ip_address: "192.0.2.10")
+        assert_generic_reset_response
+      end
     end
 
+    assert_equal 10, enqueued_jobs.size
     assert_equal "ip", rate_limit_events.last.fetch(:name)
   end
 
   test "normalized reset email is throttled across IPs with a private purpose-specific key" do
     target_email = "limited-reset@example.test"
+    user = create_user(email: target_email)
     rate_limit_events = capture_rate_limit_events do
       5.times do |index|
         submitted_email = index.even? ? "  LIMITED-RESET@EXAMPLE.TEST  " : target_email
         post_reset(email_address: submitted_email, ip_address: "198.51.100.#{index + 1}")
         assert_generic_reset_response
       end
+      assert_equal 5, enqueued_jobs.size
+      assert enqueued_jobs.all? { |job| job.fetch(:args) == [ user.id ] }
 
-      post_reset(email_address: target_email, ip_address: "198.51.100.6")
-      assert_generic_reset_response
+      assert_no_enqueued_jobs do
+        post_reset(email_address: target_email, ip_address: "198.51.100.6")
+        assert_generic_reset_response
+      end
     end
 
+    assert_equal 5, enqueued_jobs.size
     event = rate_limit_events.last
     assert_equal "email", event.fetch(:name)
     assert_match(/\A[0-9a-f]{64}\z/, event.fetch(:by))
