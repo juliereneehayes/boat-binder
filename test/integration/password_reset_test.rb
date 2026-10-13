@@ -2,25 +2,46 @@ require "test_helper"
 require "stringio"
 
 class PasswordResetTest < ActionDispatch::IntegrationTest
+  include ActiveJob::TestHelper
+
+  def run
+    @rate_limit_store = ActiveSupport::Cache::MemoryStore.new
+    PasswordsController.with_rate_limit_store(@rate_limit_store) { super }
+  ensure
+    @rate_limit_store&.clear
+  end
+
   setup do
     ActionMailer::Base.deliveries.clear
+    clear_enqueued_jobs
+    clear_performed_jobs
   end
 
   teardown do
     ActionMailer::Base.deliveries.clear
+    clear_enqueued_jobs
+    clear_performed_jobs
   end
 
-  test "password reset request sends instructions synchronously with generic messaging" do
+  test "password reset request queues only the user id and delivers asynchronously" do
     user = create_user(email: "reset@example.test")
 
-    assert_difference -> { ActionMailer::Base.deliveries.size }, 1 do
-      post passwords_path, params: { email_address: user.email_address }
+    assert_no_difference -> { ActionMailer::Base.deliveries.size } do
+      assert_enqueued_with(job: PasswordResetDeliveryJob, args: [ user.id ]) do
+        post passwords_path, params: { email_address: user.email_address }
+      end
     end
 
     assert_redirected_to new_session_path
     follow_redirect!
     assert_response :success
     assert_includes response.body, PasswordsController::RESET_REQUEST_NOTICE
+
+    serialized_arguments = enqueued_jobs.sole.fetch(:args).to_json
+    assert_not_includes serialized_arguments, user.email_address
+    assert_not_includes serialized_arguments, "token"
+
+    perform_enqueued_jobs
 
     mail = ActionMailer::Base.deliveries.last
     assert_equal [ user.email_address ], mail.to
@@ -173,19 +194,28 @@ class PasswordResetTest < ActionDispatch::IntegrationTest
     assert reset_user.reload.authenticate(NEW_TEST_PASSWORD)
   end
 
-  test "password reset request keeps generic messaging when email is unknown" do
-    assert_no_difference -> { ActionMailer::Base.deliveries.size } do
-      post passwords_path, params: { email_address: "missing@example.test" }
-    end
+  test "existing and unknown reset requests have identical generic responses" do
+    user = create_user(email: "known-generic-reset@example.test")
 
-    assert_redirected_to new_session_path
-    follow_redirect!
-    assert_response :success
-    assert_includes response.body, PasswordsController::RESET_REQUEST_NOTICE
+    assert_enqueued_with(job: PasswordResetDeliveryJob, args: [ user.id ]) do
+      post passwords_path, params: { email_address: user.email_address }
+    end
+    known_response = reset_request_response_signature
+
+    assert_enqueued_with(job: PasswordResetDeliveryJob, args: [ nil ]) do
+      assert_no_difference -> { User.count } do
+        post passwords_path, params: { email_address: "missing@example.test" }
+      end
+    end
+    unknown_response = reset_request_response_signature
+
+    assert_equal known_response, unknown_response
+    assert_equal PasswordsController::RESET_REQUEST_NOTICE, flash[:notice]
     assert_not_includes response.body, "missing@example.test"
+    assert_empty ActionMailer::Base.deliveries
   end
 
-  test "password reset delivery failures are logged and do not return server errors" do
+  test "password reset job failures do not alter the initiating response or log private details" do
     user = create_user(email: "smtp-failure@example.test")
     log_output = StringIO.new
     original_logger = Rails.logger
@@ -197,19 +227,164 @@ class PasswordResetTest < ActionDispatch::IntegrationTest
     original_reset = PasswordsMailer.method(:reset)
     PasswordsMailer.define_singleton_method(:reset) { |_user| failed_delivery }
 
-    assert_no_difference -> { ActionMailer::Base.deliveries.size } do
+    assert_enqueued_with(job: PasswordResetDeliveryJob, args: [ user.id ]) do
       post passwords_path, params: { email_address: user.email_address }
     end
 
     assert_redirected_to new_session_path
-    follow_redirect!
-    assert_response :success
-    assert_includes response.body, PasswordsController::RESET_REQUEST_NOTICE
-    assert_not_includes response.body, user.email_address
+    assert_equal PasswordsController::RESET_REQUEST_NOTICE, flash[:notice]
+
+    perform_enqueued_jobs
+
     assert_includes log_output.string, "Password reset email delivery failed for user_id=#{user.id}"
-    assert_includes log_output.string, "Errno::ECONNREFUSED"
+    assert_includes log_output.string, "exception_class=Errno::ECONNREFUSED"
+    assert_not_includes log_output.string, user.email_address
+    assert_not_includes log_output.string, "localhost port 25"
   ensure
     PasswordsMailer.define_singleton_method(:reset, original_reset) if original_reset
+    Rails.logger = original_logger if original_logger
+  end
+
+  test "malformed or missing reset emails stay generic and enqueue privacy-preserving no-ops" do
+    malformed_requests = [
+      {},
+      { email_address: [ "malformed-array-private@example.test" ] },
+      { email_address: { private_key: "malformed-hash-private-value" } }
+    ]
+
+    malformed_requests.each do |submitted_params|
+      log_output = StringIO.new
+      original_logger = Rails.logger
+      Rails.logger = ActiveSupport::Logger.new(log_output)
+
+      begin
+        assert_difference -> { enqueued_jobs.size }, 1 do
+          assert_enqueued_with(job: PasswordResetDeliveryJob, args: [ nil ]) do
+            assert_no_difference -> { User.count } do
+              assert_no_difference -> { ActionMailer::Base.deliveries.size } do
+                post passwords_path, params: submitted_params
+              end
+            end
+          end
+        end
+
+        assert_generic_reset_response
+        assert_equal [ nil ], enqueued_jobs.sole.fetch(:args)
+
+        Array.wrap(submitted_params[:email_address]).flat_map do |submitted_value|
+          if submitted_value.is_a?(Hash)
+            submitted_value.flat_map { |key, value| [ key.to_s, value ] }
+          else
+            submitted_value
+          end
+        end.each do |submitted_value|
+          assert_not_includes response.body, submitted_value
+          assert_not_includes log_output.string, submitted_value
+          assert_not_includes enqueued_jobs.sole.inspect, submitted_value
+        end
+
+        assert_no_difference -> { ActionMailer::Base.deliveries.size } do
+          perform_enqueued_jobs
+        end
+        clear_enqueued_jobs
+        clear_performed_jobs
+      ensure
+        Rails.logger = original_logger
+      end
+    end
+  end
+
+  test "password reset enqueue failures preserve the generic response" do
+    user = create_user(email: "queue-failure@example.test")
+    original_perform_later = PasswordResetDeliveryJob.method(:perform_later)
+    PasswordResetDeliveryJob.define_singleton_method(:perform_later) do |_user_id|
+      raise IOError, "private queue detail"
+    end
+    log_output = StringIO.new
+    original_logger = Rails.logger
+    Rails.logger = ActiveSupport::Logger.new(log_output)
+
+    post passwords_path, params: { email_address: user.email_address }
+
+    assert_redirected_to new_session_path
+    assert_equal PasswordsController::RESET_REQUEST_NOTICE, flash[:notice]
+    assert_includes log_output.string, "exception_class=IOError"
+    assert_not_includes log_output.string, "private queue detail"
+    assert_not_includes log_output.string, user.email_address
+  ensure
+    PasswordResetDeliveryJob.define_singleton_method(:perform_later, original_perform_later) if original_perform_later
+    Rails.logger = original_logger if original_logger
+  end
+
+  test "password reset IP throttle retains the generic response" do
+    rate_limit_events = capture_rate_limit_events do
+      10.times do |index|
+        post_reset(email_address: "ip-reset-#{index}@example.test", ip_address: "192.0.2.10")
+        assert_generic_reset_response
+      end
+      assert_equal 10, enqueued_jobs.size
+
+      assert_no_enqueued_jobs do
+        post_reset(email_address: "ip-reset-10@example.test", ip_address: "192.0.2.10")
+        assert_generic_reset_response
+      end
+    end
+
+    assert_equal 10, enqueued_jobs.size
+    assert_equal "ip", rate_limit_events.last.fetch(:name)
+  end
+
+  test "normalized reset email is throttled across IPs with a private purpose-specific key" do
+    target_email = "limited-reset@example.test"
+    user = create_user(email: target_email)
+    rate_limit_events = capture_rate_limit_events do
+      5.times do |index|
+        submitted_email = index.even? ? "  LIMITED-RESET@EXAMPLE.TEST  " : target_email
+        post_reset(email_address: submitted_email, ip_address: "198.51.100.#{index + 1}")
+        assert_generic_reset_response
+      end
+      assert_equal 5, enqueued_jobs.size
+      assert enqueued_jobs.all? { |job| job.fetch(:args) == [ user.id ] }
+
+      assert_no_enqueued_jobs do
+        post_reset(email_address: target_email, ip_address: "198.51.100.6")
+        assert_generic_reset_response
+      end
+    end
+
+    assert_equal 5, enqueued_jobs.size
+    event = rate_limit_events.last
+    assert_equal "email", event.fetch(:name)
+    assert_match(/\A[0-9a-f]{64}\z/, event.fetch(:by))
+    assert_not_equal sign_in_email_key(target_email), event.fetch(:by)
+    assert_not_includes event.fetch(:cache_key), target_email
+    assert_not_includes event.fetch(:cache_key), "LIMITED-RESET"
+  end
+
+  test "different reset emails have independent account-targeted buckets" do
+    5.times do |index|
+      post_reset(email_address: "first-reset@example.test", ip_address: "203.0.113.#{index + 1}")
+    end
+
+    rate_limit_events = capture_rate_limit_events do
+      post_reset(email_address: "second-reset@example.test", ip_address: "203.0.113.99")
+    end
+
+    assert_empty rate_limit_events
+    assert_generic_reset_response
+  end
+
+  test "submitted reset email is filtered from request logs" do
+    submitted_email = "private-reset-address@example.test"
+    log_output = StringIO.new
+    original_logger = Rails.logger
+    Rails.logger = ActiveSupport::Logger.new(log_output)
+
+    post passwords_path, params: { email_address: submitted_email }
+
+    assert_generic_reset_response
+    assert_not_includes log_output.string, submitted_email
+  ensure
     Rails.logger = original_logger if original_logger
   end
 
@@ -239,6 +414,39 @@ class PasswordResetTest < ActionDispatch::IntegrationTest
   end
 
   private
+
+  def post_reset(email_address:, ip_address:)
+    post passwords_path,
+      params: { email_address: },
+      headers: { "REMOTE_ADDR" => ip_address }
+  end
+
+  def assert_generic_reset_response
+    assert_redirected_to new_session_path
+    assert_equal PasswordsController::RESET_REQUEST_NOTICE, flash[:notice]
+  end
+
+  def reset_request_response_signature
+    [ response.status, response.location, flash[:notice], flash[:alert] ]
+  end
+
+  def capture_rate_limit_events
+    events = []
+    subscriber = ActiveSupport::Notifications.subscribe("rate_limit.action_controller") do |*args|
+      events << ActiveSupport::Notifications::Event.new(*args).payload
+    end
+    yield
+    events
+  ensure
+    ActiveSupport::Notifications.unsubscribe(subscriber) if subscriber
+  end
+
+  def sign_in_email_key(email_address)
+    EmailRateLimitKey.call(
+      email_address,
+      purpose: SessionsController::EMAIL_RATE_LIMIT_KEY_PURPOSE
+    )
+  end
 
   def mail_body(mail)
     if mail.multipart?

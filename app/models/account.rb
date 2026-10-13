@@ -37,18 +37,10 @@ class Account < ApplicationRecord
       .order(:id)
   end
 
-  def transactional_owner_recipient
-    transactional_owner_recipients.first
-  end
-
   def verified_transactional_owner_recipient
     transactional_owner_recipients
       .where("users.email_verified_at IS NOT NULL OR users.invitation_accepted_at IS NOT NULL")
       .first
-  end
-
-  def transactional_recipient_email
-    transactional_owner_recipient&.email_address.presence || primary_contact&.email.presence
   end
 
   def status_label

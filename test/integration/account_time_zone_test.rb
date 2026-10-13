@@ -29,6 +29,9 @@ class AccountTimeZoneTest < ActionDispatch::IntegrationTest
     travel_to Time.utc(2026, 7, 6, 6, 30) do
       account = create_account(name: "Pacific Owner", time_zone: "America/Los_Angeles")
       account.contacts.create!(name: "Pacific Owner", email: "pacific-owner@example.test", role: "Owner")
+      owner = create_user(email: "verified-pacific-owner@example.test", role: "owner")
+      owner.update!(email_verification_sent_at: 1.hour.ago, email_verified_at: Time.current)
+      create_account_membership(user: owner, account:)
       captain = create_user(email: "captain-pacific-time@example.test")
       vessel = create_vessel(account: account, name: "Blue Meridian")
       sign_in_as captain
@@ -67,6 +70,9 @@ class AccountTimeZoneTest < ActionDispatch::IntegrationTest
     travel_to Time.utc(2026, 7, 6, 6, 30) do
       account = create_account(name: "Eastern Owner", time_zone: "America/New_York")
       account.contacts.create!(name: "Eastern Owner", email: "eastern-owner@example.test", role: "Owner")
+      owner = create_user(email: "verified-eastern-owner@example.test", role: "owner")
+      owner.update!(email_verification_sent_at: 1.hour.ago, email_verified_at: Time.current)
+      create_account_membership(user: owner, account:)
       captain = create_user(email: "captain-eastern-time@example.test")
       vessel = create_vessel(account: account, name: "Harbor Light")
       reminder = vessel.reminders.create!(title: "Replace zincs", due_date: Date.new(2026, 7, 5), reminder_type: "maintenance")

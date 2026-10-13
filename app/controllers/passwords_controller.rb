@@ -1,23 +1,60 @@
 class PasswordsController < ApplicationController
   RESET_REQUEST_NOTICE = "If an account exists for that email, reset instructions will be sent shortly."
   AUTHENTICATED_RESET_MESSAGE = "Sign out before resetting a password."
+  EMAIL_RATE_LIMIT_KEY_PURPOSE = "password-reset-email-rate-limit"
+  RATE_LIMIT_STORE_OVERRIDE_KEY = :passwords_controller_rate_limit_store
+
+  class RateLimitStore
+    def increment(...)
+      PasswordsController.rate_limit_store.increment(...)
+    end
+  end
+
+  private_constant :RATE_LIMIT_STORE_OVERRIDE_KEY, :RateLimitStore
+  RATE_LIMIT_STORE = RateLimitStore.new
+
+  class << self
+    def rate_limit_store
+      ActiveSupport::IsolatedExecutionState[RATE_LIMIT_STORE_OVERRIDE_KEY] || Rails.cache
+    end
+
+    def with_rate_limit_store(store)
+      had_previous_store = ActiveSupport::IsolatedExecutionState.key?(RATE_LIMIT_STORE_OVERRIDE_KEY)
+      previous_store = ActiveSupport::IsolatedExecutionState[RATE_LIMIT_STORE_OVERRIDE_KEY]
+      ActiveSupport::IsolatedExecutionState[RATE_LIMIT_STORE_OVERRIDE_KEY] = store
+      yield
+    ensure
+      if had_previous_store
+        ActiveSupport::IsolatedExecutionState[RATE_LIMIT_STORE_OVERRIDE_KEY] = previous_store
+      else
+        ActiveSupport::IsolatedExecutionState.delete(RATE_LIMIT_STORE_OVERRIDE_KEY)
+      end
+    end
+  end
 
   allow_unauthenticated_access
   # Password reset changes credentials, so require explicit sign-out before
   # validating a token or rendering the form for another browser identity.
   before_action :redirect_authenticated_user, only: %i[ edit update ]
   before_action :set_user_by_token, only: %i[ edit update ]
-  rate_limit to: 10, within: 3.minutes, only: :create, with: -> { redirect_to new_password_path, alert: "Try again later." }
+  rate_limit to: 10, within: 3.minutes, only: :create, name: "ip",
+    store: RATE_LIMIT_STORE,
+    with: :reset_request_response
+  # Five recovery messages per hour allows normal retries while bounding targeted abuse.
+  rate_limit to: 5, within: 1.hour, only: :create, name: "email",
+    by: :password_reset_email_rate_limit_key,
+    store: RATE_LIMIT_STORE,
+    with: :reset_request_response
 
   def new
   end
 
   def create
-    if user = User.find_by(email_address: params[:email_address])
-      deliver_password_reset(user)
-    end
+    user = User.find_by(email_address: EmailRateLimitKey.normalize(params[:email_address]))
+    # Always queue an ID-or-nil job so known and unknown requests do equivalent queue work.
+    enqueue_password_reset(user&.id)
 
-    redirect_to new_session_path, notice: RESET_REQUEST_NOTICE
+    reset_request_response
   end
 
   def edit
@@ -44,13 +81,21 @@ class PasswordsController < ApplicationController
       redirect_to root_path, alert: AUTHENTICATED_RESET_MESSAGE if authenticated?
     end
 
-    def deliver_password_reset(user)
-      PasswordsMailer.reset(user).deliver_now
-      Rails.logger.info("Password reset email delivered for user_id=#{user.id}")
-    rescue *ApplicationMailer::DELIVERY_ERRORS => error
+    def enqueue_password_reset(user_id)
+      PasswordResetDeliveryJob.perform_later(user_id)
+      Rails.logger.info("Password reset delivery job queued")
+    rescue StandardError => error
       Rails.logger.error(
-        "Password reset email delivery failed for user_id=#{user.id}: #{error.class}: #{error.message}"
+        "Password reset delivery enqueue failed exception_class=#{error.class.name}"
       )
+    end
+
+    def password_reset_email_rate_limit_key
+      EmailRateLimitKey.call(params[:email_address], purpose: EMAIL_RATE_LIMIT_KEY_PURPOSE)
+    end
+
+    def reset_request_response
+      redirect_to new_session_path, notice: RESET_REQUEST_NOTICE
     end
 
     def set_user_by_token

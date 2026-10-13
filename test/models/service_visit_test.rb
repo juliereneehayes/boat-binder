@@ -38,10 +38,11 @@ class ServiceVisitTest < ActiveSupport::TestCase
     assert_equal [ active_battery ], visit.service_visit_battery_checks.map(&:asset_battery)
   end
 
-  test "summary recipient email uses the account transactional recipient source" do
+  test "summary recipient email uses the account verified owner recipient" do
     account = create_account(name: "Service Summary Owner")
     account.contacts.create!(name: "Fallback Owner", email: "fallback-summary@example.test", role: "Owner")
     owner = create_user(email: "linked-summary-owner@example.test", role: "owner")
+    owner.update!(email_verification_sent_at: 1.hour.ago, email_verified_at: Time.current)
     create_account_membership(user: owner, account: account)
     visit = ServiceVisit.create!(
       asset: create_vessel(account: account),
@@ -49,8 +50,35 @@ class ServiceVisitTest < ActiveSupport::TestCase
       visit_date: Date.current
     )
 
-    assert_equal account.transactional_recipient_email, visit.summary_recipient_email
     assert_equal "linked-summary-owner@example.test", visit.summary_recipient_email
+  end
+
+  test "summary recipient email does not use an unverified owner or manual contact" do
+    account = create_account(name: "Unverified Service Summary Owner")
+    account.contacts.create!(name: "Manual Owner", email: "manual-summary@example.test", role: "Owner")
+    owner = create_user(email: "unverified-summary-owner@example.test", role: "owner")
+    create_account_membership(user: owner, account:)
+    visit = ServiceVisit.create!(
+      asset: create_vessel(account:),
+      performed_by_user: create_user(email: "captain-unverified-summary@example.test"),
+      visit_date: Date.current
+    )
+
+    assert_nil visit.summary_recipient_email
+  end
+
+  test "summary recipient email accepts an owner with an accepted invitation" do
+    account = create_account(name: "Invited Service Summary Owner")
+    owner = create_user(email: "accepted-summary-owner@example.test", role: "owner")
+    owner.update!(invitation_sent_at: 1.day.ago, invitation_accepted_at: Time.current)
+    create_account_membership(user: owner, account:)
+    visit = ServiceVisit.create!(
+      asset: create_vessel(account:),
+      performed_by_user: create_user(email: "captain-accepted-summary@example.test"),
+      visit_date: Date.current
+    )
+
+    assert_equal owner.email_address, visit.summary_recipient_email
   end
 
   test "completes and reopens follow up with an auditable history" do
