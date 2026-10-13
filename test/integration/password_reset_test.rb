@@ -202,7 +202,7 @@ class PasswordResetTest < ActionDispatch::IntegrationTest
     end
     known_response = reset_request_response_signature
 
-    assert_no_enqueued_jobs do
+    assert_enqueued_with(job: PasswordResetDeliveryJob, args: [ nil ]) do
       assert_no_difference -> { User.count } do
         post passwords_path, params: { email_address: "missing@example.test" }
       end
@@ -234,7 +234,7 @@ class PasswordResetTest < ActionDispatch::IntegrationTest
     assert_redirected_to new_session_path
     assert_equal PasswordsController::RESET_REQUEST_NOTICE, flash[:notice]
 
-    assert_raises(Errno::ECONNREFUSED) { perform_enqueued_jobs }
+    perform_enqueued_jobs
 
     assert_includes log_output.string, "Password reset email delivery failed for user_id=#{user.id}"
     assert_includes log_output.string, "exception_class=Errno::ECONNREFUSED"
@@ -243,6 +243,31 @@ class PasswordResetTest < ActionDispatch::IntegrationTest
   ensure
     PasswordsMailer.define_singleton_method(:reset, original_reset) if original_reset
     Rails.logger = original_logger if original_logger
+  end
+
+  test "malformed or missing reset emails stay generic and enqueue privacy-preserving no-ops" do
+    malformed_requests = [
+      {},
+      { email_address: [] },
+      { email_address: {} }
+    ]
+
+    malformed_requests.each do |submitted_params|
+      assert_enqueued_with(job: PasswordResetDeliveryJob, args: [ nil ]) do
+        assert_no_difference -> { User.count } do
+          assert_no_difference -> { ActionMailer::Base.deliveries.size } do
+            post passwords_path, params: submitted_params
+          end
+        end
+      end
+
+      assert_generic_reset_response
+      assert_not_includes response.body, submitted_params.inspect
+    end
+
+    assert_no_difference -> { ActionMailer::Base.deliveries.size } do
+      perform_enqueued_jobs
+    end
   end
 
   test "password reset enqueue failures preserve the generic response" do

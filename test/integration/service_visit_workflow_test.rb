@@ -312,6 +312,7 @@ class ServiceVisitWorkflowTest < ActionDispatch::IntegrationTest
     assert_equal "ServiceVisit", audit_event.target_type
     assert_equal visit.id, audit_event.target_id
     assert audit_event.request_id.present?
+    assert_nil audit_event.source_ip
     assert_empty audit_event.changed_fields
     assert_not_includes audit_event.attributes.to_json, owner.email_address
     assert_not_includes audit_event.attributes.to_json, visit.summary
@@ -535,6 +536,7 @@ class ServiceVisitWorkflowTest < ActionDispatch::IntegrationTest
     assert_equal "denied", event.outcome
     assert_equal account, event.account
     assert_equal visit.id, event.target_id
+    assert_nil event.source_ip
     serialized_event = event.attributes.to_json
     assert_not_includes serialized_event, "manual-owner@example.test"
     assert_not_includes serialized_event, "No recipient report"
@@ -573,6 +575,7 @@ class ServiceVisitWorkflowTest < ActionDispatch::IntegrationTest
     event = SecurityAuditEvent.where(action: "service_visit.summary_delivery").order(:id).last
     assert_equal "failed", event.outcome
     assert_equal visit.id, event.target_id
+    assert_nil event.source_ip
   ensure
     ServiceVisitMailer.define_singleton_method(:summary, original_summary) if original_summary
   end

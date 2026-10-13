@@ -250,8 +250,7 @@ class ServiceVisitsController < ApplicationController
       actor: Current.user,
       account: @service_visit.account,
       target: @service_visit,
-      request_id: request.request_id,
-      source_ip: request.remote_ip
+      request_id: request.request_id
     )
   rescue StandardError => error
     Rails.logger.error(

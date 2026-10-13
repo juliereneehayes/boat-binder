@@ -50,9 +50,8 @@ class PasswordsController < ApplicationController
   end
 
   def create
-    if user = User.find_by(email_address: EmailRateLimitKey.normalize(params[:email_address]))
-      enqueue_password_reset(user)
-    end
+    user = User.find_by(email_address: EmailRateLimitKey.normalize(params[:email_address]))
+    enqueue_password_reset(user&.id)
 
     reset_request_response
   end
@@ -81,12 +80,12 @@ class PasswordsController < ApplicationController
       redirect_to root_path, alert: AUTHENTICATED_RESET_MESSAGE if authenticated?
     end
 
-    def enqueue_password_reset(user)
-      PasswordResetDeliveryJob.perform_later(user.id)
-      Rails.logger.info("Password reset delivery queued for user_id=#{user.id}")
+    def enqueue_password_reset(user_id)
+      PasswordResetDeliveryJob.perform_later(user_id)
+      Rails.logger.info("Password reset delivery queued for user_id=#{user_id}")
     rescue StandardError => error
       Rails.logger.error(
-        "Password reset delivery enqueue failed for user_id=#{user.id} " \
+        "Password reset delivery enqueue failed for user_id=#{user_id} " \
         "exception_class=#{error.class.name}"
       )
     end

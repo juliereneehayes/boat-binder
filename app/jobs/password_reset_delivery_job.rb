@@ -12,6 +12,6 @@ class PasswordResetDeliveryJob < ApplicationJob
       "Password reset email delivery failed for user_id=#{user_id} " \
       "exception_class=#{error.class.name}"
     )
-    raise
+    false
   end
 end
