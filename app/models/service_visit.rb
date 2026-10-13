@@ -20,6 +20,7 @@ class ServiceVisit < ApplicationRecord
   belongs_to :asset
   belongs_to :performed_by_user, class_name: "User"
   belongs_to :follow_up_completed_by_user, class_name: "User", optional: true
+  delegate :account, :account_id, to: :asset
   has_many :service_visit_engine_readings, dependent: :destroy
   has_many :service_visit_inspection_checks, dependent: :destroy
   has_many :service_visit_battery_checks, dependent: :destroy
@@ -42,7 +43,7 @@ class ServiceVisit < ApplicationRecord
   end
 
   def summary_recipient_email
-    asset.account.transactional_recipient_email
+    account.verified_transactional_owner_recipient&.email_address
   end
 
   def build_workflow_defaults

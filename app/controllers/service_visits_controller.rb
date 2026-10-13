@@ -220,18 +220,44 @@ class ServiceVisitsController < ApplicationController
   def deliver_summary_email
     recipient_email = @service_visit.summary_recipient_email
     unless recipient_email
-      Rails.logger.info("Service visit summary email skipped for service_visit_id=#{@service_visit.id}: no recipient")
+      Rails.logger.info(
+        "Service visit summary email result=skipped " \
+        "service_visit_id=#{@service_visit.id} reason=eligible_recipient_unavailable"
+      )
+      record_summary_delivery_outcome("denied")
       return false
     end
 
     ServiceVisitMailer.summary(@service_visit, recipient_email).deliver_now
-    Rails.logger.info("Service visit summary email delivered for service_visit_id=#{@service_visit.id}")
+    Rails.logger.info(
+      "Service visit summary email result=delivered service_visit_id=#{@service_visit.id}"
+    )
+    record_summary_delivery_outcome("succeeded")
     true
   rescue *ApplicationMailer::DELIVERY_ERRORS => error
     Rails.logger.error(
-      "Service visit summary email delivery failed for service_visit_id=#{@service_visit.id}: #{error.class}: #{error.message}"
+      "Service visit summary email result=failed service_visit_id=#{@service_visit.id} " \
+      "exception_class=#{error.class.name}"
     )
+    record_summary_delivery_outcome("failed")
     false
+  end
+
+  def record_summary_delivery_outcome(outcome)
+    SecurityAudit::Recorder.record!(
+      action: "service_visit.summary_delivery",
+      outcome:,
+      actor: Current.user,
+      account: @service_visit.account,
+      target: @service_visit,
+      request_id: request.request_id,
+      source_ip: request.remote_ip
+    )
+  rescue StandardError => error
+    Rails.logger.error(
+      "Service visit summary audit failed service_visit_id=#{@service_visit.id} " \
+      "exception_class=#{error.class.name}"
+    )
   end
 
   def default_location

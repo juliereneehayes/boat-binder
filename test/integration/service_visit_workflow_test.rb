@@ -114,6 +114,8 @@ class ServiceVisitWorkflowTest < ActionDispatch::IntegrationTest
     travel_to Time.utc(2026, 7, 6, 6, 30) do
       account = create_account(name: "Elliott Family")
       account.contacts.create!(name: "Elliott Owner", email: "elliott@example.test", role: "Owner")
+      owner = verified_owner(email: "elliott-verified-owner@example.test")
+      create_account_membership(user: owner, account:)
       captain = create_user(email: "captain-timezone@example.test")
       vessel = create_vessel(account: account, name: "Blue Meridian")
       sign_in_as captain
@@ -145,6 +147,8 @@ class ServiceVisitWorkflowTest < ActionDispatch::IntegrationTest
   test "captain saves structured service visit data and report renders it" do
     sign_in_as
     vessel = create_vessel
+    owner = verified_owner(email: "structured-visit-owner@example.test")
+    create_account_membership(user: owner, account: vessel.account)
     battery = create_battery(asset: vessel, name: "Port Start Battery")
     vessel.ensure_default_engines!
     port_engine = vessel.asset_engines.find_by!(name: "Port")
@@ -203,7 +207,7 @@ class ServiceVisitWorkflowTest < ActionDispatch::IntegrationTest
     assert_includes response.body, "Back to visit details"
     assert_includes response.body, "Replace chafed spring line."
 
-    mail = ServiceVisitMailer.summary(visit, "owner@example.test")
+    mail = ServiceVisitMailer.summary(visit, visit.summary_recipient_email)
 
     assert mail.multipart?
     assert_includes mail.html_part.body.decoded, "Visit summary"
@@ -268,28 +272,30 @@ class ServiceVisitWorkflowTest < ActionDispatch::IntegrationTest
   test "service visit creation emails owner user summary report" do
     account = create_account(name: "Elliott Family")
     account.contacts.create!(name: "Fallback Owner", email: "fallback-owner@example.test", role: "Owner")
-    owner = create_user(email: "owner-summary@example.test", role: "owner")
+    owner = verified_owner(email: "owner-summary@example.test")
     captain = create_user(email: "captain-summary@example.test")
     create_account_membership(user: owner, account: account)
     vessel = create_vessel(account: account, name: "Blue Meridian")
     sign_in_as captain
 
-    assert_difference -> { ActionMailer::Base.deliveries.size }, 1 do
-      post vessel_service_visits_path(vessel), params: {
-        service_visit: {
-          visit_date: Date.current,
-          location: "Bainbridge Marina",
-          summary: "Systems checked and ready.",
-          condition_notes: "Bilge dry and shore power stable.",
-          follow_up_needed: "1",
-          follow_up_notes: [
-            "Replace chafed spring line.",
-            "Schedule diver for running gear inspection.",
-            "Order spare fuel filters.",
-            "Review shore power cord."
-          ].join("\n")
+    assert_difference -> { SecurityAuditEvent.where(action: "service_visit.summary_delivery").count }, 1 do
+      assert_difference -> { ActionMailer::Base.deliveries.size }, 1 do
+        post vessel_service_visits_path(vessel), params: {
+          service_visit: {
+            visit_date: Date.current,
+            location: "Bainbridge Marina",
+            summary: "Systems checked and ready.",
+            condition_notes: "Bilge dry and shore power stable.",
+            follow_up_needed: "1",
+            follow_up_notes: [
+              "Replace chafed spring line.",
+              "Schedule diver for running gear inspection.",
+              "Order spare fuel filters.",
+              "Review shore power cord."
+            ].join("\n")
+          }
         }
-      }
+      end
     end
 
     visit = ServiceVisit.find_by!(summary: "Systems checked and ready.")
@@ -299,6 +305,16 @@ class ServiceVisitWorkflowTest < ActionDispatch::IntegrationTest
 
     assert_redirected_to vessel_service_visit_path(vessel, visit)
     assert_equal [ "owner-summary@example.test" ], mail.to
+    audit_event = SecurityAuditEvent.where(action: "service_visit.summary_delivery").order(:id).last
+    assert_equal "succeeded", audit_event.outcome
+    assert_equal captain, audit_event.actor_user
+    assert_equal account, audit_event.account
+    assert_equal "ServiceVisit", audit_event.target_type
+    assert_equal visit.id, audit_event.target_id
+    assert audit_event.request_id.present?
+    assert_empty audit_event.changed_fields
+    assert_not_includes audit_event.attributes.to_json, owner.email_address
+    assert_not_includes audit_event.attributes.to_json, visit.summary
     assert_includes mail.subject, "Blue Meridian"
     assert_includes mail.subject, visit.visit_date.to_fs(:long)
     assert mail.multipart?
@@ -338,7 +354,7 @@ class ServiceVisitWorkflowTest < ActionDispatch::IntegrationTest
 
   test "service visit creation passes computed summary recipient to mailer once" do
     account = create_account(name: "Elliott Family")
-    owner = create_user(email: "single-lookup-owner@example.test", role: "owner")
+    owner = verified_owner(email: "single-lookup-owner@example.test")
     captain = create_user(email: "single-lookup-captain@example.test")
     create_account_membership(user: owner, account: account)
     vessel = create_vessel(account: account, name: "Sea Glass")
@@ -369,9 +385,10 @@ class ServiceVisitWorkflowTest < ActionDispatch::IntegrationTest
   test "service visit summary recipient uses first active owner by membership order" do
     account = create_account(name: "Harbor North")
     captain_member = create_user(email: "captain-member-summary@example.test", role: "captain")
-    inactive_owner = create_user(email: "inactive-owner-summary@example.test", role: "owner", active: false)
-    first_active_owner = create_user(email: "first-owner-summary@example.test", role: "owner")
-    second_active_owner = create_user(email: "second-owner-summary@example.test", role: "owner")
+    inactive_owner = verified_owner(email: "inactive-owner-summary@example.test")
+    inactive_owner.update!(active: false)
+    first_active_owner = verified_owner(email: "first-owner-summary@example.test")
+    second_active_owner = verified_owner(email: "second-owner-summary@example.test")
     captain = create_user(email: "captain-owner-order@example.test")
     create_account_membership(user: captain_member, account: account)
     create_account_membership(user: inactive_owner, account: account)
@@ -390,9 +407,11 @@ class ServiceVisitWorkflowTest < ActionDispatch::IntegrationTest
     assert_equal [ "first-owner-summary@example.test" ], mail.to
   end
 
-  test "service visit summary email falls back to account primary contact and shows no follow-up state" do
+  test "service visit summary email to a verified owner shows no follow-up state" do
     account = create_account(name: "Marisol Trust")
     account.contacts.create!(name: "Marisol Owner", email: "marisol@example.test", role: "Owner")
+    owner = verified_owner(email: "marisol-verified@example.test")
+    create_account_membership(user: owner, account:)
     vessel = create_vessel(account: account, name: "Solstice")
     visit = vessel.service_visits.create!(
       performed_by_user: create_user(email: "captain-contact-summary@example.test"),
@@ -403,7 +422,7 @@ class ServiceVisitWorkflowTest < ActionDispatch::IntegrationTest
 
     mail = ServiceVisitMailer.summary(visit, visit.summary_recipient_email)
 
-    assert_equal [ "marisol@example.test" ], mail.to
+    assert_equal [ "marisol-verified@example.test" ], mail.to
     assert_includes mail.subject, "Solstice"
     assert mail.multipart?
     assert_includes mail.html_part.body.decoded, "No follow-up needed"
@@ -419,6 +438,8 @@ class ServiceVisitWorkflowTest < ActionDispatch::IntegrationTest
   test "service visit summary email renders follow-up items even when follow_up_needed is false" do
     account = create_account(name: "Marisol Trust")
     account.contacts.create!(name: "Marisol Owner", email: "marisol-notes@example.test", role: "Owner")
+    owner = verified_owner(email: "marisol-notes-verified@example.test")
+    create_account_membership(user: owner, account:)
     vessel = create_vessel(account: account, name: "Sea Glass")
     visit = vessel.service_visits.create!(
       performed_by_user: create_user(email: "captain-follow-up-notes@example.test"),
@@ -446,6 +467,8 @@ class ServiceVisitWorkflowTest < ActionDispatch::IntegrationTest
   test "service visit report shows open follow up state when notes are blank" do
     account = create_account(name: "Harbor North")
     account.contacts.create!(name: "Harbor Owner", email: "harbor@example.test", role: "Owner")
+    owner = verified_owner(email: "harbor-verified@example.test")
+    create_account_membership(user: owner, account:)
     captain = create_user(email: "captain-empty-follow-up@example.test")
     vessel = create_vessel(account: account, name: "Tide Runner")
     visit = vessel.service_visits.create!(
@@ -476,26 +499,52 @@ class ServiceVisitWorkflowTest < ActionDispatch::IntegrationTest
     assert_not_includes mail.html_part.body.decoded, "Action needed"
   end
 
-  test "service visit summary email is skipped when no recipient exists" do
+  test "service visit creation skips manual unverified inactive and cross-account recipients" do
+    account = create_account(name: "No Eligible Recipient")
+    account.contacts.create!(name: "Manual Owner", email: "manual-owner@example.test", role: "Owner")
+    unverified_owner = create_user(email: "unverified-owner@example.test", role: "owner")
+    inactive_owner = verified_owner(email: "inactive-owner@example.test")
+    inactive_owner.update!(active: false)
+    inactive_membership_owner = verified_owner(email: "inactive-membership-owner@example.test")
+    other_account = create_account(name: "Other Account")
+    other_owner = verified_owner(email: "other-account-owner@example.test")
+    create_account_membership(user: unverified_owner, account:)
+    create_account_membership(user: inactive_owner, account:)
+    create_account_membership(user: inactive_membership_owner, account:, active: false)
+    create_account_membership(user: other_owner, account: other_account)
     captain = create_user(email: "captain-no-recipient@example.test")
     sign_in_as captain
-    vessel = create_vessel(name: "No Recipient")
+    vessel = create_vessel(account:, name: "No Recipient")
 
-    assert_no_difference -> { ActionMailer::Base.deliveries.size } do
-      post vessel_service_visits_path(vessel), params: {
-        service_visit: {
-          visit_date: Date.current,
-          summary: "No recipient report"
-        }
-      }
+    assert_difference -> { SecurityAuditEvent.where(action: "service_visit.summary_delivery").count }, 1 do
+      assert_difference -> { ServiceVisit.count }, 1 do
+        assert_no_difference -> { ActionMailer::Base.deliveries.size } do
+          post vessel_service_visits_path(vessel), params: {
+            service_visit: {
+              visit_date: Date.current,
+              summary: "No recipient report"
+            }
+          }
+        end
+      end
     end
 
-    assert_redirected_to vessel_service_visit_path(vessel, ServiceVisit.last)
+    visit = ServiceVisit.order(:id).last
+    assert_redirected_to vessel_service_visit_path(vessel, visit)
+    event = SecurityAuditEvent.where(action: "service_visit.summary_delivery").order(:id).last
+    assert_equal "denied", event.outcome
+    assert_equal account, event.account
+    assert_equal visit.id, event.target_id
+    serialized_event = event.attributes.to_json
+    assert_not_includes serialized_event, "manual-owner@example.test"
+    assert_not_includes serialized_event, "No recipient report"
   end
 
   test "service visit summary delivery failure does not prevent creation" do
     account = create_account(name: "Harbor North")
     account.contacts.create!(name: "Harbor Owner", email: "harbor@example.test", role: "Owner")
+    owner = verified_owner(email: "harbor-delivery-owner@example.test")
+    create_account_membership(user: owner, account:)
     captain = create_user(email: "captain-delivery-failure@example.test")
     vessel = create_vessel(account: account, name: "Tide Runner")
     failed_delivery = Object.new
@@ -506,18 +555,24 @@ class ServiceVisitWorkflowTest < ActionDispatch::IntegrationTest
     ServiceVisitMailer.define_singleton_method(:summary) { |_visit, _recipient_email| failed_delivery }
     sign_in_as captain
 
-    assert_difference -> { ServiceVisit.count }, 1 do
-      assert_no_difference -> { ActionMailer::Base.deliveries.size } do
-        post vessel_service_visits_path(vessel), params: {
-          service_visit: {
-            visit_date: Date.current,
-            summary: "Delivery failure should not break create"
+    assert_difference -> { SecurityAuditEvent.where(action: "service_visit.summary_delivery").count }, 1 do
+      assert_difference -> { ServiceVisit.count }, 1 do
+        assert_no_difference -> { ActionMailer::Base.deliveries.size } do
+          post vessel_service_visits_path(vessel), params: {
+            service_visit: {
+              visit_date: Date.current,
+              summary: "Delivery failure should not break create"
+            }
           }
-        }
+        end
       end
     end
 
-    assert_redirected_to vessel_service_visit_path(vessel, ServiceVisit.last)
+    visit = ServiceVisit.order(:id).last
+    assert_redirected_to vessel_service_visit_path(vessel, visit)
+    event = SecurityAuditEvent.where(action: "service_visit.summary_delivery").order(:id).last
+    assert_equal "failed", event.outcome
+    assert_equal visit.id, event.target_id
   ensure
     ServiceVisitMailer.define_singleton_method(:summary, original_summary) if original_summary
   end
@@ -679,5 +734,13 @@ class ServiceVisitWorkflowTest < ActionDispatch::IntegrationTest
     assert_equal "House Battery Bank", battery.name
     assert_equal "Aft lazarette", battery.location
     assert_not battery.active?
+  end
+
+  private
+
+  def verified_owner(email:)
+    owner = create_user(email:, role: "owner")
+    owner.update!(email_verification_sent_at: 1.hour.ago, email_verified_at: Time.current)
+    owner
   end
 end
