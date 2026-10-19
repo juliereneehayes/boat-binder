@@ -143,6 +143,8 @@ class OwnerManagementTest < ActionDispatch::IntegrationTest
     other_account = create_account(name: "Harbor North")
     account.contacts.create!(name: "Manual Owner", email: "manual-owner@example.test", role: "Owner")
     linked_owner = create_user(email: "linked-owner@example.test", role: "owner", name: "Avery Elliott")
+    linked_owner.update!(email_verification_sent_at: 1.hour.ago, email_verified_at: Time.current)
+    unverified_owner = create_user(email: "unverified-owner@example.test", role: "owner", name: "Unverified Owner")
     pending_owner = User.create!(
       email_address: "pending-owner@example.test",
       role: "owner",
@@ -151,6 +153,7 @@ class OwnerManagementTest < ActionDispatch::IntegrationTest
     )
     other_owner = create_user(email: "other-account-owner@example.test", role: "owner", name: "Other Owner")
     create_account_membership(user: linked_owner, account: account)
+    create_account_membership(user: unverified_owner, account: account)
     create_account_membership(user: pending_owner, account: account)
     create_account_membership(user: other_owner, account: other_account)
     sign_in_as admin
@@ -161,10 +164,11 @@ class OwnerManagementTest < ActionDispatch::IntegrationTest
     assert_includes response.body, "Boat Binder account access"
     assert_includes response.body, "Avery Elliott"
     assert_includes response.body, "linked-owner@example.test"
+    assert_includes response.body, "unverified-owner@example.test"
     assert_includes response.body, "pending-owner@example.test"
     assert_includes response.body, "Invitation pending"
-    assert_includes response.body, "Email recipient eligible"
-    assert_includes response.body, "Not email eligible"
+    assert_select "span", text: "Email recipient eligible", count: 1
+    assert_select "span", text: "Not email eligible", count: 2
     assert_includes response.body, "Additional contact information"
     assert_includes response.body, "manual-owner@example.test"
     assert_not_includes response.body, "other-account-owner@example.test"

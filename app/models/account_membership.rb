@@ -17,7 +17,11 @@ class AccountMembership < ApplicationRecord
   end
 
   def transactional_email_eligible?
-    active? && user.owner? && user.active? && user.email_address.present?
+    active? &&
+      user.owner? &&
+      user.active? &&
+      user.email_address.present? &&
+      (user.email_verified_at.present? || user.invitation_accepted_at.present?)
   end
 
   private
