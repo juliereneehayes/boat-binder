@@ -44,7 +44,7 @@ class ServiceVisitsController < ApplicationController
 
     if @service_visit.save
       create_issue_note if issue_note_present?
-      deliver_summary_email
+      deliver_summary_email if automatic_summary_delivery?
       redirect_to vessel_service_visit_path(@vessel, @service_visit), notice: "Visit report saved."
     else
       render :new, status: :unprocessable_entity
@@ -241,6 +241,10 @@ class ServiceVisitsController < ApplicationController
     )
     record_summary_delivery_outcome("failed")
     false
+  end
+
+  def automatic_summary_delivery?
+    @service_visit.performed_by_user.internal?
   end
 
   def record_summary_delivery_outcome(outcome)

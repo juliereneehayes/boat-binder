@@ -353,6 +353,68 @@ class ServiceVisitWorkflowTest < ActionDispatch::IntegrationTest
     assert_includes mail.text_part.body.decoded, expected_report_url
   end
 
+  test "admin-created service visit emails eligible owner and records successful delivery" do
+    account = create_account(name: "Admin Managed Account")
+    owner = verified_owner(email: "admin-visit-owner@example.test")
+    create_account_membership(user: owner, account:)
+    vessel = create_vessel(account:, name: "Sea Glass")
+    admin = create_user(email: "admin-visit@example.test", role: "admin")
+    sign_in_as admin
+
+    assert_difference -> { SecurityAuditEvent.where(action: "service_visit.summary_delivery").count }, 1 do
+      assert_difference -> { ServiceVisit.count }, 1 do
+        assert_difference -> { ActionMailer::Base.deliveries.size }, 1 do
+          post vessel_service_visits_path(vessel), params: {
+            service_visit: {
+              visit_date: Date.current,
+              summary: "Admin completed the service visit."
+            }
+          }
+        end
+      end
+    end
+
+    visit = ServiceVisit.find_by!(summary: "Admin completed the service visit.")
+    event = SecurityAuditEvent.where(action: "service_visit.summary_delivery").order(:id).last
+
+    assert_redirected_to vessel_service_visit_path(vessel, visit)
+    assert_equal admin, visit.performed_by_user
+    assert_equal [ owner.email_address ], ActionMailer::Base.deliveries.last.to
+    assert_equal "succeeded", event.outcome
+    assert_equal admin, event.actor_user
+    assert_equal account, event.account
+    assert_equal visit.id, event.target_id
+  end
+
+  test "owner-created service visit saves without automatic summary delivery or audit event" do
+    account = create_account(name: "Self Managed Account")
+    qualify_self_managed_subscription(account)
+    owner = verified_owner(email: "owner-authored-visit@example.test")
+    create_account_membership(user: owner, account:, access_level: "editor")
+    vessel = create_vessel(account:, name: "Tide Runner")
+    sign_in_as owner
+
+    assert_no_difference -> { SecurityAuditEvent.where(action: "service_visit.summary_delivery").count } do
+      assert_no_enqueued_jobs do
+        assert_no_difference -> { ActionMailer::Base.deliveries.size } do
+          assert_difference -> { ServiceVisit.count }, 1 do
+            post vessel_service_visits_path(vessel), params: {
+              service_visit: {
+                visit_date: Date.current,
+                summary: "Owner completed the dock check."
+              }
+            }
+          end
+        end
+      end
+    end
+
+    visit = ServiceVisit.find_by!(summary: "Owner completed the dock check.")
+
+    assert_redirected_to vessel_service_visit_path(vessel, visit)
+    assert_equal owner, visit.performed_by_user
+  end
+
   test "service visit creation passes computed summary recipient to mailer once" do
     account = create_account(name: "Elliott Family")
     owner = verified_owner(email: "single-lookup-owner@example.test")
