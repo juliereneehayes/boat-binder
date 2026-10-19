@@ -14,6 +14,12 @@ class SeedSafetyTest < ActiveSupport::TestCase
     BUILD_WEEK_DEMO_ALLOWED_ENVIRONMENTS
     BUILD_WEEK_DEMO_CONFIRMATION
   ].freeze
+  RETIRED_DEMO_DUMMY_CONFIG = {
+    "BUILD_WEEK_DEMO_EMAIL" => "retired-demo-placeholder@example.test",
+    "BUILD_WEEK_DEMO_PASSWORD" => "not-a-real-password",
+    "BUILD_WEEK_DEMO_ALLOWED_ENVIRONMENTS" => "development",
+    "BUILD_WEEK_DEMO_CONFIRMATION" => "NOT A REAL CONFIRMATION"
+  }.freeze
 
   test "production seed aborts without mutating application data" do
     account = create_account(name: "Protected Production Account")
@@ -42,6 +48,23 @@ class SeedSafetyTest < ActiveSupport::TestCase
 
     assert Account.exists?(account.id)
     assert User.exists?(user.id)
+  end
+
+  test "stale retired demo config does not affect ordinary seeds" do
+    account = create_account(name: "Account Preserved With Stale Config")
+    user = create_user(email: "stale-config-existing@example.test", role: "admin")
+    vessel = create_vessel(account: account, name: "Vessel Preserved With Stale Config")
+    original_attributes = [ account.attributes, user.attributes, vessel.attributes ]
+
+    with_environment_variables(RETIRED_DEMO_DUMMY_CONFIG) do
+      assert_no_difference [ -> { Account.count }, -> { User.count }, -> { Asset.count } ] do
+        load SEED_PATH
+      end
+    end
+
+    assert_equal original_attributes[0], account.reload.attributes
+    assert_equal original_attributes[1], user.reload.attributes
+    assert_equal original_attributes[2], vessel.reload.attributes
   end
 
   test "authoritative seed paths contain no historical default credentials" do
@@ -80,7 +103,14 @@ class SeedSafetyTest < ActiveSupport::TestCase
   private
 
   def without_environment_variables(*keys)
-    previous_values = keys.to_h { |key| [ key, ENV.delete(key) ] }
+    with_environment_variables(keys.index_with { nil }) { yield }
+  end
+
+  def with_environment_variables(values)
+    previous_values = values.keys.to_h { |key| [ key, ENV[key] ] }
+    values.each do |key, value|
+      value.nil? ? ENV.delete(key) : ENV[key] = value
+    end
     yield
   ensure
     previous_values.each do |key, value|

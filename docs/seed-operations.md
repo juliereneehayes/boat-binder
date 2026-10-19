@@ -54,18 +54,26 @@ Users, customer records, attachments, uploads, subscriptions, or Stripe state.
 ## Retired Build Week Operational Cleanup
 
 Apply this sequence separately to each confirmed staging and production app. Commands below report
-only record IDs, active/session state, or configuration-key presence. They do not print credential
-values.
+only record IDs, roles, membership/active/session state, or configuration-key presence. They do not
+print credential values.
 
-1. Before deployment, confirm the marked historical demo identity is still inactive and has no
-   Sessions:
+1. Before deployment, use the historical Account marker only to discover records that may need
+   independent provenance review:
 
    ```sh
-   heroku run 'bin/rails runner '\''marker = "[Build Week demo account]"; Account.where("notes LIKE ?", "%#{Account.sanitize_sql_like(marker)}%").order(:id).find_each { |account| account.users.order(:id).find_each { |user| puts({ account_id: account.id, user_id: user.id, active: user.active?, sessions: user.sessions.count }.to_json) } }'\''' --app APP_NAME
+   heroku run 'bin/rails runner '\''marker = "[Build Week demo account]"; Account.where("notes LIKE ?", "%#{Account.sanitize_sql_like(marker)}%").order(:id).find_each { |account| account.account_memberships.includes(:user).order(:id).find_each { |membership| user = membership.user; puts({ account_id: account.id, user_id: user.id, role: user.role, user_active: user.active?, sessions: user.sessions.count, access_level: membership.access_level, membership_active: membership.active?, marked_demo_account: true }.to_json) } }'\''' --app APP_NAME
    ```
 
-   No output means the marked identity is absent. Any returned identity must have `active: false`
-   and `sessions: 0`. Stop if it does not; do not set a password, reactivate it, or recreate it.
+   An Account marker, membership in that Account, or a User resolved from the obsolete
+   `BUILD_WEEK_DEMO_EMAIL` value is a discovery signal only. None proves that the User is the
+   historical contest identity. Do not retrieve or print the configured email value merely to make
+   this association.
+
+   Mutate an identity only when independent operational evidence positively proves it is the retired
+   contest identity. Then confirm it is inactive with zero Sessions. When provenance is ambiguous,
+   preserve the User, role, memberships, credentials, and Sessions; record identity retirement as
+   not applicable or unable to prove. Never deactivate every User associated with the marked Account
+   or the User that happens to match stale configuration.
 
 2. Deploy the reviewed code that removes the Build Week setup service and `demo:reset` task.
 3. Verify normal login, dashboard access, Account and User access, uploads, and application health.
@@ -82,57 +90,45 @@ values.
    heroku config:unset BUILD_WEEK_DEMO_EMAIL BUILD_WEEK_DEMO_PASSWORD BUILD_WEEK_DEMO_ALLOWED_ENVIRONMENTS BUILD_WEEK_DEMO_CONFIRMATION --app APP_NAME
    ```
 
+   Listing only keys previously confirmed present is preferred. Passing an already-absent key to
+   `heroku config:unset` is harmless.
+
 Do not use broad config, release, or log commands for this cleanup. Do not remove these keys before
-the deployed release no longer depends on them.
+the deployed release no longer depends on them. Removing obsolete configuration disables the old
+setup path; it does not identify, delete, deactivate, or otherwise mutate a User whose email may
+happen to match a stale value. The marked Account and its fictional data may remain.
+
+### Completion Criteria
+
+#125 is operationally complete when the obsolete setup/reset runtime is gone, obsolete Build Week
+configuration is removed after deployment, and no positively identified historical contest identity
+remains active with usable Sessions or credentials. An ambiguous identity is preserved rather than
+modified and recorded as not applicable or unable to prove. Production has an independently
+identified historical identity that is already inactive with zero Sessions; current staging evidence
+does not positively identify the historical Owner created by the retired setup service.
 
 ### Rollback
 
 Rollback must not restore usable historical demo access. If application code is rolled back, keep
-the historical identity inactive with zero Sessions, do not invoke the restored `demo:reset` task,
-and do not restore the retired configuration keys. No database rollback is needed for this change.
-Prefer a forward fix if the release has a problem.
+any positively identified historical identity inactive with zero Sessions, leave ambiguous Users
+unchanged, do not invoke the restored `demo:reset` task, and do not restore the retired configuration
+keys. No database rollback is needed for this change. Prefer a forward fix if the release has a
+problem.
 
-## Known Test-Identity Verification
+## #153 Boundary
 
 The historical seed created predictable Admin and Captain test identities. This is separate from
-the retired Build Week account, and the #153 protections remain in force. Run this privacy-minimized
-inspection separately against each confirmed staging and production app; it prints record IDs,
-roles, active state, and session counts, but not passwords or email addresses:
-
-```sh
-heroku run 'bin/rails runner '\''emails = %w[admin@hayesyacht.test captain@hayesyacht.test]; User.where(email_address: emails).order(:id).find_each { |user| puts({ id: user.id, role: user.role, active: user.active?, sessions: user.sessions.count }.to_json) }'\''' --app boat-binder
-```
-
-Replace the app name when inspecting a separately confirmed staging app. If no rows are printed, the
-known identities are absent. Do not interpret that result as a search for every possible test user.
-
-For each confirmed match, verify the target and backup first, then deactivate it and invalidate its
-sessions through the established Rails console without printing or setting a password:
-
-```sh
-heroku run bin/rails console --app boat-binder
-```
-
-```ruby
-user = User.find(CONFIRMED_USER_ID)
-raise "Unexpected identity" unless %w[admin@hayesyacht.test captain@hayesyacht.test].include?(user.email_address)
-
-User.transaction do
-  user.lock!
-  user.update!(active: false)
-  user.sessions.delete_all
-end
-```
-
-Repeat only for an explicitly confirmed target. Do not delete Accounts, customer records, or
-attachments. Verify afterward that the user is inactive, has no Sessions, and cannot authenticate.
-Deployed staging/production verification and remediation remain owner-operated and pending until
-their results are recorded without sensitive values.
+the retired Build Week runtime, and the #153 protections remain in force: ordinary seeds create no
+users, production seeding is prohibited, and no predictable privileged credentials are restored.
+This #125 runbook does not authorize mutation of Admin/Captain identities or other general test
+accounts. Handle any positively identified general seed identity only through #153 review and
+independent provenance evidence.
 
 ## Manual Regression Checks
 
 - Development: `db:prepare` and `db:seed` succeed without creating users or printing credentials.
+- Stale config: all four retired variables have no effect on ordinary seed behavior.
 - Task surface: `bin/rails -T` does not list `demo:reset` or another demo population task.
-- Authentication: normal active users can sign in; the retired inactive identity cannot.
+- Authentication: normal active users can sign in; ambiguous identities remain unchanged.
 - Production safety: rely on automated production-environment coverage. Do not run a destructive
   production command to test the guard.
