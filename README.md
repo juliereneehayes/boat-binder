@@ -17,14 +17,6 @@ Boat Binder is a mobile-first Rails SaaS MVP for vessel ownership records, maint
 
 Boat Binder is still an MVP. Stripe Checkout, billing portal, subscription enforcement, public signup, AI-powered document search, and maintenance-insight features are roadmap items rather than implemented customer-facing features.
 
-## Build Week Demo
-
-- Live demo: [https://boat-binder.com](https://boat-binder.com)
-- Demo access uses a fictional owner account with two vessels, service history, reminders, notes, and document records.
-- Login credentials are provided privately with the Build Week submission.
-
-The demo contains no real customer or vessel data.
-
 ## Tech Stack
 
 - Ruby and Ruby on Rails 8.1
@@ -55,9 +47,9 @@ bin/dev
 `db:prepare` initializes the application, Solid Cache, Solid Queue, and Solid Cable tables in the
 same local PostgreSQL database.
 
-`db:seed` is intentionally non-destructive and does not create sample users. The explicitly scoped
-fictional demo reset, including its required safeguards, is documented in
-[Seed and Demo Operations](docs/seed-operations.md).
+`db:seed` is intentionally non-destructive and does not create sample users. The historical Build
+Week authenticated demo and its reset path have been retired. Safe seed behavior is documented in
+[Seed Operations](docs/seed-operations.md); any future public demo belongs to #103.
 
 `bin/dev` runs Rails and Tailwind watchers through `Procfile.dev`. The app defaults to port 3000 unless `PORT` is set. You can also run `bin/rails server`.
 
@@ -88,7 +80,7 @@ Concrete workflow examples:
 - GPT-5.6 helped reason through Stripe webhook verification, idempotency, retry behavior, and sensitive-log filtering; Codex made the repository changes and tests.
 - GPT-5.6 helped analyze CI failures and dependency advisories; Codex applied focused lockfile/security patches.
 - GPT-5.6 helped shape the subscription plan catalog and Stripe-ready configuration boundaries; Codex implemented the catalog and coverage.
-- GPT-5.6 helped define the Build Week demo-account setup, safety requirements, and QA plan; Codex built the repeatable seed workflow.
+- GPT-5.6 helped define the historical Build Week demo-account setup, safety requirements, and QA plan; that contest-specific workflow was later retired.
 
 Human judgment remained responsible for product direction, architecture decisions, review, manual testing, deployment, and final approval.
 
@@ -98,6 +90,6 @@ Planned GPT-5.6 feature: a Vessel Ownership Brief that synthesizes reminders, se
 
 - [Configuration](docs/configuration.md)
 - [Deployment Architecture Review](docs/deployment-architecture.md)
-- [Seed and Demo Operations](docs/seed-operations.md)
+- [Seed Operations](docs/seed-operations.md)
 - [Production Email](docs/email.md)
 - [Stripe Foundation](docs/stripe.md)

@@ -216,6 +216,7 @@ class AccessControlTest < ActionDispatch::IntegrationTest
     assert_response :success
     assert_not_includes response.body, "Demo captain:"
     assert_not_includes response.body, "captain@hayesyacht.test / password"
+    assert_not_includes response.body, "captain@hayesyacht.test"
   end
 
   test "authenticated users are redirected away from the login page" do
