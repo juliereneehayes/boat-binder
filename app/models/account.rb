@@ -38,9 +38,7 @@ class Account < ApplicationRecord
   end
 
   def verified_transactional_owner_recipient
-    transactional_owner_recipients
-      .where("users.email_verified_at IS NOT NULL OR users.invitation_accepted_at IS NOT NULL")
-      .first
+    owner_user_memberships.find(&:transactional_email_eligible?)&.user
   end
 
   def status_label
@@ -52,14 +50,6 @@ class Account < ApplicationRecord
   end
 
   private
-
-  def transactional_owner_recipients
-    User.joins(:account_memberships)
-      .where(account_memberships: { account_id: id, active: true })
-      .where(role: "owner", active: true)
-      .where.not(email_address: [ nil, "" ])
-      .order(AccountMembership.arel_table[:id].asc)
-  end
 
   def set_default_time_zone
     self.time_zone = DEFAULT_TIME_ZONE if time_zone.blank?
