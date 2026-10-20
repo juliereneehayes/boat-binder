@@ -92,21 +92,13 @@ Billing Portal session creation requires the secret API key, an explicit
 configuration; production must use a separately configured live-mode Portal configuration. Boat
 Binder never silently falls back to Stripe's default Portal configuration.
 
-## Seed And Demo Safety
+## Seed Safety
 
 Ordinary `db:seed` is non-destructive outside production and is prohibited in production. It does
-not create users or sample data. The retained fictional Build Week dataset has one authoritative
-reset command, `bin/rails demo:reset`, with these required variables:
-
-- `BUILD_WEEK_DEMO_EMAIL` - the explicitly configured fictional Owner identity; no default.
-- `BUILD_WEEK_DEMO_PASSWORD` - the explicitly configured password; no default and never printed.
-- `BUILD_WEEK_DEMO_ALLOWED_ENVIRONMENTS` - comma-separated explicit allowlist that must include the
-  current Rails environment.
-- `BUILD_WEEK_DEMO_CONFIRMATION` - must equal `RESET BUILD WEEK DEMO` outside automated test.
-
-The reset remains prohibited when `Rails.env.production?`, even if configuration attempts to
-allowlist production. See [Seed and Demo Operations](seed-operations.md) for safe local use,
-staging limitations, production prohibitions, and narrowly scoped identity remediation.
+not create users or sample data. The historical Build Week authenticated demo, its reset task, and
+its credential/configuration inputs have been retired. They are not supported application
+configuration and must not be restored. See [Seed Operations](seed-operations.md) for production
+protections and the ordered deployment and environment cleanup runbook.
 
 ## Active Storage Image Processing Security
 
