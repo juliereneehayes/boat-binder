@@ -66,6 +66,35 @@ bin/importmap audit
 
 The `bin/bundler-audit` wrapper updates the local ruby-advisory-db before scanning so local vulnerability checks match CI more closely.
 
+## Repository Security And Review
+
+Changes to the default branch go through pull requests. The existing GitHub Standard ruleset
+is the merge-enforcement source of truth: `scan_ruby`, `scan_js`, `lint`, `test`, and
+`system-test` must pass on the current revision, and review conversations must be resolved.
+Do not bypass missing or failing checks. Agent-authored changes require explicit human owner
+review before merge; green checks are not approval. While there is one maintainer, no second
+approver is required. When a second trusted maintainer is added, independent approval should
+become the normal requirement.
+
+The owner reviews dependency and security alerts promptly and reviews the existing weekly
+Dependabot update PRs. Dependabot manages both gem and GitHub Actions updates, including pinned
+Action SHAs. Keep CI tokens least privilege and retain Brakeman, Bundler Audit, importmap audit,
+CodeQL, secret scanning, and push protection. An importmap audit only covers packages whose
+versions it can identify; a green result is not a scan of all JavaScript.
+
+Any security exception needs a documented scope, rationale, compensating controls, owner decision,
+and review date in the relevant finding or PR. Fix failures or review a narrowly scoped exception
+through the normal PR process; do not disable checks, globally suppress rules, or add a bypass.
+
+### Confidential Vulnerability Reports
+
+Email [support@boat-binder.com](mailto:support@boat-binder.com) with the subject
+"Security report" to report a suspected vulnerability confidentially to the Boat Binder owner.
+This monitored route requires no GitHub account or repository access and remains available if
+this repository becomes private. It is also listed on the public website under customer support.
+Include a description and safe reproduction steps; do not include passwords, keys, customer
+records, or vessel documents, and do not post sensitive reports in public issues.
+
 ## Built With OpenAI
 
 Boat Binder was built with human product direction and review, with OpenAI tools used as collaborators throughout the process.
