@@ -611,6 +611,42 @@ class DocumentManagementTest < ActionDispatch::IntegrationTest
     assert_includes response.body, "File must be a PDF, JPEG, PNG, or WEBP file"
   end
 
+  test "document replacement rejects an extension that does not match detected content" do
+    account = create_account(name: "Extension Match Owner")
+    document = Document.create!(account:, title: "Original file", document_type: "other")
+    document.file.attach(fixture_file_upload("sample.pdf", "application/pdf"))
+    original_blob_id = document.file.blob.id
+    editor = create_user(email: "document-extension-editor@example.test", role: "owner")
+    qualify_self_managed_subscription(account)
+    create_account_membership(user: editor, account:, access_level: "editor")
+    sign_in_as editor
+    mismatched_upload = Rack::Test::UploadedFile.new(
+      file_fixture("sample.png"),
+      "image/png",
+      true,
+      original_filename: "misleading.jpg"
+    )
+
+    assert_no_difference -> { ActiveStorage::Blob.count } do
+      assert_no_difference -> { ActiveStorage::Attachment.count } do
+        patch document_path(document), params: {
+          document: {
+            account_id: account.id,
+            title: "Rejected replacement",
+            document_type: "other",
+            file: mismatched_upload
+          }
+        }
+      end
+    end
+
+    assert_response :unprocessable_entity
+    assert_includes response.body, "File extension does not match the uploaded file type"
+    document.reload
+    assert_equal "Original file", document.title
+    assert_equal original_blob_id, document.file.blob.id
+  end
+
   test "document uploads reject executable and unknown content types" do
     sign_in_as
     vessel = create_vessel

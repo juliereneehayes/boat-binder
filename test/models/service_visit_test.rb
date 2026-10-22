@@ -189,6 +189,21 @@ class ServiceVisitTest < ActiveSupport::TestCase
     assert_equal [ "image/jpeg", "image/webp" ], visit.photos.map { |photo| photo.blob.content_type }
   end
 
+  test "metadata edits preserve legacy photos with mismatched extensions" do
+    visit = create_service_visit
+    blob = ActiveStorage::Blob.create_and_upload!(
+      io: file_fixture("sample.jpg").open,
+      filename: "legacy.bin",
+      content_type: "image/jpeg",
+      identify: false
+    )
+    ActiveStorage::Attachment.create!(name: "photos", record: visit, blob:)
+
+    visit.update!(summary: "Updated without a new upload")
+
+    assert_equal [ blob.id ], visit.reload.photos.blobs.ids
+  end
+
   private
 
   def create_service_visit

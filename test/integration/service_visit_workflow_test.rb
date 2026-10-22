@@ -269,6 +269,138 @@ class ServiceVisitWorkflowTest < ActionDispatch::IntegrationTest
     assert_includes response.body, "Photos must be JPEG, PNG, or WEBP images"
   end
 
+  test "service visit photos reject more than ten files before attaching any" do
+    sign_in_as
+    vessel = create_vessel
+    uploads = Array.new(11) { fixture_file_upload("sample.jpg", "image/jpeg") }
+
+    assert_no_difference -> { ServiceVisit.count } do
+      assert_no_difference -> { ActiveStorage::Blob.count } do
+        assert_no_difference -> { ActiveStorage::Attachment.count } do
+          post vessel_service_visits_path(vessel), params: {
+            service_visit: { visit_date: Date.current, photos: uploads }
+          }
+        end
+      end
+    end
+
+    assert_response :unprocessable_entity
+    assert_includes response.body, "Photos upload no more than 10 photos at a time"
+  end
+
+  test "service visit photos accept the inclusive count individual and aggregate limits" do
+    sign_in_as
+    vessel = create_vessel
+    boundary_sizes = [
+      10.megabytes,
+      8.megabytes,
+      *Array.new(8, 4.megabytes)
+    ]
+
+    assert_equal 10, ServiceVisit::PHOTO_MAX_FILES_PER_SUBMISSION
+    assert_equal 10.megabytes, ServiceVisit::PHOTO_MAX_SIZE
+    assert_equal 50.megabytes, ServiceVisit::PHOTO_MAX_AGGREGATE_SIZE
+
+    with_sized_photo_uploads(boundary_sizes) do |uploads|
+      assert_difference -> { ServiceVisit.count }, 1 do
+        assert_difference -> { ActiveStorage::Blob.count }, 10 do
+          assert_difference -> { ActiveStorage::Attachment.count }, 10 do
+            post vessel_service_visits_path(vessel), params: {
+              service_visit: {
+                visit_date: Date.current,
+                summary: "Photos at inclusive upload limits.",
+                photos: uploads
+              }
+            }
+          end
+        end
+      end
+    end
+
+    visit = ServiceVisit.find_by!(summary: "Photos at inclusive upload limits.")
+    byte_sizes = visit.photos.blobs.pluck(:byte_size)
+
+    assert_redirected_to vessel_service_visit_path(vessel, visit)
+    assert_equal 10, byte_sizes.size
+    assert_equal 10.megabytes, byte_sizes.max
+    assert_equal 50.megabytes, byte_sizes.sum
+  end
+
+  test "one oversized service visit photo rejects all new photos and preserves existing photos" do
+    captain = create_user(email: "oversized-photo-captain@example.test")
+    sign_in_as captain
+    vessel = create_vessel
+    visit = vessel.service_visits.create!(performed_by_user: captain, visit_date: Date.current)
+    visit.photos.attach(fixture_file_upload("sample.jpg", "image/jpeg"))
+    original_blob_ids = visit.photos.blobs.ids
+
+    with_sized_photo_uploads([ ServiceVisit::PHOTO_MAX_SIZE + 1 ]) do |oversized_uploads|
+      uploads = [ fixture_file_upload("sample.png", "image/png"), *oversized_uploads ]
+
+      assert_no_difference -> { ActiveStorage::Blob.count } do
+        assert_no_difference -> { ActiveStorage::Attachment.count } do
+          patch vessel_service_visit_path(vessel, visit), params: {
+            service_visit: { visit_date: visit.visit_date, photos: uploads }
+          }
+        end
+      end
+    end
+
+    assert_response :unprocessable_entity
+    assert_includes response.body, "Photos must be 10 MB or smaller"
+    assert_equal original_blob_ids, visit.reload.photos.blobs.ids
+  end
+
+  test "service visit photos reject an aggregate upload over fifty megabytes" do
+    sign_in_as
+    vessel = create_vessel
+
+    with_sized_photo_uploads(Array.new(6, 9.megabytes)) do |uploads|
+      assert_no_difference -> { ServiceVisit.count } do
+        assert_no_difference -> { ActiveStorage::Blob.count } do
+          assert_no_difference -> { ActiveStorage::Attachment.count } do
+            post vessel_service_visits_path(vessel), params: {
+              service_visit: { visit_date: Date.current, photos: uploads }
+            }
+          end
+        end
+      end
+    end
+
+    assert_response :unprocessable_entity
+    assert_includes response.body, "Photos must total 50 MB or less"
+  end
+
+  test "service visit photo extension mismatch rejects the complete new set" do
+    captain = create_user(email: "extension-photo-captain@example.test")
+    sign_in_as captain
+    vessel = create_vessel
+    visit = vessel.service_visits.create!(performed_by_user: captain, visit_date: Date.current)
+    visit.photos.attach(fixture_file_upload("sample.webp", "image/webp"))
+    original_blob_ids = visit.photos.blobs.ids
+    mismatched_upload = Rack::Test::UploadedFile.new(
+      file_fixture("sample.png"),
+      "image/png",
+      true,
+      original_filename: "misleading.jpg"
+    )
+
+    assert_no_difference -> { ActiveStorage::Blob.count } do
+      assert_no_difference -> { ActiveStorage::Attachment.count } do
+        patch vessel_service_visit_path(vessel, visit), params: {
+          service_visit: {
+            visit_date: visit.visit_date,
+            photos: [ fixture_file_upload("sample.jpg", "image/jpeg"), mismatched_upload ]
+          }
+        }
+      end
+    end
+
+    assert_response :unprocessable_entity
+    assert_includes response.body, "Photos extension does not match the uploaded file type"
+    assert_equal original_blob_ids, visit.reload.photos.blobs.ids
+  end
+
   test "service visit creation emails owner user summary report" do
     account = create_account(name: "Elliott Family")
     account.contacts.create!(name: "Fallback Owner", email: "fallback-owner@example.test", role: "Owner")
@@ -802,6 +934,22 @@ class ServiceVisitWorkflowTest < ActionDispatch::IntegrationTest
   end
 
   private
+
+  def with_sized_photo_uploads(sizes)
+    tempfiles = sizes.each_with_index.map do |size, index|
+      tempfile = Tempfile.new([ "service-visit-photo-#{index}", ".jpg" ])
+      tempfile.binmode
+      tempfile.write(file_fixture("sample.jpg").binread)
+      tempfile.truncate(size)
+      tempfile.rewind
+      tempfile
+    end
+
+    uploads = tempfiles.map { |tempfile| Rack::Test::UploadedFile.new(tempfile.path, "image/jpeg", true) }
+    yield uploads
+  ensure
+    tempfiles&.each(&:close!)
+  end
 
   def verified_owner(email:)
     owner = create_user(email:, role: "owner")

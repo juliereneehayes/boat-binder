@@ -4,6 +4,14 @@ class ServiceVisit < ApplicationRecord
     image/png
     image/webp
   ].freeze
+  PHOTO_MAX_SIZE = 10.megabytes
+  PHOTO_MAX_FILES_PER_SUBMISSION = 10
+  PHOTO_MAX_AGGREGATE_SIZE = 50.megabytes
+  PHOTO_CONTENT_TYPE_ERROR = "must be JPEG, PNG, or WEBP images"
+  PHOTO_SIZE_ERROR = "must be 10 MB or smaller"
+  PHOTO_COUNT_ERROR = "upload no more than 10 photos at a time"
+  PHOTO_AGGREGATE_SIZE_ERROR = "must total 50 MB or less"
+  PHOTO_EXTENSION_ERROR = "extension does not match the uploaded file type"
 
   DEFAULT_INSPECTION_LABELS = [
     "Hull",
@@ -38,8 +46,19 @@ class ServiceVisit < ApplicationRecord
   scope :with_open_follow_up, -> { where(follow_up_needed: true, follow_up_completed_at: nil) }
 
   def self.photo_upload_error(uploads)
-    invalid_upload = Array(uploads).compact_blank.find { |upload| !AttachmentUpload.multipart?(upload) }
-    "must be new images uploaded from this device" if invalid_upload
+    uploads = Array(uploads).compact_blank
+    return "must be new images uploaded from this device" if uploads.any? { |upload| !AttachmentUpload.multipart?(upload) }
+    return PHOTO_COUNT_ERROR if uploads.size > PHOTO_MAX_FILES_PER_SUBMISSION
+    return PHOTO_SIZE_ERROR if uploads.any? { |upload| AttachmentUpload.byte_size(upload).to_i > PHOTO_MAX_SIZE }
+    return PHOTO_AGGREGATE_SIZE_ERROR if uploads.sum { |upload| AttachmentUpload.byte_size(upload).to_i } > PHOTO_MAX_AGGREGATE_SIZE
+
+    uploads.each do |upload|
+      detected_content_type = AttachmentUpload.detected_content_type(upload)
+      return PHOTO_CONTENT_TYPE_ERROR unless ALLOWED_PHOTO_CONTENT_TYPES.include?(detected_content_type)
+      return PHOTO_EXTENSION_ERROR unless AttachmentUpload.extension_matches_content_type?(upload, detected_content_type)
+    end
+
+    nil
   end
 
   def summary_recipient_email
@@ -112,13 +131,17 @@ class ServiceVisit < ApplicationRecord
   def photos_are_safe_uploads
     return unless photos.attached?
 
-    invalid_photos = photos.reject do |photo|
-      ALLOWED_PHOTO_CONTENT_TYPES.include?(photo.blob.content_type.to_s)
+    new_photos = photos.select(&:new_record?)
+    invalid_photos = new_photos.reject do |photo|
+      blob = photo.blob
+      ALLOWED_PHOTO_CONTENT_TYPES.include?(blob.content_type.to_s) &&
+        blob.byte_size <= PHOTO_MAX_SIZE &&
+        AttachmentUpload.extension_matches_content_type?(blob, blob.content_type)
     end
 
     return if invalid_photos.none?
 
-    errors.add(:photos, "must be JPEG, PNG, or WEBP images")
+    errors.add(:photos, PHOTO_CONTENT_TYPE_ERROR)
     invalid_photos.each(&:purge)
   end
 

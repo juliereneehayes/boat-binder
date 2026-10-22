@@ -148,7 +148,7 @@
       <div>
         <%= form.label :photos, "Choose or take photos", class: "text-sm font-semibold text-slate-700" %>
         <%= form.file_field :photos, multiple: true, accept: ServiceVisit::ALLOWED_PHOTO_CONTENT_TYPES.join(","), class: "mt-2 block min-h-12 w-full rounded-md border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-base file:mr-3 file:rounded-md file:border-0 file:bg-cyan-700 file:px-4 file:py-2 file:font-bold file:text-white" %>
-        <p class="mt-2 text-sm leading-6 text-slate-600">Add JPEG, PNG, or WEBP photos from your camera or photo library.</p>
+        <p class="mt-2 text-sm leading-6 text-slate-600">Add up to 10 JPEG, PNG, or WEBP photos. Each photo may be up to 10 MB, and the upload may total up to 50 MB.</p>
       </div>
     </section>
 

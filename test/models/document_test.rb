@@ -40,4 +40,19 @@ class DocumentTest < ActiveSupport::TestCase
 
     assert_includes document.errors[:file], "must be a PDF, JPEG, PNG, or WEBP file"
   end
+
+  test "metadata edits preserve a legacy attachment with a mismatched extension" do
+    document = Document.create!(account: create_account, title: "Legacy", document_type: "other")
+    blob = ActiveStorage::Blob.create_and_upload!(
+      io: file_fixture("sample.jpg").open,
+      filename: "legacy.bin",
+      content_type: "image/jpeg",
+      identify: false
+    )
+    ActiveStorage::Attachment.create!(name: "file", record: document, blob:)
+
+    document.update!(title: "Legacy renamed")
+
+    assert_equal blob.id, document.reload.file.blob.id
+  end
 end
