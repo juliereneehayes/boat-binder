@@ -288,6 +288,44 @@ class ServiceVisitWorkflowTest < ActionDispatch::IntegrationTest
     assert_includes response.body, "Photos upload no more than 10 photos at a time"
   end
 
+  test "service visit photos accept the inclusive count individual and aggregate limits" do
+    sign_in_as
+    vessel = create_vessel
+    boundary_sizes = [
+      10.megabytes,
+      8.megabytes,
+      *Array.new(8, 4.megabytes)
+    ]
+
+    assert_equal 10, ServiceVisit::PHOTO_MAX_FILES_PER_SUBMISSION
+    assert_equal 10.megabytes, ServiceVisit::PHOTO_MAX_SIZE
+    assert_equal 50.megabytes, ServiceVisit::PHOTO_MAX_AGGREGATE_SIZE
+
+    with_sized_photo_uploads(boundary_sizes) do |uploads|
+      assert_difference -> { ServiceVisit.count }, 1 do
+        assert_difference -> { ActiveStorage::Blob.count }, 10 do
+          assert_difference -> { ActiveStorage::Attachment.count }, 10 do
+            post vessel_service_visits_path(vessel), params: {
+              service_visit: {
+                visit_date: Date.current,
+                summary: "Photos at inclusive upload limits.",
+                photos: uploads
+              }
+            }
+          end
+        end
+      end
+    end
+
+    visit = ServiceVisit.find_by!(summary: "Photos at inclusive upload limits.")
+    byte_sizes = visit.photos.blobs.pluck(:byte_size)
+
+    assert_redirected_to vessel_service_visit_path(vessel, visit)
+    assert_equal 10, byte_sizes.size
+    assert_equal 10.megabytes, byte_sizes.max
+    assert_equal 50.megabytes, byte_sizes.sum
+  end
+
   test "one oversized service visit photo rejects all new photos and preserves existing photos" do
     captain = create_user(email: "oversized-photo-captain@example.test")
     sign_in_as captain
