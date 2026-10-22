@@ -8,6 +8,7 @@ class Asset < ApplicationRecord
   PRIMARY_PHOTO_MAX_SIZE = 10.megabytes
   PRIMARY_PHOTO_CONTENT_TYPE_ERROR = "must be a JPEG, PNG, or WEBP image"
   PRIMARY_PHOTO_SIZE_ERROR = "must be 10 MB or smaller"
+  PRIMARY_PHOTO_EXTENSION_ERROR = "extension does not match the uploaded file type"
 
   belongs_to :account
   has_many :service_visits, dependent: :destroy
@@ -49,11 +50,12 @@ class Asset < ApplicationRecord
   def self.primary_photo_upload_error(upload)
     return if upload.blank?
     return "must be a new image uploaded from this device" unless AttachmentUpload.multipart?(upload)
+    return PRIMARY_PHOTO_SIZE_ERROR if AttachmentUpload.byte_size(upload).to_i > PRIMARY_PHOTO_MAX_SIZE
 
-    detected_content_type = primary_photo_upload_content_type(upload)
+    detected_content_type = AttachmentUpload.detected_content_type(upload)
 
     return PRIMARY_PHOTO_CONTENT_TYPE_ERROR unless PRIMARY_PHOTO_CONTENT_TYPES.include?(detected_content_type)
-    PRIMARY_PHOTO_SIZE_ERROR if primary_photo_upload_size(upload).to_i > PRIMARY_PHOTO_MAX_SIZE
+    PRIMARY_PHOTO_EXTENSION_ERROR unless AttachmentUpload.extension_matches_content_type?(upload, detected_content_type)
   end
 
   def to_param
@@ -142,13 +144,18 @@ class Asset < ApplicationRecord
   end
 
   def primary_photo_is_safe_upload
-    return unless primary_photo.attached?
+    return unless primary_photo.attached? && primary_photo.attachment.new_record?
 
     blob = primary_photo.blob
     unsafe_upload = false
 
     unless PRIMARY_PHOTO_CONTENT_TYPES.include?(blob.content_type.to_s)
       errors.add(:primary_photo, PRIMARY_PHOTO_CONTENT_TYPE_ERROR)
+      unsafe_upload = true
+    end
+
+    unless AttachmentUpload.extension_matches_content_type?(blob, blob.content_type)
+      errors.add(:primary_photo, PRIMARY_PHOTO_EXTENSION_ERROR)
       unsafe_upload = true
     end
 
@@ -159,50 +166,6 @@ class Asset < ApplicationRecord
 
     primary_photo.purge if unsafe_upload
   end
-
-  def self.primary_photo_upload_size(upload)
-    return upload.size if upload.respond_to?(:size)
-    return upload.tempfile.size if upload.respond_to?(:tempfile) && upload.tempfile
-
-    0
-  end
-  private_class_method :primary_photo_upload_size
-
-  def self.primary_photo_upload_content_type(upload)
-    io = primary_photo_upload_io(upload)
-
-    return Marcel::MimeType.for(name: primary_photo_upload_filename(upload), declared_type: upload.content_type) unless io
-
-    current_position = io.pos if io.respond_to?(:pos)
-    io.rewind if io.respond_to?(:rewind)
-
-    Marcel::MimeType.for(
-      io,
-      name: primary_photo_upload_filename(upload),
-      declared_type: upload.content_type
-    )
-  ensure
-    if io && current_position && io.respond_to?(:seek)
-      io.seek(current_position)
-    elsif io&.respond_to?(:rewind)
-      io.rewind
-    end
-  end
-  private_class_method :primary_photo_upload_content_type
-
-  def self.primary_photo_upload_io(upload)
-    return upload.tempfile if upload.respond_to?(:tempfile) && upload.tempfile
-
-    upload if upload.respond_to?(:read)
-  end
-  private_class_method :primary_photo_upload_io
-
-  def self.primary_photo_upload_filename(upload)
-    return upload.original_filename if upload.respond_to?(:original_filename)
-
-    upload.path if upload.respond_to?(:path)
-  end
-  private_class_method :primary_photo_upload_filename
 
   def normalize_text_fields
     %i[name make model marina slip registration_number notes].each do |attribute|

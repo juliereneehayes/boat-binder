@@ -12,6 +12,14 @@ and other non-upload values instead of treating possession of an Active Storage 
 permission to attach it. Existing blob, attachment, and object-storage records require no migration
 or copy.
 
+Before attaching, the application inspects file contents with Marcel and requires each filename
+extension to match the detected MIME type. Documents accept PDF, JPEG, PNG, and WEBP files up to
+25 MB. Vessel primary photos accept JPEG, PNG, and WEBP files up to 10 MB. Each service-visit photo
+has the same 10 MB limit; one submission may contain at most 10 photos totaling at most 50 MB. The
+entire submitted service-visit photo set is checked before any new photo is attached, so one invalid
+file rejects all new photos and leaves existing photos unchanged. These controls do not include
+malware scanning or quarantine.
+
 `Storage::PurgeUnattachedBlobsJob` runs daily through the production Solid Queue recurring schedule.
 It purges only blobs that are still unattached and were created more than 24 hours earlier. The job
 rechecks attachment state while locking each candidate, logs the blob database ID and exception on

@@ -95,4 +95,19 @@ class AssetTest < ActiveSupport::TestCase
 
     assert_equal [ first, second ].sort_by(&:id), account.assets.vessels.to_a.sort_by(&:id)
   end
+
+  test "metadata edits preserve a legacy primary photo with a mismatched extension" do
+    vessel = create_vessel
+    blob = ActiveStorage::Blob.create_and_upload!(
+      io: file_fixture("sample.jpg").open,
+      filename: "legacy.bin",
+      content_type: "image/jpeg",
+      identify: false
+    )
+    ActiveStorage::Attachment.create!(name: "primary_photo", record: vessel, blob:)
+
+    vessel.update!(marina: "Updated Marina")
+
+    assert_equal blob.id, vessel.reload.primary_photo.blob.id
+  end
 end

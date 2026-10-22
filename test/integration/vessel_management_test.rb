@@ -122,20 +122,23 @@ class VesselManagementTest < ActionDispatch::IntegrationTest
   end
 
   test "internal users upload valid vessel primary photos" do
-    %w[captain admin].each do |role|
+    {
+      "captain" => [ "sample.jpg", "image/jpeg" ],
+      "admin" => [ "sample.webp", "image/webp" ]
+    }.each do |role, (filename, content_type)|
       sign_in_as create_user(email: "#{role}-photo@example.test", role: role)
       vessel = create_vessel(name: "Photo #{role.titleize}")
 
       patch vessel_path(vessel), params: {
         asset: {
-          primary_photo: fixture_file_upload("sample.jpg", "image/jpeg")
+          primary_photo: fixture_file_upload(filename, content_type)
         }
       }
 
       assert_redirected_to vessel_path(vessel)
       vessel.reload
       assert vessel.primary_photo.attached?
-      assert_equal "image/jpeg", vessel.primary_photo.blob.content_type
+      assert_equal content_type, vessel.primary_photo.blob.content_type
     end
   end
 
@@ -297,6 +300,29 @@ class VesselManagementTest < ActionDispatch::IntegrationTest
     assert service_visit.reload.photos.attached?
     assert_select "img[alt=?]", "#{vessel.name} primary photo"
     assert_includes response.body, "Primary photo must be a JPEG, PNG, or WEBP image"
+  end
+
+  test "primary photo replacement rejects an extension that does not match detected content" do
+    sign_in_as
+    vessel = create_vessel
+    vessel.primary_photo.attach(fixture_file_upload("sample.jpg", "image/jpeg"))
+    original_blob_id = vessel.primary_photo.blob.id
+    mismatched_upload = Rack::Test::UploadedFile.new(
+      file_fixture("sample.png"),
+      "image/png",
+      true,
+      original_filename: "misleading.jpg"
+    )
+
+    assert_no_difference -> { ActiveStorage::Blob.count } do
+      assert_no_difference -> { ActiveStorage::Attachment.count } do
+        patch vessel_path(vessel), params: { asset: { primary_photo: mismatched_upload } }
+      end
+    end
+
+    assert_response :unprocessable_entity
+    assert_includes response.body, "Primary photo extension does not match the uploaded file type"
+    assert_equal original_blob_id, vessel.reload.primary_photo.blob.id
   end
 
   test "oversized vessel primary photo is rejected" do
