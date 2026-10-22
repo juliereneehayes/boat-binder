@@ -29,9 +29,9 @@ class ServiceVisit < ApplicationRecord
   belongs_to :performed_by_user, class_name: "User"
   belongs_to :follow_up_completed_by_user, class_name: "User", optional: true
   delegate :account, :account_id, to: :asset
-  has_many :service_visit_engine_readings, dependent: :destroy
-  has_many :service_visit_inspection_checks, dependent: :destroy
-  has_many :service_visit_battery_checks, dependent: :destroy
+  has_many :service_visit_engine_readings, dependent: :destroy, autosave: true
+  has_many :service_visit_inspection_checks, dependent: :destroy, autosave: true
+  has_many :service_visit_battery_checks, dependent: :destroy, autosave: true
   has_many :follow_up_events, -> { order(:created_at, :id) },
     class_name: "ServiceVisitFollowUpEvent", dependent: :destroy, inverse_of: :service_visit
   has_many_attached :photos
