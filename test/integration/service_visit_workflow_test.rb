@@ -184,8 +184,17 @@ class ServiceVisitWorkflowTest < ActionDispatch::IntegrationTest
     assert_equal 2, visit.service_visit_engine_readings.count
     assert_equal 9, visit.service_visit_inspection_checks.count
     assert_equal 1, visit.service_visit_battery_checks.count
-    assert_equal "Hull clean.", visit.service_visit_inspection_checks.find_by!(label: "Hull").notes
-    assert_equal 12.72.to_d, visit.service_visit_battery_checks.first.voltage
+    assert_equal 124.5.to_d, visit.service_visit_engine_readings.find_by!(asset_engine: port_engine).hours
+    assert_equal 125.0.to_d, visit.service_visit_engine_readings.find_by!(asset_engine: starboard_engine).hours
+    hull_check = visit.service_visit_inspection_checks.find_by!(label: "Hull")
+    shore_power_check = visit.service_visit_inspection_checks.find_by!(label: "Shore power")
+    assert hull_check.checked?
+    assert_equal "Hull clean.", hull_check.notes
+    assert_not shore_power_check.checked?
+    battery_check = visit.service_visit_battery_checks.first
+    assert battery_check.checked?
+    assert_equal 12.72.to_d, battery_check.voltage
+    assert_equal "Charging normally.", battery_check.notes
 
     get vessel_service_visit_path(vessel, visit)
     assert_response :success
@@ -220,6 +229,129 @@ class ServiceVisitWorkflowTest < ActionDispatch::IntegrationTest
     assert_not_includes mail.html_part.body.decoded, "Hull clean."
     assert_not_includes mail.html_part.body.decoded, "Port Start Battery"
     assert_not_includes mail.html_part.body.decoded, "12.72 V"
+  end
+
+  test "captain updates existing structured visit data and preserves photos" do
+    captain = create_user(email: "structured-update-captain@example.test")
+    sign_in_as captain
+    vessel = create_vessel
+    battery = create_battery(asset: vessel, name: "House Battery")
+    vessel.ensure_default_engines!
+    port_engine = vessel.asset_engines.find_by!(name: "Port")
+    visit = vessel.service_visits.new(
+      performed_by_user: captain,
+      visit_date: Date.current,
+      location: "Original marina"
+    )
+    visit.build_workflow_defaults
+    visit.save!
+    visit.photos.attach(fixture_file_upload("sample.jpg", "image/jpeg"))
+    original_blob_ids = visit.photos.blobs.ids
+    hull_check = visit.service_visit_inspection_checks.find_by!(label: "Hull")
+    bilge_check = visit.service_visit_inspection_checks.find_by!(label: "Bilge")
+    hull_check.update!(checked: true, notes: "Original hull note")
+    bilge_check.update!(checked: false)
+    visit.service_visit_engine_readings.find_by!(asset_engine: port_engine).update!(hours: 100.0)
+    visit.service_visit_battery_checks.find_by!(asset_battery: battery).update!(
+      checked: false,
+      voltage: 12.4,
+      notes: "Original battery note"
+    )
+
+    inspection_params = visit.ordered_inspection_checks.each_with_index.to_h do |check, index|
+      values = case check.label
+      when "Hull"
+        { checked: "0", notes: "Updated hull note" }
+      when "Bilge"
+        { checked: "1", notes: "Updated bilge note" }
+      else
+        { checked: check.checked? ? "1" : "0", notes: check.notes }
+      end
+      [ index.to_s, values ]
+    end
+
+    patch vessel_service_visit_path(vessel, visit), params: {
+      service_visit: {
+        visit_date: visit.visit_date,
+        location: "Updated marina",
+        engine_readings: {
+          port_engine.id.to_s => { hours: "321.5" }
+        },
+        inspection_checks: inspection_params,
+        battery_checks: {
+          battery.id.to_s => {
+            checked: "1",
+            voltage: "13.10",
+            notes: "Updated battery note"
+          }
+        }
+      }
+    }
+
+    assert_redirected_to vessel_service_visit_path(vessel, visit)
+    visit.reload
+    assert_equal "Updated marina", visit.location
+    assert_not visit.service_visit_inspection_checks.find_by!(label: "Hull").checked?
+    assert_equal "Updated hull note", visit.service_visit_inspection_checks.find_by!(label: "Hull").notes
+    assert visit.service_visit_inspection_checks.find_by!(label: "Bilge").checked?
+    assert_equal "Updated bilge note", visit.service_visit_inspection_checks.find_by!(label: "Bilge").notes
+    assert_equal 321.5.to_d, visit.service_visit_engine_readings.find_by!(asset_engine: port_engine).hours
+    battery_check = visit.service_visit_battery_checks.find_by!(asset_battery: battery)
+    assert battery_check.checked?
+    assert_equal 13.1.to_d, battery_check.voltage
+    assert_equal "Updated battery note", battery_check.notes
+    assert_equal original_blob_ids, visit.photos.blobs.ids
+  end
+
+  test "invalid structured visit update rolls back parent children and new photos" do
+    captain = create_user(email: "structured-rollback-captain@example.test")
+    sign_in_as captain
+    vessel = create_vessel
+    battery = create_battery(asset: vessel, name: "House Battery")
+    visit = vessel.service_visits.new(
+      performed_by_user: captain,
+      visit_date: Date.current,
+      location: "Original marina"
+    )
+    visit.build_workflow_defaults
+    visit.save!
+    visit.photos.attach(fixture_file_upload("sample.jpg", "image/jpeg"))
+    original_blob_ids = visit.photos.blobs.ids
+    hull_check = visit.service_visit_inspection_checks.find_by!(label: "Hull")
+    engine_reading = visit.service_visit_engine_readings.first
+    battery_check = visit.service_visit_battery_checks.find_by!(asset_battery: battery)
+
+    assert_no_difference -> { ActiveStorage::Blob.count } do
+      assert_no_difference -> { ActiveStorage::Attachment.count } do
+        patch vessel_service_visit_path(vessel, visit), params: {
+          service_visit: {
+            visit_date: visit.visit_date,
+            location: "Must roll back",
+            photos: [ fixture_file_upload("sample.png", "image/png") ],
+            engine_readings: {
+              engine_reading.asset_engine_id.to_s => { hours: "777.7" }
+            },
+            inspection_checks: {
+              "0" => { checked: "1", notes: "x" * 2_001 }
+            },
+            battery_checks: {
+              battery.id.to_s => { checked: "1", voltage: "13.25", notes: "Must roll back" }
+            }
+          }
+        }
+      end
+    end
+
+    assert_response :unprocessable_entity
+    visit.reload
+    assert_equal "Original marina", visit.location
+    assert_not hull_check.reload.checked?
+    assert_nil hull_check.notes
+    assert_nil engine_reading.reload.hours
+    assert_not battery_check.reload.checked?
+    assert_nil battery_check.voltage
+    assert_nil battery_check.notes
+    assert_equal original_blob_ids, visit.photos.blobs.ids
   end
 
   test "captain saves service visit with valid image photos" do
