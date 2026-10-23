@@ -198,6 +198,8 @@ class DocumentsController < ApplicationController
   def attach_document_file!(document, upload)
     document.file.attach(upload)
     raise DocumentFileAttachmentError, "file was not attached" unless document.file.attached?
+
+    AttachmentScan.register_pending!(document.file.blob)
   rescue DocumentFileAttachmentError
     raise
   rescue StandardError => error

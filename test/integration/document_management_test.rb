@@ -7,6 +7,7 @@ class DocumentManagementTest < ActionDispatch::IntegrationTest
     vessel = create_vessel
     document = vessel.documents.create!(account: vessel.account, title: "Turbo document", document_type: "other")
     document.file.attach(fixture_file_upload("sample.pdf", "application/pdf"))
+    trust_attachment(document.file)
 
     [ document_path(document), documents_path, vessel_path(vessel) ].each do |path|
       get path
@@ -22,6 +23,7 @@ class DocumentManagementTest < ActionDispatch::IntegrationTest
     vessel = create_vessel
     document = vessel.documents.create!(account: vessel.account, title: "Insurance", document_type: "insurance")
     document.file.attach(io: StringIO.new("policy"), filename: "policy.pdf", content_type: "application/pdf")
+    trust_attachment(document.file)
 
     get vessel_path(vessel)
     assert_response :success
@@ -47,7 +49,10 @@ class DocumentManagementTest < ActionDispatch::IntegrationTest
         document_type: "other",
         created_at: (index + 1).hours.ago
       )
-      document.file.attach(fixture_file_upload("sample.pdf", "application/pdf")) if index.even?
+      if index.even?
+        document.file.attach(fixture_file_upload("sample.pdf", "application/pdf"))
+        trust_attachment(document.file)
+      end
     end
 
     get vessel_path(vessel)
@@ -68,6 +73,7 @@ class DocumentManagementTest < ActionDispatch::IntegrationTest
     document = vessel.documents.create!(account: account, title: "Metadata only", document_type: "insurance")
     attached_document = vessel.documents.create!(account: account, title: "Attached file", document_type: "registration")
     attached_document.file.attach(fixture_file_upload("sample.pdf", "application/pdf"))
+    trust_attachment(attached_document.file)
     editor_owner = create_user(email: "document-index-editor@example.test", role: "owner")
     qualify_self_managed_subscription(account)
     create_account_membership(user: editor_owner, account: account, access_level: "editor")
@@ -148,6 +154,12 @@ class DocumentManagementTest < ActionDispatch::IntegrationTest
     assert_redirected_to document_path(document)
     assert document.reload.file.attached?
     assert_equal "application/pdf", document.file.blob.content_type
+    scan = AttachmentScan.find_by!(active_storage_blob: document.file.blob)
+    assert_equal "pending", scan.status
+    refute scan.available?
+    follow_redirect!
+    assert_includes response.body, "Processing"
+    refute_match(/malware|security scan|GuardDuty/i, response.body)
   end
 
   test "owner editor can replace an existing file and metadata updates preserve attachment" do
@@ -188,6 +200,8 @@ class DocumentManagementTest < ActionDispatch::IntegrationTest
     assert document.file.attached?
     assert_not_equal original_blob_id, document.file.blob.id
     assert_equal "image/png", document.file.blob.content_type
+    replacement_scan = AttachmentScan.find_by!(active_storage_blob: document.file.blob)
+    assert_equal "pending", replacement_scan.status
   end
 
   test "read only owner can view but cannot edit replace or delete documents" do

@@ -139,6 +139,9 @@ class VesselManagementTest < ActionDispatch::IntegrationTest
       vessel.reload
       assert vessel.primary_photo.attached?
       assert_equal content_type, vessel.primary_photo.blob.content_type
+      scan = AttachmentScan.find_by!(active_storage_blob: vessel.primary_photo.blob)
+      assert_equal "pending", scan.status
+      refute scan.available?
     end
   end
 
@@ -276,6 +279,7 @@ class VesselManagementTest < ActionDispatch::IntegrationTest
     sign_in_as user
     vessel = create_vessel
     vessel.primary_photo.attach(fixture_file_upload("sample.jpg", "image/jpeg"))
+    trust_attachment(vessel.primary_photo)
     existing_blob_id = vessel.primary_photo.blob.id
     document = vessel.documents.create!(account: vessel.account, title: "Insurance", document_type: "insurance")
     document.file.attach(fixture_file_upload("sample.pdf", "application/pdf"))
@@ -467,6 +471,7 @@ class VesselManagementTest < ActionDispatch::IntegrationTest
     sign_in_as
     vessel = create_vessel
     vessel.primary_photo.attach(fixture_file_upload("sample.jpg", "image/jpeg"))
+    trust_attachment(vessel.primary_photo)
 
     get vessel_path(vessel)
 
@@ -483,6 +488,7 @@ class VesselManagementTest < ActionDispatch::IntegrationTest
     sign_in_as
     vessel = create_vessel
     vessel.primary_photo.attach(fixture_file_upload("sample.jpg", "image/jpeg"))
+    trust_attachment(vessel.primary_photo)
     initial_blob_id = vessel.primary_photo.blob.id
 
     get vessel_path(vessel)
@@ -499,6 +505,9 @@ class VesselManagementTest < ActionDispatch::IntegrationTest
       asset: { primary_photo: fixture_file_upload("sample.png", "image/png") }
     }
     assert_redirected_to vessel_path(vessel)
+    replacement_scan = AttachmentScan.find_by!(active_storage_blob: vessel.reload.primary_photo.blob)
+    assert_equal "pending", replacement_scan.status
+    replacement_scan.mark_clean!
     follow_redirect!
 
     replacement_blob_id = vessel.reload.primary_photo.blob.id
@@ -591,6 +600,8 @@ class VesselManagementTest < ActionDispatch::IntegrationTest
     other_vessel = create_vessel(account: other_account, name: "Restricted Vessel")
     owner_vessel.primary_photo.attach(fixture_file_upload("sample.jpg", "image/jpeg"))
     other_vessel.primary_photo.attach(fixture_file_upload("sample.png", "image/png"))
+    trust_attachment(owner_vessel.primary_photo)
+    trust_attachment(other_vessel.primary_photo)
     owner = create_user(email: "owner-photo-scope@example.test", role: "owner")
     qualify_self_managed_subscription(owner_account)
     create_account_membership(user: owner, account: owner_account)
