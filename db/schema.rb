@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_04_120000) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_22_150000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -147,6 +147,22 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_04_120000) do
     t.check_constraint "asset_type::text = ANY (ARRAY['vessel'::character varying, 'home'::character varying, 'pet'::character varying, 'audit'::character varying, 'other'::character varying]::text[])", name: "chk_assets_asset_type"
     t.check_constraint "length IS NULL OR length > 0::numeric", name: "chk_assets_length_positive"
     t.check_constraint "year IS NULL OR year > 1900 AND year <= 2100", name: "chk_assets_year_reasonable"
+  end
+
+  create_table "attachment_scans", force: :cascade do |t|
+    t.bigint "active_storage_blob_id", null: false
+    t.integer "check_count", default: 0, null: false
+    t.datetime "completed_at"
+    t.datetime "created_at", null: false
+    t.datetime "last_checked_at"
+    t.string "provider", default: "guardduty", null: false
+    t.string "status", default: "pending", null: false
+    t.string "status_code"
+    t.datetime "updated_at", null: false
+    t.index ["active_storage_blob_id"], name: "index_attachment_scans_on_active_storage_blob_id", unique: true
+    t.check_constraint "check_count >= 0", name: "attachment_scans_nonnegative_check_count"
+    t.check_constraint "provider::text = 'guardduty'::text", name: "attachment_scans_provider"
+    t.check_constraint "status::text = ANY (ARRAY['pending'::character varying, 'clean'::character varying, 'rejected'::character varying, 'failed'::character varying, 'trusted_existing'::character varying]::text[])", name: "attachment_scans_status"
   end
 
   create_table "billing_checkout_attempts", force: :cascade do |t|
@@ -582,6 +598,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_04_120000) do
   add_foreign_key "asset_batteries", "assets"
   add_foreign_key "asset_engines", "assets"
   add_foreign_key "assets", "accounts"
+  add_foreign_key "attachment_scans", "active_storage_blobs", on_delete: :cascade
   add_foreign_key "billing_checkout_attempts", "accounts"
   add_foreign_key "billing_trial_start_confirmations", "accounts", on_delete: :cascade
   add_foreign_key "billing_trial_start_confirmations", "subscriptions", on_delete: :cascade

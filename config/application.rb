@@ -26,6 +26,10 @@ module BoatBinder
     # Customer attachments are delivered only through Boat Binder controllers,
     # where the owning record and Account are authorized on every request.
     config.active_storage.draw_routes = false
+    # Built-in analyzers and previewers read object contents before application
+    # scan state is available. Boat Binder does not use their metadata or output.
+    config.active_storage.analyzers = []
+    config.active_storage.previewers = []
     # config.eager_load_paths << Rails.root.join("extras")
   end
 end

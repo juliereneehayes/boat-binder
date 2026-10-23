@@ -342,16 +342,22 @@
                 <p class="font-bold"><%= link_to document.title, document_path(document), class: "transition hover:text-cyan-700" %></p>
                 <p class="mt-1 text-sm capitalize text-slate-600"><%= document.document_type.humanize %></p>
               </div>
-              <%= status_chip(document.file.attached? ? "Filed" : "Missing", tone: document.file.attached? ? :success : :warning) %>
+              <% if document.file.attached? %>
+                <%= status_chip(attachment_status_label(document.file, available_label: "Filed"), tone: attachment_status_tone(document.file)) %>
+              <% else %>
+                <%= status_chip("Missing", tone: :warning) %>
+              <% end %>
             </div>
             <div class="mt-4 flex flex-wrap gap-2">
               <%= link_to "View", document_path(document), class: secondary_button_class("min-h-10") %>
               <% if can_manage_vessel %>
                 <%= link_to document.file.attached? ? "Edit" : "Edit / Add file", edit_document_path(document), class: secondary_button_class("min-h-10") %>
               <% end %>
-              <% if document.file.attached? %>
+              <% if document.file.attached? && attachment_available?(document.file) %>
                 <%= link_to "Open file", document_file_path(document), class: primary_button_class("min-h-10"), data: { turbo: false } %>
                 <%= link_to "Download", document_file_path(document, disposition: "attachment"), class: secondary_button_class("min-h-10"), data: { turbo: false } %>
+              <% elsif document.file.attached? %>
+                <p class="w-full text-sm font-semibold text-slate-700"><%= attachment_scan_message(document.file) %></p>
               <% else %>
                 <span class="inline-flex min-h-10 items-center rounded-md border border-dashed border-slate-300 px-4 py-2 text-sm font-bold text-slate-500">No file attached</span>
               <% end %>

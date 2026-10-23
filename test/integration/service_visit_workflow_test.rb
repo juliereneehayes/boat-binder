@@ -375,6 +375,9 @@ class ServiceVisitWorkflowTest < ActionDispatch::IntegrationTest
     assert_redirected_to vessel_service_visit_path(vessel, visit)
     assert_equal 2, visit.photos.count
     assert_equal [ "image/jpeg", "image/webp" ], visit.photos.map { |photo| photo.blob.content_type }
+    scans = AttachmentScan.where(active_storage_blob_id: visit.photos.blobs.ids)
+    assert_equal 2, scans.count
+    assert_equal [ "pending" ], scans.distinct.pluck(:status)
   end
 
   test "service visit photos reject non image uploads" do
@@ -466,14 +469,16 @@ class ServiceVisitWorkflowTest < ActionDispatch::IntegrationTest
     visit.photos.attach(fixture_file_upload("sample.jpg", "image/jpeg"))
     original_blob_ids = visit.photos.blobs.ids
 
-    with_sized_photo_uploads([ ServiceVisit::PHOTO_MAX_SIZE + 1 ]) do |oversized_uploads|
-      uploads = [ fixture_file_upload("sample.png", "image/png"), *oversized_uploads ]
+    assert_no_difference -> { AttachmentScan.count } do
+      with_sized_photo_uploads([ ServiceVisit::PHOTO_MAX_SIZE + 1 ]) do |oversized_uploads|
+        uploads = [ fixture_file_upload("sample.png", "image/png"), *oversized_uploads ]
 
-      assert_no_difference -> { ActiveStorage::Blob.count } do
-        assert_no_difference -> { ActiveStorage::Attachment.count } do
-          patch vessel_service_visit_path(vessel, visit), params: {
-            service_visit: { visit_date: visit.visit_date, photos: uploads }
-          }
+        assert_no_difference -> { ActiveStorage::Blob.count } do
+          assert_no_difference -> { ActiveStorage::Attachment.count } do
+            patch vessel_service_visit_path(vessel, visit), params: {
+              service_visit: { visit_date: visit.visit_date, photos: uploads }
+            }
+          end
         end
       end
     end
