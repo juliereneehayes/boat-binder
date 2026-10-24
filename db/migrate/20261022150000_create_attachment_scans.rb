@@ -28,7 +28,8 @@ class CreateAttachmentScans < ActiveRecord::Migration[8.1]
   end
 
   def down
-    drop_table :attachment_scans
+    raise ActiveRecord::IrreversibleMigration,
+      "attachment scan state is security-sensitive and must not be dropped by rollback"
   end
 
   def backfill_trusted_existing_attachments

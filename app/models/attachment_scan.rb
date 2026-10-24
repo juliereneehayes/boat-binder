@@ -96,7 +96,8 @@ class AttachmentScan < ApplicationRecord
   def enqueue_pending_scan
     return unless status == "pending"
 
-    Storage::AttachmentScanJob.perform_later(id)
+    enqueued_job = Storage::AttachmentScanJob.perform_later(id)
+    raise ActiveJob::EnqueueError, "attachment scan could not be enqueued" unless enqueued_job
   rescue StandardError => error
     mark_failed!(status_code: "ENQUEUE_FAILED")
     Rails.logger.error(

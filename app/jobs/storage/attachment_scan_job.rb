@@ -54,6 +54,7 @@ module Storage
 
       if now < scan.created_at + POLL_WINDOW
         enqueue_next_poll!(scan)
+        log_provider_retry(scan, error) if error
         return
       end
 
@@ -62,9 +63,22 @@ module Storage
     end
 
     def enqueue_next_poll!(scan)
-      self.class.set(wait: POLL_INTERVAL).perform_later(scan.id)
+      enqueued_job = self.class.set(wait: POLL_INTERVAL).perform_later(scan.id)
+      return enqueued_job if enqueued_job
+
+      fail_terminal!(scan, "ENQUEUE_FAILED", ActiveJob::EnqueueError.new)
+    rescue TerminalScanError
+      raise
     rescue StandardError => error
       fail_terminal!(scan, "ENQUEUE_FAILED", error)
+    end
+
+    def log_provider_retry(scan, error)
+      Rails.logger.warn(
+        "Attachment scan provider retry scan_id=#{scan.id} " \
+        "blob_id=#{scan.active_storage_blob_id} exception_class=#{error.class.name} " \
+        "next_poll_scheduled=true"
+      )
     end
 
     def fail_terminal!(scan, status_code, error = nil)

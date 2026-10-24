@@ -27,6 +27,13 @@ Binder creates one `AttachmentScan` row for the Active Storage blob in `pending`
 Queue job reads the GuardDuty-managed `GuardDutyMalwareScanStatus` object tag for up to 15 minutes.
 The application identity reads tags but never writes or replaces that managed tag.
 
+Local development still creates ordinary `AttachmentScan` rows and runs the same scan job, but the
+provider boundary returns a simulated `NO_THREATS_FOUND` result when and only when
+`Rails.env.development?` is true. This keeps Disk-backed development uploads usable while exercising
+the real quarantine state transition. The simulation provides no malware protection. Test, staging,
+and production do not use this shortcut; unsupported non-S3 storage in those environments fails
+closed and no environment variable or storage configuration can enable the simulation.
+
 The provider mapping is intentionally closed and exact:
 
 - `NO_THREATS_FOUND` becomes `clean`;
@@ -52,6 +59,16 @@ The rollout migration creates exactly one `trusted_existing` row for each blob a
 migration runs. Those attachments remain available without rescan or bulk Active Storage metadata
 updates. Unattached blobs are not grandfathered and continue to be handled by the existing stale
 blob cleanup.
+
+The production recurring schedule runs `Storage::RecoverStaleAttachmentScansJob` every five minutes.
+It finds only `pending` scans created more than the 15-minute polling window ago and uses the same
+row-locked, pending-only transition to mark them `failed` with `SCAN_TIMEOUT`. This recovers scans
+whose scheduled poll was lost without reading object contents or customer metadata. A concurrent
+normal poll or overlapping recovery run cannot overwrite a terminal state, and repeated recovery is
+idempotent. Successful recoveries log only scan/blob database IDs and the safe timeout code, then
+leave an observable failed recurring execution for the existing #113/#229 failed-job monitoring.
+Do not disable Solid Queue recurring tasks in production, including through
+`SOLID_QUEUE_SKIP_RECURRING`.
 
 Scan records contain only the blob database ID, state, provider identifier, check count, timestamps,
 and an allowlisted status/failure code. They do not store object keys, filenames, customer or Account
@@ -97,9 +114,12 @@ before the release migration until the scan-aware web release is serving request
 
 Do not roll back to code that serves attachments without consulting scan state after new uploads
 have been accepted. That would make pending, failed, or rejected objects available. Prefer a forward
-fix. If an emergency rollback is unavoidable, stop attachment uploads and keep the scan-aware
-delivery gate deployed until every post-rollout blob has an operator-verified safe disposition.
-Do not drop `attachment_scans` while scan jobs are queued or while the gate is active.
+fix. The scan migration is intentionally irreversible: normal migration rollback refuses to drop
+`attachment_scans` because it contains authoritative security disposition. During application
+rollback or recovery, keep the scan-state table and the scan-aware delivery gate deployed. Never
+restore attachment access by deleting scan disposition state. If an emergency application rollback
+is unavoidable, stop attachment uploads and keep the gate active until every post-rollout blob has
+an operator-verified safe disposition.
 
 ## Manual staging verification
 
@@ -127,6 +147,10 @@ and never use customer data or production storage for that check.
    confirm no scan rows are created for rejected uploads and existing photos remain intact.
 9. Review failed Solid Queue executions and aggregate scan counts by status. Do not inspect or copy
    serialized job arguments into shared systems.
+
+Also confirm the recurring stale-scan recovery task is loaded in staging and production. A test scan
+left `pending` beyond the polling window must become `failed` with `SCAN_TIMEOUT`, remain unavailable,
+and create only the safe recovery log and failed-job visibility described above.
 
 `Storage::PurgeUnattachedBlobsJob` runs daily through the production Solid Queue recurring schedule.
 It purges only blobs that are still unattached and were created more than 24 hours earlier. The job

@@ -95,6 +95,27 @@ class AttachmentScanTest < ActiveSupport::TestCase
     Storage::AttachmentScanJob.define_singleton_method(:perform_later, original) if original
   end
 
+  test "a false initial enqueue result fails closed" do
+    original = Storage::AttachmentScanJob.method(:perform_later)
+    Storage::AttachmentScanJob.define_singleton_method(:perform_later) do |*_arguments|
+      false
+    end
+
+    logs = capture_logs do
+      @scan = AttachmentScan.register_pending!(@blob)
+    end
+
+    assert_equal "failed", @scan.reload.status
+    assert_equal "ENQUEUE_FAILED", @scan.status_code
+    assert_includes logs, "scan_id=#{@scan.id}"
+    assert_includes logs, "blob_id=#{@blob.id}"
+    assert_includes logs, "exception_class=ActiveJob::EnqueueError"
+    assert_not_includes logs, @blob.filename.to_s
+    assert_not_includes logs, @blob.key
+  ensure
+    Storage::AttachmentScanJob.define_singleton_method(:perform_later, original) if original
+  end
+
   private
 
   def build_scan(status:)
