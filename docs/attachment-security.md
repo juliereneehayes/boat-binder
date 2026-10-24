@@ -28,11 +28,12 @@ Queue job reads the GuardDuty-managed `GuardDutyMalwareScanStatus` object tag fo
 The application identity reads tags but never writes or replaces that managed tag.
 
 Local development still creates ordinary `AttachmentScan` rows and runs the same scan job, but the
-provider boundary returns a simulated `NO_THREATS_FOUND` result when and only when
-`Rails.env.development?` is true. This keeps Disk-backed development uploads usable while exercising
-the real quarantine state transition. The simulation provides no malware protection. Test, staging,
-and production do not use this shortcut; unsupported non-S3 storage in those environments fails
-closed and no environment variable or storage configuration can enable the simulation.
+provider boundary returns a simulated `NO_THREATS_FOUND` result only when
+`Rails.env.development?` is true and the blob uses Active Storage Disk storage. This keeps ordinary
+Disk-backed development uploads usable while exercising the real quarantine state transition. The
+simulation provides no malware protection. Development configured for S3 reads the real GuardDuty
+tag. Test, staging, and production do not use this shortcut; unsupported non-S3 storage in those
+environments fails closed and no environment variable or storage configuration can enable it.
 
 The provider mapping is intentionally closed and exact:
 
@@ -58,15 +59,20 @@ workflow.
 The rollout migration creates exactly one `trusted_existing` row for each blob attached when the
 migration runs. Those attachments remain available without rescan or bulk Active Storage metadata
 updates. Unattached blobs are not grandfathered and continue to be handled by the existing stale
-blob cleanup.
+blob cleanup. `trusted_existing` is the approved compatibility/rollout disposition for an attachment
+that existed before GuardDuty enforcement and was intentionally grandfathered without malware
+scanning. It is not evidence that GuardDuty scanned the file or that the file was proven clean.
 
 The production recurring schedule runs `Storage::RecoverStaleAttachmentScansJob` every five minutes.
-It finds only `pending` scans created more than the 15-minute polling window ago and uses the same
-row-locked, pending-only transition to mark them `failed` with `SCAN_TIMEOUT`. This recovers scans
-whose scheduled poll was lost without reading object contents or customer metadata. A concurrent
-normal poll or overlapping recovery run cannot overwrite a terminal state, and repeated recovery is
-idempotent. Successful recoveries log only scan/blob database IDs and the safe timeout code, then
-leave an observable failed recurring execution for the existing #113/#229 failed-job monitoring.
+It finds only `pending` scans created more than the 15-minute polling window ago and invokes the
+existing authoritative scan job once for each candidate. The final reconciliation reads the current
+GuardDuty tag: clean and threat results retain their normal mapping, provider terminal results fail
+closed, and a still-absent tag becomes `failed` with `SCAN_TIMEOUT`. This recovers scans whose
+scheduled poll was lost without duplicating provider mapping or reading object contents. A concurrent
+normal poll or overlapping recovery run cannot overwrite a terminal state, repeated recovery is
+idempotent, and the final check cannot schedule another poll after the deadline. Expected terminal
+failures are processed across the batch before the recurring execution raises one safe aggregate
+failure for the existing #113/#229 failed-job monitoring.
 Do not disable Solid Queue recurring tasks in production, including through
 `SOLID_QUEUE_SKIP_RECURRING`.
 
@@ -101,10 +107,12 @@ before the release migration until the scan-aware web release is serving request
 3. Deploy the migration and application code together. The release migration backfills attached
    blobs as `trusted_existing`; it does not enqueue rescans.
 4. Before resuming uploads, compare attached blob database IDs with `attachment_scans` and reconcile
-   any missing row created at the deploy boundary as `trusted_existing`. Use only IDs and timestamps;
-   do not inspect file contents, names, object keys, or customer metadata. A missing row created after
-   scan-aware upload registration is active is an operational failure and must not be trusted by a
-   blanket backfill.
+   any attached blob missing a scan row after the migration/backfill boundary by registering it as
+   `pending` and enqueueing the normal scan job. Let the GuardDuty tag decide its disposition; do not
+   guess whether it deserves trust or use a blanket `trusted_existing` repair. Use only database IDs
+   and timestamps during reconciliation, and do not inspect file contents, names, object keys, or
+   customer metadata. Genuinely stale unattached blobs remain outside this reconciliation and are
+   left to the existing cleanup job. Missing scan state remains unavailable throughout.
 5. Verify the migration and reconciliation completed before allowing the new web release to accept
    uploads.
 6. Upload one new benign fixture and complete the manual checks below.
@@ -149,8 +157,10 @@ and never use customer data or production storage for that check.
    serialized job arguments into shared systems.
 
 Also confirm the recurring stale-scan recovery task is loaded in staging and production. A test scan
-left `pending` beyond the polling window must become `failed` with `SCAN_TIMEOUT`, remain unavailable,
-and create only the safe recovery log and failed-job visibility described above.
+left `pending` beyond the polling window must receive one final GuardDuty reconciliation. Confirm a
+current clean tag becomes `clean`, a threat tag becomes `rejected`, and a still-absent tag becomes
+`failed` with `SCAN_TIMEOUT`; each state must retain its normal availability and safe operational
+visibility.
 
 `Storage::PurgeUnattachedBlobsJob` runs daily through the production Solid Queue recurring schedule.
 It purges only blobs that are still unattached and were created more than 24 hours earlier. The job

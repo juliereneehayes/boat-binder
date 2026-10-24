@@ -5,21 +5,17 @@ module Storage
     TerminalRecoveryError = Class.new(StandardError)
 
     def perform(now: Time.current)
-      recovered_count = 0
+      terminal_failure = false
 
       stale_pending_scans(now:).find_each do |scan|
-        next unless scan.mark_failed!(status_code: "SCAN_TIMEOUT", completed_at: now)
-
-        recovered_count += 1
-        Rails.logger.error(
-          "Stale attachment scan recovered scan_id=#{scan.id} " \
-          "blob_id=#{scan.active_storage_blob_id} status_code=SCAN_TIMEOUT"
-        )
+        AttachmentScanJob.perform_now(scan.id, now:)
+      rescue AttachmentScanJob::TerminalScanError
+        terminal_failure = true
       end
 
-      return if recovered_count.zero?
+      return unless terminal_failure
 
-      raise TerminalRecoveryError, "stale attachment scans failed with SCAN_TIMEOUT"
+      raise TerminalRecoveryError, "stale attachment scan reconciliation failed"
     end
 
     private

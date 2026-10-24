@@ -60,6 +60,24 @@ module Storage
       end
     end
 
+    test "terminal failures have no application retry or discard handler" do
+      assert_empty ApplicationJob.rescue_handlers
+      assert_empty AttachmentScanJob.rescue_handlers
+      error = AttachmentScanJob::TerminalScanError.new
+      assert_nil AttachmentScanJob.new.handler_for_rescue(error)
+
+      with_provider_status("FAILED") do
+        assert_no_enqueued_jobs do
+          assert_raises(AttachmentScanJob::TerminalScanError) do
+            AttachmentScanJob.perform_now(@scan.id)
+          end
+        end
+      end
+
+      assert_equal "failed", @scan.reload.status
+      assert_equal "FAILED", @scan.status_code
+    end
+
     test "absent status stays pending and schedules a bounded poll" do
       logs = capture_logs do
         with_provider_status(nil) do
