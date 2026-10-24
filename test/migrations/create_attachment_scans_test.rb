@@ -2,6 +2,15 @@ require "test_helper"
 require Rails.root.join("db/migrate/20261022150000_create_attachment_scans")
 
 class CreateAttachmentScansTest < ActiveSupport::TestCase
+  test "rollback is explicitly irreversible and preserves scan state" do
+    error = assert_raises(ActiveRecord::IrreversibleMigration) do
+      CreateAttachmentScans.new.down
+    end
+
+    assert_includes error.message, "security-sensitive"
+    assert ActiveRecord::Base.connection.table_exists?(:attachment_scans)
+  end
+
   test "backfill trusts each attached blob once and ignores stale unattached blobs" do
     account = create_account(name: "Scan Backfill Account")
     first_document = Document.create!(account:, title: "First", document_type: "other")
