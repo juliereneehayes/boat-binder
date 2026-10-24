@@ -33,6 +33,8 @@ class AttachmentsController < ApplicationController
     raise ActiveRecord::RecordNotFound unless attachment
 
     blob = attachment.blob
+    raise ActiveRecord::RecordNotFound unless AttachmentScan.available_blob?(blob)
+
     response.headers["Accept-Ranges"] = "bytes"
 
     if request.headers["Range"].present?

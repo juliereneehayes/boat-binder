@@ -102,5 +102,18 @@ module ActiveSupport
       follow_redirect!
       assert_includes response.body, Authorization::ACCESS_DENIED_MESSAGE
     end
+
+    def trust_attachment(attachment)
+      attachment = attachment.attachment if attachment.respond_to?(:attachment)
+      blob = attachment.respond_to?(:blob) ? attachment.blob : attachment
+
+      AttachmentScan.create!(
+        active_storage_blob: blob,
+        status: "trusted_existing",
+        provider: AttachmentScan::PROVIDER,
+        completed_at: Time.current,
+        status_code: "ROLLOUT_BACKFILL"
+      )
+    end
   end
 end
