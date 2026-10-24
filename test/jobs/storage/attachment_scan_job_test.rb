@@ -93,6 +93,52 @@ module Storage
       assert_not_includes logs, "Attachment scan provider retry"
     end
 
+    test "missing status uses the bounded fast polling cadence before one minute polling" do
+      waits = []
+      scheduled_job = Object.new
+      scheduled_job.define_singleton_method(:perform_later) { |*_arguments| true }
+      original_set = AttachmentScanJob.method(:set)
+      AttachmentScanJob.define_singleton_method(:set) do |**options|
+        waits << options.fetch(:wait)
+        scheduled_job
+      end
+
+      with_provider_status(nil) do
+        [ 0.seconds, 5.seconds, 15.seconds, 30.seconds, 1.minute, 2.minutes ].each do |elapsed|
+          AttachmentScanJob.perform_now(@scan.id, now: @scan.created_at + elapsed)
+        end
+      end
+
+      assert_equal [ 5, 10, 15, 30, 60, 60 ], waits.map(&:to_i)
+      assert_equal 6, @scan.reload.check_count
+      assert_equal "pending", @scan.status
+    ensure
+      AttachmentScanJob.define_singleton_method(:set, original_set) if original_set
+    end
+
+    test "the next poll is capped at the existing fifteen minute deadline" do
+      wait = nil
+      scheduled_job = Object.new
+      scheduled_job.define_singleton_method(:perform_later) { |*_arguments| true }
+      original_set = AttachmentScanJob.method(:set)
+      AttachmentScanJob.define_singleton_method(:set) do |**options|
+        wait = options.fetch(:wait)
+        scheduled_job
+      end
+
+      with_provider_status(nil) do
+        AttachmentScanJob.perform_now(
+          @scan.id,
+          now: @scan.created_at + AttachmentScanJob::POLL_WINDOW - 2.seconds
+        )
+      end
+
+      assert_equal 2, wait.to_i
+      assert_equal "pending", @scan.reload.status
+    ensure
+      AttachmentScanJob.define_singleton_method(:set, original_set) if original_set
+    end
+
     test "absent status fails after the polling window and remains observable" do
       logs = capture_logs do
         with_provider_status(nil) do
@@ -170,6 +216,22 @@ module Storage
       assert_equal "failed", @scan.reload.status
       assert_equal "UNSUPPORTED_SERVICE", @scan.status_code
       assert_enqueued_jobs 0
+    end
+
+    test "terminal scans never read the provider or enqueue another poll" do
+      {
+        "clean" => "NO_THREATS_FOUND",
+        "rejected" => "THREATS_FOUND",
+        "failed" => "FAILED",
+        "trusted_existing" => "ROLLOUT_BACKFILL"
+      }.each do |status, status_code|
+        scan = pending_scan
+        scan.update!(status:, status_code:, completed_at: Time.current)
+
+        with_provider_reader(->(_blob) { raise "terminal scan must not read provider state" }) do
+          assert_no_enqueued_jobs { AttachmentScanJob.perform_now(scan.id) }
+        end
+      end
     end
 
     test "failure to enqueue the next poll becomes a terminal observable failure" do

@@ -118,6 +118,16 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
 
     get document_file_path(@document)
     assert_response :not_found
+
+    [
+      document_path(@document),
+      vessel_path(@vessel),
+      vessel_service_visit_path(@vessel, @visit)
+    ].each do |path|
+      get path
+      assert_response :not_found
+      assert_select "[data-controller='attachment-status-refresh']", count: 0
+    end
     get vessel_primary_photo_path(@vessel)
     assert_response :not_found
     get service_visit_photo_path(@vessel, @visit, @photo)
@@ -194,25 +204,35 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
     get document_path(@document)
     assert_response :success
     assert_includes response.body, "Processing"
+    assert_select "[data-controller='attachment-status-refresh'][data-attachment-status-refresh-interval-value='5000']", count: 1
     assert_select "a[href^=?]", document_file_path(@document), count: 0
 
     document_scan.update!(status: "failed", status_code: "FAILED", completed_at: Time.current)
     get document_path(@document)
     assert_includes response.body,
       "This upload is temporarily unavailable. Retry the upload. If the problem continues, contact support@boat-binder.com."
+    assert_select "[data-controller='attachment-status-refresh']", count: 0
     assert_select "a[href^=?]", document_file_path(@document), count: 0
 
     document_scan.update!(status: "rejected", status_code: "THREATS_FOUND", completed_at: Time.current)
     get document_path(@document)
     assert_includes response.body,
       "This upload was rejected by security scanning. Retry the upload. If you believe this is an error, contact support@boat-binder.com."
+    assert_select "[data-controller='attachment-status-refresh']", count: 0
     assert_select "a[href^=?]", document_file_path(@document), count: 0
+
+    document_scan.update!(status: "clean", status_code: "NO_THREATS_FOUND", completed_at: Time.current)
+    get document_path(@document)
+    assert_select "[data-controller='attachment-status-refresh']", count: 0
+    assert_select "a[href^=?]", document_file_path(@document), minimum: 1
+    assert_not_includes response.body, "Processing"
 
     vessel_scan = AttachmentScan.find_by!(active_storage_blob: @vessel.primary_photo.blob)
     vessel_scan.update!(status: "pending", status_code: nil, completed_at: nil)
     get vessel_path(@vessel)
     assert_response :success
     assert_includes response.body, "Processing"
+    assert_select "[data-controller='attachment-status-refresh']", count: 1
     assert_select "img[src^=?]", vessel_primary_photo_path(@vessel), count: 0
 
     photo_scan = AttachmentScan.find_by!(active_storage_blob: @photo.blob)
@@ -220,6 +240,7 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
     get vessel_service_visit_path(@vessel, @visit)
     assert_response :success
     assert_includes response.body, "Processing"
+    assert_select "[data-controller='attachment-status-refresh']", count: 1
     assert_select "img[src=?]", service_visit_photo_path(@vessel, @visit, @photo), count: 0
   end
 

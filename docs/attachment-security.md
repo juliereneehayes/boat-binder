@@ -25,7 +25,9 @@ AWS GuardDuty Malware Protection for S3 scans new objects independently of the R
 every newly accepted or replaced Document file, vessel primary photo, and service-visit photo, Boat
 Binder creates one `AttachmentScan` row for the Active Storage blob in `pending` state. A Solid
 Queue job reads the GuardDuty-managed `GuardDutyMalwareScanStatus` object tag for up to 15 minutes.
-The application identity reads tags but never writes or replaces that managed tag.
+The initial check is immediate. A missing tag schedules checks after 5, 10, 15, and 30 seconds,
+then every 60 seconds for the remainder of the window; the final wait is capped at the 15-minute
+deadline. The application identity reads tags but never writes or replaces that managed tag.
 
 Local development still creates ordinary `AttachmentScan` rows and runs the same scan job, but the
 provider boundary returns a simulated `NO_THREATS_FOUND` result only when
@@ -55,6 +57,14 @@ would otherwise read image/PDF bytes before scan approval. Any future attachment
 check approved scan state before reading content. Rejected objects remain in the private bucket and
 may remain attached for investigation or later operator action; this phase does not add a purge
 workflow.
+
+Pages that render a `pending` attachment add one browser-side five-second refresh timer. The timer
+uses Turbo to revisit the same authenticated page URL, so every refresh repeats that page's existing
+authentication, Account scope, lifecycle, and authorization checks. The server-rendered scan state
+remains authoritative: pending bytes are never requested or displayed, and the timer disappears as
+soon as no rendered attachment remains pending. There is no separate status or attachment-delivery
+endpoint, and the browser receives no provider status, object key, bucket, or scan details. This
+improves ordinary completion feedback but does not promise a fixed GuardDuty completion time.
 
 The rollout migration creates exactly one `trusted_existing` row for each blob attached when the
 migration runs. Those attachments remain available without rescan or bulk Active Storage metadata
@@ -139,9 +149,11 @@ and never use customer data or production storage for that check.
 1. Upload a new Document, vessel primary photo, and service-visit photo. Confirm each has one
    `pending` scan row and a queued/running scan job, using database IDs only.
 2. Before GuardDuty completes, confirm the UI says `Processing`, offers no open/download action or
-   image, and the protected route returns not found.
-3. After GuardDuty writes `NO_THREATS_FOUND`, confirm the row becomes `clean` and the same protected
-   route works with private/no-store/nosniff headers.
+   image, and the protected route returns not found. Do not use a Rails console script to advance
+   scan state.
+3. After GuardDuty writes `NO_THREATS_FOUND`, confirm the page updates automatically, the row becomes
+   `clean`, and the same protected route works with private/no-store/nosniff headers. Record the
+   approximate observed time for internal validation only; do not present it as an SLA.
 4. Confirm a pre-rollout attachment has one `trusted_existing` row and remains accessible without a
    scan job.
 5. With a second staging Account, confirm its user cannot read or infer any attachment from the first

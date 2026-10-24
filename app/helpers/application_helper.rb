@@ -192,6 +192,18 @@ module ApplicationHelper
     end
   end
 
+  def attachment_status_refresh_tag
+    return unless @attachment_status_refresh_required
+
+    tag.div(
+      hidden: true,
+      data: {
+        controller: "attachment-status-refresh",
+        attachment_status_refresh_interval_value: 5_000
+      }
+    )
+  end
+
   private
 
   def attachment_scan_for(attachment)
@@ -200,9 +212,11 @@ module ApplicationHelper
     return unless blob
 
     @attachment_scan_cache ||= {}
-    @attachment_scan_cache.fetch(blob.id) do
+    scan = @attachment_scan_cache.fetch(blob.id) do
       @attachment_scan_cache[blob.id] = AttachmentScan.find_by(active_storage_blob_id: blob.id)
     end
+    @attachment_status_refresh_required = true if scan&.status == "pending"
+    scan
   end
 
   public

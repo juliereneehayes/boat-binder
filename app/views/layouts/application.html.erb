@@ -88,6 +88,7 @@
             <%= render "shared/owner_lifecycle_notice", recoveries: owner_lifecycle_recoveries %>
           <% end %>
           <%= yield %>
+          <%= attachment_status_refresh_tag %>
         </main>
       </div>
 

@@ -2,6 +2,7 @@ module Storage
   class AttachmentScanJob < ApplicationJob
     queue_as :background
 
+    INITIAL_POLL_INTERVALS = [ 5.seconds, 10.seconds, 15.seconds, 30.seconds ].freeze
     POLL_INTERVAL = 1.minute
     POLL_WINDOW = 15.minutes
 
@@ -53,7 +54,7 @@ module Storage
       return unless scan&.reload&.status == "pending"
 
       if now < scan.created_at + POLL_WINDOW
-        enqueue_next_poll!(scan)
+        enqueue_next_poll!(scan, now:)
         log_provider_retry(scan, error) if error
         return
       end
@@ -62,8 +63,8 @@ module Storage
       fail_terminal!(scan, code, error)
     end
 
-    def enqueue_next_poll!(scan)
-      enqueued_job = self.class.set(wait: POLL_INTERVAL).perform_later(scan.id)
+    def enqueue_next_poll!(scan, now:)
+      enqueued_job = self.class.set(wait: next_poll_interval(scan, now:)).perform_later(scan.id)
       return enqueued_job if enqueued_job
 
       fail_terminal!(scan, "ENQUEUE_FAILED", ActiveJob::EnqueueError.new)
@@ -71,6 +72,13 @@ module Storage
       raise
     rescue StandardError => error
       fail_terminal!(scan, "ENQUEUE_FAILED", error)
+    end
+
+    def next_poll_interval(scan, now:)
+      cadence_interval = INITIAL_POLL_INTERVALS.fetch(scan.check_count - 1, POLL_INTERVAL)
+      remaining_interval = scan.created_at + POLL_WINDOW - now
+
+      [ cadence_interval.to_f, remaining_interval ].min.seconds
     end
 
     def log_provider_retry(scan, error)
