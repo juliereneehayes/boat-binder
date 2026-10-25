@@ -12,6 +12,8 @@ class VesselsController < ApplicationController
     @include_inactive = params[:include_inactive].present?
     @vessels = scoped_vessels.search(@query).includes(:account, :reminders, :service_visits, :documents, :binder_notes).with_attached_primary_photo.ordered
     @vessels = @vessels.active unless @include_inactive
+    @vessels.load
+    preload_attachment_scans(@vessels.map(&:primary_photo))
   end
 
   def show
@@ -22,6 +24,8 @@ class VesselsController < ApplicationController
       service_visit_battery_checks: :asset_battery
     ).recent.limit(5)
     @documents = @vessel.documents.with_attached_file.order(created_at: :desc).limit(6)
+    @documents.load
+    preload_attachment_scans(@vessel.primary_photo, @documents.map(&:file))
     @binder_notes = @vessel.binder_notes.order(created_at: :desc).limit(6)
     @overdue_reminders = @vessel.overdue_reminders.limit(4)
     @upcoming_reminders = @vessel.reminders.upcoming.limit(5)
@@ -123,6 +127,7 @@ class VesselsController < ApplicationController
 
   def set_vessel
     @vessel = scoped_vessels.includes({ account: :contacts }, primary_photo_attachment: :blob).find_by!(slug: params[:id])
+    preload_attachment_scans(@vessel.primary_photo)
   end
 
   def vessel_params

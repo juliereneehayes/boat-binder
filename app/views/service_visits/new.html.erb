@@ -8,9 +8,16 @@
 
   <%= field_error_messages(@service_visit) %>
 
+  <div
+    data-controller="upload-preview"
+    data-action="turbo:before-render@document->upload-preview#beforeRender"
+    data-upload-preview-flow-value="service-visit-photos"
+    data-upload-preview-identity-value="<%= @service_visit.id %>"
+    data-upload-preview-state-value="form">
   <%= form_with model: @service_visit,
     url: @service_visit.persisted? ? vessel_service_visit_path(@vessel, @service_visit) : vessel_service_visits_path(@vessel),
-    class: "space-y-5" do |form| %>
+    class: "space-y-5",
+    data: { action: "submit->upload-preview#submit" } do |form| %>
     <section class="space-y-4 rounded-md border border-slate-200 bg-white p-4 shadow-sm">
       <h2 class="text-lg font-black">Visit details</h2>
       <div class="grid gap-4 sm:grid-cols-2">
@@ -145,9 +152,15 @@
       <% if @service_visit.persisted? && @service_visit.photos.attached? %>
         <p class="text-sm leading-6 text-slate-600"><%= pluralize(@service_visit.photos.count, "existing photo") %> will be kept. New uploads are added to this visit.</p>
       <% end %>
+      <div
+        id="service-visit-photos-upload-preview"
+        class="relative overflow-hidden rounded-md border border-slate-200 bg-slate-50 p-2"
+        data-turbo-permanent
+        data-upload-preview-target="surface"
+        hidden></div>
       <div>
         <%= form.label :photos, "Choose or take photos", class: "text-sm font-semibold text-slate-700" %>
-        <%= form.file_field :photos, multiple: true, accept: ServiceVisit::ALLOWED_PHOTO_CONTENT_TYPES.join(","), class: "mt-2 block min-h-12 w-full rounded-md border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-base file:mr-3 file:rounded-md file:border-0 file:bg-cyan-700 file:px-4 file:py-2 file:font-bold file:text-white" %>
+        <%= form.file_field :photos, multiple: true, accept: ServiceVisit::ALLOWED_PHOTO_CONTENT_TYPES.join(","), class: "mt-2 block min-h-12 w-full rounded-md border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-base file:mr-3 file:rounded-md file:border-0 file:bg-cyan-700 file:px-4 file:py-2 file:font-bold file:text-white", data: { action: "change->upload-preview#select" } %>
         <p class="mt-2 text-sm leading-6 text-slate-600">Add up to 10 JPEG, PNG, or WEBP photos. Each photo may be up to 10 MB, and the upload may total up to 50 MB.</p>
       </div>
     </section>
@@ -156,4 +169,5 @@
       <%= form.submit @service_visit.persisted? ? "Save visit changes" : "Save visit report", class: "min-h-14 w-full rounded-md bg-cyan-700 px-5 py-4 text-base font-black text-white shadow-lg md:shadow-sm", data: { turbo_submits_with: "Saving..." } %>
     </div>
   <% end %>
+  </div>
 </section>

@@ -113,6 +113,7 @@ class ServiceVisitsController < ApplicationController
       service_visit_battery_checks: :asset_battery,
       photos_attachments: :blob
     ).find(params[:id])
+    preload_attachment_scans(@service_visit.photos.attachments)
     @issue_notes = @vessel.binder_notes.where(note_type: "issue").order(created_at: :desc).limit(3)
   end
 

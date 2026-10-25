@@ -1,18 +1,24 @@
 <%= field_error_messages(vessel) %>
 
+<div
+  data-controller="upload-preview"
+  data-action="turbo:before-render@document->upload-preview#beforeRender"
+  data-upload-preview-flow-value="vessel-primary-photo"
+  data-upload-preview-identity-value="<%= vessel.id %>"
+  data-upload-preview-state-value="form">
+
 <% if vessel.persisted? && vessel.primary_photo.attached? %>
   <section class="mb-5 space-y-4 rounded-md border border-slate-200 bg-white p-4 shadow-sm">
     <div>
       <h2 class="text-lg font-black">Primary photo</h2>
       <p class="mt-1 text-sm leading-6 text-slate-600">Upload a replacement below, or remove the current photo.</p>
     </div>
-    <div class="overflow-hidden rounded-md border border-slate-200 bg-slate-50">
-      <%= vessel_primary_photo(
+    <%= vessel_primary_photo_upload_surface(
         vessel,
+        surface_class: "relative overflow-hidden rounded-md border border-slate-200 bg-slate-50",
         image_class: "aspect-[16/9] w-full object-cover",
         placeholder_class: "flex aspect-[16/9] w-full flex-col items-center justify-center bg-[#0B1F35] p-5 text-center"
       ) %>
-    </div>
     <%= button_to primary_photo_vessel_path(vessel),
       method: :delete,
       form: {
@@ -33,24 +39,30 @@
   </section>
 <% end %>
 
-<%= form_with model: vessel, url: vessel.persisted? ? vessel_path(vessel) : vessels_path, class: "space-y-5" do |form| %>
+<%= form_with model: vessel, url: vessel.persisted? ? vessel_path(vessel) : vessels_path, class: "space-y-5", data: { action: "submit->upload-preview#submit" } do |form| %>
   <section class="space-y-4 rounded-md border border-slate-200 bg-white p-4 shadow-sm">
     <div>
       <h2 class="text-lg font-black"><%= vessel.persisted? && vessel.primary_photo.attached? ? "Replace photo" : "Primary vessel photo" %></h2>
       <p class="mt-1 text-sm leading-6 text-slate-600">Upload a JPEG, PNG, or WEBP image up to 10 MB.</p>
     </div>
     <% if vessel.persisted? && !vessel.primary_photo.attached? %>
-      <div class="overflow-hidden rounded-md border border-slate-200 bg-slate-50">
-        <%= vessel_primary_photo(
+      <%= vessel_primary_photo_upload_surface(
           vessel,
+          surface_class: "relative overflow-hidden rounded-md border border-slate-200 bg-slate-50",
           image_class: "aspect-[16/9] w-full object-cover",
           placeholder_class: "flex aspect-[16/9] w-full flex-col items-center justify-center bg-[#0B1F35] p-5 text-center"
         ) %>
-      </div>
+    <% elsif !vessel.persisted? %>
+      <%= vessel_primary_photo_upload_surface(
+          vessel,
+          surface_class: "relative overflow-hidden rounded-md border border-slate-200 bg-slate-50",
+          image_class: "aspect-[16/9] w-full object-cover",
+          placeholder_class: "flex aspect-[16/9] w-full flex-col items-center justify-center bg-[#0B1F35] p-5 text-center"
+        ) %>
     <% end %>
     <div>
       <%= form.label :primary_photo, vessel.persisted? && vessel.primary_photo.attached? ? "Replace photo" : "Primary vessel photo", class: "text-sm font-semibold text-slate-700" %>
-      <%= form.file_field :primary_photo, accept: Asset::PRIMARY_PHOTO_CONTENT_TYPES.join(","), class: "mt-2 block min-h-12 w-full rounded-md border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-base file:mr-3 file:rounded-md file:border-0 file:bg-cyan-700 file:px-4 file:py-2 file:font-bold file:text-white" %>
+      <%= form.file_field :primary_photo, accept: Asset::PRIMARY_PHOTO_CONTENT_TYPES.join(","), class: "mt-2 block min-h-12 w-full rounded-md border border-dashed border-slate-300 bg-slate-50 px-4 py-3 text-base file:mr-3 file:rounded-md file:border-0 file:bg-cyan-700 file:px-4 file:py-2 file:font-bold file:text-white", data: { action: "change->upload-preview#select" } %>
     </div>
   </section>
 
@@ -127,3 +139,4 @@
     <%= link_to "Cancel", vessel.persisted? ? vessel_path(vessel) : vessels_path, class: "inline-flex min-h-12 items-center justify-center rounded-md px-5 py-3 text-base font-bold text-slate-700" %>
   </div>
 <% end %>
+</div>

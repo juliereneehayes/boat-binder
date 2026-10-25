@@ -201,10 +201,22 @@
       </section>
     <% end %>
 
-    <section class="space-y-3">
+    <section
+      class="space-y-3"
+      data-controller="upload-preview"
+      data-action="turbo:before-render@document->upload-preview#beforeRender"
+      data-upload-preview-flow-value="service-visit-photos"
+      data-upload-preview-identity-value="<%= service_visit.id %>"
+      data-upload-preview-state-value="<%= attachment_group_scan_state(service_visit.photos) %>">
       <h2 class="text-xl font-black">Photos</h2>
       <% if service_visit.photos.attached? && show_photos %>
         <div class="grid gap-3 sm:grid-cols-2">
+          <div
+            id="service-visit-photos-upload-preview"
+            class="relative overflow-hidden rounded-md border border-slate-200 bg-slate-50 p-2"
+            data-turbo-permanent
+            data-upload-preview-target="surface"
+            hidden></div>
           <% service_visit.photos.each do |photo| %>
             <% if attachment_available?(photo) %>
               <%= image_tag service_visit_photo_path(vessel, service_visit, photo), alt: "", class: "aspect-[4/3] w-full rounded-md object-cover ring-1 ring-slate-200" %>

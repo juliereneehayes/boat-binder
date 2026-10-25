@@ -12,6 +12,8 @@ class DocumentsController < ApplicationController
 
   def index
     @documents = scoped_documents.with_attached_file.includes(:account, :asset).order(created_at: :desc)
+    @documents.load
+    preload_attachment_scans(@documents.map(&:file))
   end
 
   def show
@@ -101,7 +103,8 @@ class DocumentsController < ApplicationController
   end
 
   def set_document
-    @document = scoped_documents.find(params[:id])
+    @document = scoped_documents.with_attached_file.find(params[:id])
+    preload_attachment_scans(@document.file)
   end
 
   def document_request_params
