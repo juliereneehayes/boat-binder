@@ -163,6 +163,7 @@ export default class extends Controller {
       if (index < existingCount) return
 
       photo.hidden = true
+      photo.classList.add("hidden")
       photo.dataset.uploadPreviewSuppressed = "true"
     })
   }
@@ -170,6 +171,7 @@ export default class extends Controller {
   restoreSuppressedServerPhotos() {
     this.element.querySelectorAll("[data-upload-preview-suppressed]").forEach((photo) => {
       photo.hidden = false
+      photo.classList.remove("hidden")
       delete photo.dataset.uploadPreviewSuppressed
     })
   }

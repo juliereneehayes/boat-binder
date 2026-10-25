@@ -278,6 +278,7 @@ class AttachmentStatusRefreshTest < ApplicationSystemTestCase
     assert_selector "img[data-upload-preview-local]", count: 2, wait: 10
     assert_selector "img[src='#{existing_path}']"
     assert_no_selector "img[src='#{first_new_path}']", visible: true
+    assert_selector "[data-upload-preview-server-photo]", visible: true, count: 1
 
     second_scan.update!(status: "clean", status_code: "NO_THREATS_FOUND", completed_at: Time.current)
     configure_refresh(fast_interval: 50, slow_interval: 50)
