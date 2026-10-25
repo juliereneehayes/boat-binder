@@ -22,6 +22,9 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
     @visit = @vessel.service_visits.create!(visit_date: Date.current, performed_by_user: @owner)
     @visit.photos.attach(fixture_file_upload("sample.png", "image/png"))
     @photo = @visit.photos.attachments.sole
+    trust_attachment(@document.file)
+    trust_attachment(@vessel.primary_photo)
+    trust_attachment(@photo)
   end
 
   test "authorized same Account members stream every attachment type through private application routes" do
@@ -64,6 +67,22 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
     assert_private_no_store
   end
 
+  test "clean attachments remain subject to authorization and stream through every protected route" do
+    AttachmentScan.where(active_storage_blob_id: [
+      @document.file.blob.id,
+      @vessel.primary_photo.blob.id,
+      @photo.blob.id
+    ]).update_all(status: "clean", status_code: "NO_THREATS_FOUND", completed_at: Time.current)
+    sign_in_as(@owner)
+
+    get document_file_path(@document)
+    assert_response :success
+    get vessel_primary_photo_path(@vessel)
+    assert_response :success
+    get service_visit_photo_path(@vessel, @visit, @photo)
+    assert_response :success
+  end
+
   test "attachment pages emit only Boat Binder owned URLs" do
     sign_in_as(@owner)
 
@@ -99,10 +118,172 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
 
     get document_file_path(@document)
     assert_response :not_found
+
+    [
+      document_path(@document),
+      vessel_path(@vessel),
+      vessel_service_visit_path(@vessel, @visit)
+    ].each do |path|
+      get path
+      assert_response :not_found
+      assert_select "[data-controller='attachment-status-refresh']", count: 0
+    end
     get vessel_primary_photo_path(@vessel)
     assert_response :not_found
     get service_visit_photo_path(@vessel, @visit, @photo)
     assert_response :not_found
+  end
+
+  test "missing pending failed and rejected scan state all fail closed" do
+    sign_in_as(@owner)
+
+    scans = AttachmentScan.where(active_storage_blob_id: [
+      @document.file.blob.id,
+      @vessel.primary_photo.blob.id,
+      @photo.blob.id
+    ])
+    scans.delete_all
+
+    paths_and_blobs = [
+      [ document_file_path(@document), @document.file.blob ],
+      [ vessel_primary_photo_path(@vessel), @vessel.primary_photo.blob ],
+      [ service_visit_photo_path(@vessel, @visit, @photo), @photo.blob ]
+    ]
+
+    paths_and_blobs.each do |path, blob|
+      get path
+      assert_response :not_found
+
+      %w[pending failed rejected].each do |status|
+        scan = AttachmentScan.create!(
+          active_storage_blob: blob,
+          status:,
+          provider: AttachmentScan::PROVIDER,
+          completed_at: status == "pending" ? nil : Time.current,
+          status_code: { "failed" => "FAILED", "rejected" => "THREATS_FOUND" }[status]
+        )
+        get path
+        assert_response :not_found
+        scan.delete
+      end
+    end
+  end
+
+  test "authorization and parent scope are enforced before scan availability" do
+    AttachmentScan.where(active_storage_blob_id: [
+      @document.file.blob.id,
+      @vessel.primary_photo.blob.id,
+      @photo.blob.id
+    ]).update_all(status: "clean", status_code: "NO_THREATS_FOUND", completed_at: Time.current)
+    other_account = create_account(name: "Other Scan Scope Account")
+    qualify_self_managed_subscription(other_account)
+    other_owner = create_user(email: "other-scan-scope@example.test", role: "owner")
+    create_account_membership(user: other_owner, account: other_account, access_level: "editor")
+    sign_in_as(other_owner)
+
+    original = AttachmentScan.method(:available_blob?)
+    AttachmentScan.define_singleton_method(:available_blob?) do |_blob|
+      raise "scan state must not be consulted before authorization"
+    end
+
+    get document_file_path(@document)
+    assert_response :not_found
+    get vessel_primary_photo_path(@vessel)
+    assert_response :not_found
+    get service_visit_photo_path(@vessel, @visit, @photo)
+    assert_response :not_found
+  ensure
+    AttachmentScan.define_singleton_method(:available_blob?, original) if original
+  end
+
+  test "attachment pages suppress actions and images with exact scan-state copy" do
+    sign_in_as(@owner)
+
+    document_scan = AttachmentScan.find_by!(active_storage_blob: @document.file.blob)
+    document_scan.update!(status: "pending", status_code: nil, completed_at: nil)
+    get document_path(@document)
+    assert_response :success
+    assert_includes response.body, "Processing"
+    assert_select "[data-controller='attachment-status-refresh']" \
+      "[data-attachment-status-refresh-fast-interval-value='5000']" \
+      "[data-attachment-status-refresh-slow-interval-value='30000']" \
+      "[data-attachment-status-refresh-fast-window-value='60000']", count: 1
+    assert_select "a[href^=?]", document_file_path(@document), count: 0
+
+    document_scan.update!(status: "failed", status_code: "FAILED", completed_at: Time.current)
+    get document_path(@document)
+    assert_includes response.body,
+      "This upload is temporarily unavailable. Retry the upload. If the problem continues, contact support@boat-binder.com."
+    assert_select "[data-controller='attachment-status-refresh']", count: 0
+    assert_select "a[href^=?]", document_file_path(@document), count: 0
+
+    document_scan.update!(status: "rejected", status_code: "THREATS_FOUND", completed_at: Time.current)
+    get document_path(@document)
+    assert_includes response.body,
+      "This upload was rejected by security scanning. Retry the upload. If you believe this is an error, contact support@boat-binder.com."
+    assert_select "[data-controller='attachment-status-refresh']", count: 0
+    assert_select "a[href^=?]", document_file_path(@document), count: 0
+
+    document_scan.update!(status: "clean", status_code: "NO_THREATS_FOUND", completed_at: Time.current)
+    get document_path(@document)
+    assert_select "[data-controller='attachment-status-refresh']", count: 0
+    assert_select "a[href^=?]", document_file_path(@document), minimum: 1
+    assert_not_includes response.body, "Processing"
+
+    vessel_scan = AttachmentScan.find_by!(active_storage_blob: @vessel.primary_photo.blob)
+    vessel_scan.update!(status: "pending", status_code: nil, completed_at: nil)
+    get vessel_path(@vessel)
+    assert_response :success
+    assert_includes response.body, "Processing"
+    assert_select "[data-controller='attachment-status-refresh']", count: 1
+    assert_select "img[src^=?]", vessel_primary_photo_path(@vessel), count: 0
+
+    photo_scan = AttachmentScan.find_by!(active_storage_blob: @photo.blob)
+    photo_scan.update!(status: "pending", status_code: nil, completed_at: nil)
+    get vessel_service_visit_path(@vessel, @visit)
+    assert_response :success
+    assert_includes response.body, "Processing"
+    assert_select "[data-controller='attachment-status-refresh']", count: 1
+    assert_select "img[src=?]", service_visit_photo_path(@vessel, @visit, @photo), count: 0
+  end
+
+  test "expired pending scans render fail closed without unbounded browser refresh" do
+    sign_in_as(@owner)
+    document_scan = AttachmentScan.find_by!(active_storage_blob: @document.file.blob)
+    document_scan.update_columns(
+      status: "pending",
+      status_code: nil,
+      completed_at: nil,
+      created_at: Storage::AttachmentScanJob::POLL_WINDOW.ago - 1.second
+    )
+
+    get document_path(@document)
+
+    assert_response :success
+    assert_includes response.body, "Processing"
+    assert_select "[data-controller='attachment-status-refresh']", count: 0
+    assert_select "a[href^=?]", document_file_path(@document), count: 0
+  end
+
+  test "non-GET validation rerender retains submitted values without automatic refresh" do
+    sign_in_as(@owner)
+    document_scan = AttachmentScan.find_by!(active_storage_blob: @document.file.blob)
+    document_scan.update!(status: "pending", status_code: nil, completed_at: nil)
+
+    patch document_path(@document), params: {
+      document: {
+        account_id: @account.id,
+        asset_id: @vessel.id,
+        title: "",
+        document_type: @document.document_type,
+        notes: "Keep this submitted draft"
+      }
+    }
+
+    assert_response :unprocessable_entity
+    assert_select "[data-controller='attachment-status-refresh']", count: 0
+    assert_select "textarea#document_notes", text: "Keep this submitted draft"
+    assert_includes response.body, "Title can&#39;t be blank"
   end
 
   test "service visit photo identifiers must belong to the requested parent" do

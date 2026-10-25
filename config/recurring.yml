@@ -17,3 +17,7 @@ production:
     class: Storage::PurgeUnattachedBlobsJob
     queue: background
     schedule: every day at 3am
+  recover_stale_attachment_scans:
+    class: Storage::RecoverStaleAttachmentScansJob
+    queue: background
+    schedule: every 5 minutes

@@ -40,9 +40,7 @@ class ServiceVisitsController < ApplicationController
       return
     end
 
-    append_photo_uploads(photo_uploads)
-
-    if @service_visit.save
+    if save_with_photo_scans(photo_uploads)
       create_issue_note if issue_note_present?
       deliver_summary_email if automatic_summary_delivery?
       redirect_to vessel_service_visit_path(@vessel, @service_visit), notice: "Visit report saved."
@@ -70,9 +68,7 @@ class ServiceVisitsController < ApplicationController
       return
     end
 
-    append_photo_uploads(photo_uploads)
-
-    if @service_visit.save
+    if save_with_photo_scans(photo_uploads)
       redirect_to vessel_service_visit_path(@vessel, @service_visit), notice: "Visit report updated."
     else
       render :new, status: :unprocessable_entity
@@ -189,6 +185,23 @@ class ServiceVisitsController < ApplicationController
     return if uploads.empty?
 
     @service_visit.photos = @service_visit.photos.blobs + uploads
+  end
+
+  def save_with_photo_scans(photo_uploads)
+    existing_blob_ids = @service_visit.photos.blobs.ids
+    saved = false
+
+    ActiveRecord::Base.transaction do
+      append_photo_uploads(photo_uploads)
+      raise ActiveRecord::Rollback unless @service_visit.save
+
+      @service_visit.photos.blobs.reject { |blob| blob.id.in?(existing_blob_ids) }.each do |blob|
+        AttachmentScan.register_pending!(blob)
+      end
+      saved = true
+    end
+
+    saved
   end
 
   def attachment_upload_account_active?(uploads)

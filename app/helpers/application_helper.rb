@@ -132,18 +132,109 @@ module ApplicationHelper
   end
 
   def vessel_primary_photo(vessel, image_class:, placeholder_class:)
-    if vessel.primary_photo.attached?
+    if vessel.primary_photo.attached? && attachment_available?(vessel.primary_photo)
       image_tag vessel_primary_photo_path(vessel, v: vessel.primary_photo.blob.id),
         alt: "#{vessel.name} primary photo", class: image_class
     else
       tag.div class: placeholder_class, role: "img", aria: { label: "Primary photo placeholder for #{vessel.name}" } do
-        safe_join([
+        content = [
           tag.div(vessel.name.first.to_s.upcase, class: "text-4xl font-black text-white/90"),
           tag.div(vessel.location_label, class: "mt-2 text-xs font-black uppercase tracking-normal text-[#B9D5DA]")
-        ])
+        ]
+        if vessel.primary_photo.attached?
+          content << tag.p(attachment_scan_message(vessel.primary_photo), class: "mt-3 max-w-lg text-xs font-semibold text-white")
+        end
+        safe_join(content)
       end
     end
   end
+
+  def attachment_available?(attachment)
+    attachment_scan_for(attachment)&.available? || false
+  end
+
+  def attachment_scan_status(attachment)
+    attachment_scan_for(attachment)&.status
+  end
+
+  def attachment_scan_message(attachment)
+    case attachment_scan_status(attachment)
+    when "pending"
+      "Processing"
+    when "rejected"
+      "This upload was rejected by security scanning. Retry the upload. If you believe this is an error, contact support@boat-binder.com."
+    else
+      "This upload is temporarily unavailable. Retry the upload. If the problem continues, contact support@boat-binder.com."
+    end
+  end
+
+  def attachment_status_label(attachment, available_label: "File attached")
+    case attachment_scan_status(attachment)
+    when "clean", "trusted_existing"
+      available_label
+    when "pending"
+      "Processing"
+    when "rejected"
+      "Rejected"
+    else
+      "Unavailable"
+    end
+  end
+
+  def attachment_status_tone(attachment)
+    case attachment_scan_status(attachment)
+    when "clean", "trusted_existing"
+      :success
+    when "pending"
+      :neutral
+    else
+      :warning
+    end
+  end
+
+  def attachment_status_refresh_tag
+    return unless @attachment_status_refresh_required && request.get?
+
+    scan_started_at = @attachment_status_refresh_started_at
+    return unless scan_started_at
+
+    now = Time.current
+    remaining_duration_ms = ((scan_started_at + Storage::AttachmentScanJob::POLL_WINDOW - now) * 1_000).ceil
+    return unless remaining_duration_ms.positive?
+
+    tag.div(
+      hidden: true,
+      data: {
+        controller: "attachment-status-refresh",
+        attachment_status_refresh_fast_interval_value: 5_000,
+        attachment_status_refresh_slow_interval_value: 30_000,
+        attachment_status_refresh_fast_window_value: 60_000,
+        attachment_status_refresh_scan_age_value: [ ((now - scan_started_at) * 1_000).floor, 0 ].max,
+        attachment_status_refresh_remaining_duration_value: remaining_duration_ms
+      }
+    )
+  end
+
+  private
+
+  def attachment_scan_for(attachment)
+    attachment = attachment.attachment if attachment.respond_to?(:attachment)
+    blob = attachment&.blob
+    return unless blob
+
+    @attachment_scan_cache ||= {}
+    scan = @attachment_scan_cache.fetch(blob.id) do
+      @attachment_scan_cache[blob.id] = AttachmentScan.find_by(active_storage_blob_id: blob.id)
+    end
+    if scan&.status == "pending"
+      # Pending discovery during view rendering records page-level refresh state for the layout after `yield`.
+      @attachment_status_refresh_required = true
+      @attachment_status_refresh_started_at = [ @attachment_status_refresh_started_at, scan.created_at ].compact.max
+    end
+    scan
+  end
+
+  public
 
   def app_nav_items
     items = [ [ "Dashboard", root_path, "D" ], [ "Settings", settings_path, "S" ] ]

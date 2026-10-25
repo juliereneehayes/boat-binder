@@ -113,6 +113,8 @@ class VesselsController < ApplicationController
   def attach_primary_photo!(vessel, upload)
     vessel.primary_photo.attach(upload)
     raise PrimaryPhotoAttachmentError, "primary photo was not attached" unless vessel.primary_photo.attached?
+
+    AttachmentScan.register_pending!(vessel.primary_photo.blob)
   rescue StandardError => error
     raise if error.is_a?(PrimaryPhotoAttachmentError)
 

@@ -27,6 +27,9 @@ class OwnerReadLifecycleTest < ActionDispatch::IntegrationTest
       summary: "Lifecycle Visit"
     )
     @visit.photos.attach(fixture_file_upload("sample.png", "image/png"))
+    trust_attachment(@vessel.primary_photo)
+    trust_attachment(@document.file)
+    trust_attachment(@visit.photos.attachments.sole)
     @note = @vessel.binder_notes.create!(
       account: @account,
       title: "Lifecycle Note",
