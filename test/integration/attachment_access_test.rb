@@ -204,7 +204,10 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
     get document_path(@document)
     assert_response :success
     assert_includes response.body, "Processing"
-    assert_select "[data-controller='attachment-status-refresh'][data-attachment-status-refresh-interval-value='5000']", count: 1
+    assert_select "[data-controller='attachment-status-refresh']" \
+      "[data-attachment-status-refresh-fast-interval-value='5000']" \
+      "[data-attachment-status-refresh-slow-interval-value='30000']" \
+      "[data-attachment-status-refresh-fast-window-value='60000']", count: 1
     assert_select "a[href^=?]", document_file_path(@document), count: 0
 
     document_scan.update!(status: "failed", status_code: "FAILED", completed_at: Time.current)
@@ -242,6 +245,45 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
     assert_includes response.body, "Processing"
     assert_select "[data-controller='attachment-status-refresh']", count: 1
     assert_select "img[src=?]", service_visit_photo_path(@vessel, @visit, @photo), count: 0
+  end
+
+  test "expired pending scans render fail closed without unbounded browser refresh" do
+    sign_in_as(@owner)
+    document_scan = AttachmentScan.find_by!(active_storage_blob: @document.file.blob)
+    document_scan.update_columns(
+      status: "pending",
+      status_code: nil,
+      completed_at: nil,
+      created_at: Storage::AttachmentScanJob::POLL_WINDOW.ago - 1.second
+    )
+
+    get document_path(@document)
+
+    assert_response :success
+    assert_includes response.body, "Processing"
+    assert_select "[data-controller='attachment-status-refresh']", count: 0
+    assert_select "a[href^=?]", document_file_path(@document), count: 0
+  end
+
+  test "non-GET validation rerender retains submitted values without automatic refresh" do
+    sign_in_as(@owner)
+    document_scan = AttachmentScan.find_by!(active_storage_blob: @document.file.blob)
+    document_scan.update!(status: "pending", status_code: nil, completed_at: nil)
+
+    patch document_path(@document), params: {
+      document: {
+        account_id: @account.id,
+        asset_id: @vessel.id,
+        title: "",
+        document_type: @document.document_type,
+        notes: "Keep this submitted draft"
+      }
+    }
+
+    assert_response :unprocessable_entity
+    assert_select "[data-controller='attachment-status-refresh']", count: 0
+    assert_select "textarea#document_notes", text: "Keep this submitted draft"
+    assert_includes response.body, "Title can&#39;t be blank"
   end
 
   test "service visit photo identifiers must belong to the requested parent" do

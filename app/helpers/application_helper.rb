@@ -193,13 +193,24 @@ module ApplicationHelper
   end
 
   def attachment_status_refresh_tag
-    return unless @attachment_status_refresh_required
+    return unless @attachment_status_refresh_required && request.get?
+
+    scan_started_at = @attachment_status_refresh_started_at
+    return unless scan_started_at
+
+    now = Time.current
+    remaining_duration_ms = ((scan_started_at + Storage::AttachmentScanJob::POLL_WINDOW - now) * 1_000).ceil
+    return unless remaining_duration_ms.positive?
 
     tag.div(
       hidden: true,
       data: {
         controller: "attachment-status-refresh",
-        attachment_status_refresh_interval_value: 5_000
+        attachment_status_refresh_fast_interval_value: 5_000,
+        attachment_status_refresh_slow_interval_value: 30_000,
+        attachment_status_refresh_fast_window_value: 60_000,
+        attachment_status_refresh_scan_age_value: [ ((now - scan_started_at) * 1_000).floor, 0 ].max,
+        attachment_status_refresh_remaining_duration_value: remaining_duration_ms
       }
     )
   end
@@ -215,7 +226,11 @@ module ApplicationHelper
     scan = @attachment_scan_cache.fetch(blob.id) do
       @attachment_scan_cache[blob.id] = AttachmentScan.find_by(active_storage_blob_id: blob.id)
     end
-    @attachment_status_refresh_required = true if scan&.status == "pending"
+    if scan&.status == "pending"
+      # Pending discovery during view rendering records page-level refresh state for the layout after `yield`.
+      @attachment_status_refresh_required = true
+      @attachment_status_refresh_started_at = [ @attachment_status_refresh_started_at, scan.created_at ].compact.max
+    end
     scan
   end
 

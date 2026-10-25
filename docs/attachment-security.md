@@ -58,13 +58,20 @@ check approved scan state before reading content. Rejected objects remain in the
 may remain attached for investigation or later operator action; this phase does not add a purge
 workflow.
 
-Pages that render a `pending` attachment add one browser-side five-second refresh timer. The timer
-uses Turbo to revisit the same authenticated page URL, so every refresh repeats that page's existing
-authentication, Account scope, lifecycle, and authorization checks. The server-rendered scan state
-remains authoritative: pending bytes are never requested or displayed, and the timer disappears as
-soon as no rendered attachment remains pending. There is no separate status or attachment-delivery
-endpoint, and the browser receives no provider status, object key, bucket, or scan details. This
-improves ordinary completion feedback but does not promise a fixed GuardDuty completion time.
+GET pages that render a `pending` attachment add one browser-side refresh timer. The timer checks
+every five seconds during the pending scan's first minute, then every 30 seconds, and stops at the
+existing 15-minute scan deadline. It pauses while the document is hidden, while an editable form
+control has focus, or after a form emits an `input` or `change` event. Non-GET responses, including
+validation re-renders, never include the controller. An unsafe refresh is skipped rather than
+submitting, copying, or persisting the user's draft.
+
+Each safe refresh uses Turbo to revisit the same authenticated page URL, so it repeats that page's
+existing authentication, Account scope, lifecycle, and authorization checks. The server-rendered
+scan state remains authoritative: pending bytes are never requested or displayed, and the timer
+disappears as soon as no rendered attachment remains pending. There is no separate status or
+attachment-delivery endpoint, and the browser receives no provider status, object key, bucket, or
+scan details. This improves ordinary completion feedback but does not promise a fixed GuardDuty
+completion time.
 
 The rollout migration creates exactly one `trusted_existing` row for each blob attached when the
 migration runs. Those attachments remain available without rescan or bulk Active Storage metadata
