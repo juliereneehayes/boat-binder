@@ -21,12 +21,14 @@ export default class extends Controller {
     document.addEventListener("input", this.markDirty)
     document.addEventListener("change", this.markDirty)
     document.addEventListener("visibilitychange", this.handleVisibilityChange)
+    this.schedulePendingCopy()
     this.scheduleRefresh()
   }
 
   disconnect() {
     this.connected = false
     this.cancelRefresh()
+    this.cancelPendingCopy()
     document.removeEventListener("input", this.markDirty)
     document.removeEventListener("change", this.markDirty)
     document.removeEventListener("visibilitychange", this.handleVisibilityChange)
@@ -42,6 +44,7 @@ export default class extends Controller {
 
   fastWindowValueChanged() {
     this.rescheduleAfterValueChange()
+    this.reschedulePendingCopyAfterValueChange()
   }
 
   scanAgeValueChanged() {
@@ -49,6 +52,7 @@ export default class extends Controller {
 
     this.scanStartedAt = window.performance.now() - Math.max(this.scanAgeValue, 0)
     this.rescheduleAfterValueChange()
+    this.reschedulePendingCopyAfterValueChange()
   }
 
   remainingDurationValueChanged() {
@@ -63,6 +67,35 @@ export default class extends Controller {
 
     this.cancelRefresh()
     this.scheduleRefresh()
+  }
+
+  reschedulePendingCopyAfterValueChange() {
+    if (!this.connected) return
+
+    this.cancelPendingCopy()
+    this.schedulePendingCopy()
+  }
+
+  schedulePendingCopy() {
+    const scanAge = window.performance.now() - this.scanStartedAt
+    const delay = this.fastWindowValue - scanAge
+    if (delay <= 0) {
+      this.showFinishingCopy()
+      return
+    }
+
+    this.pendingCopyTimeout = window.setTimeout(() => this.showFinishingCopy(), delay)
+  }
+
+  cancelPendingCopy() {
+    window.clearTimeout(this.pendingCopyTimeout)
+    this.pendingCopyTimeout = undefined
+  }
+
+  showFinishingCopy() {
+    document.querySelectorAll("[data-attachment-pending-copy]").forEach((copy) => {
+      copy.textContent = "Finishing upload…"
+    })
   }
 
   scheduleRefresh() {

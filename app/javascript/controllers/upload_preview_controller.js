@@ -3,15 +3,22 @@ import { Controller } from "@hotwired/stimulus"
 export default class extends Controller {
   static targets = [ "surface" ]
   static values = {
+    existingCount: { type: Number, default: 0 },
+    finishingDelay: { type: Number, default: 60000 },
     flow: String,
     identity: String,
     state: String
   }
 
   connect() {
-    if (this.hasSurfaceTarget && this.surfaceTarget.uploadPreviewObjectUrls?.length) {
+    if (!this.hasSurfaceTarget) return
+
+    if (this.surfaceTarget.uploadPreviewObjectUrls?.length) {
       this.surfaceTarget.dataset.uploadPreviewIdentity = this.identityValue
+      return
     }
+
+    this.captureServerSurface(this.surfaceTarget)
   }
 
   disconnect() {
@@ -25,12 +32,18 @@ export default class extends Controller {
 
   select(event) {
     const files = Array.from(event.target.files || []).filter((file) => file.type.startsWith("image/"))
-    if (!this.hasSurfaceTarget || files.length === 0) return
+    if (!this.hasSurfaceTarget) return
+
+    if (files.length === 0) {
+      if (this.surfaceTarget.uploadPreviewObjectUrls?.length) this.resetPreview()
+      return
+    }
 
     this.releaseObjectUrls()
     const objectUrls = files.map((file) => URL.createObjectURL(file))
     this.surfaceTarget.uploadPreviewObjectUrls = objectUrls
     this.surfaceTarget.uploadPreviewSubmitted = false
+    this.surfaceTarget.uploadPreviewExistingServerPhotoCount = this.existingCountValue
     this.surfaceTarget.dataset.uploadPreviewIdentity = this.identityValue
     this.surfaceTarget.dataset.turboPermanent = ""
     this.surfaceTarget.hidden = false
@@ -41,6 +54,18 @@ export default class extends Controller {
     if (!this.hasSurfaceTarget || !this.surfaceTarget.uploadPreviewObjectUrls?.length) return
 
     this.surfaceTarget.uploadPreviewSubmitted = true
+  }
+
+  submitEnd(event) {
+    if (!this.hasSurfaceTarget || !this.element.contains(event.target)) return
+    if (event.detail.success === false) this.surfaceTarget.uploadPreviewSubmitted = false
+  }
+
+  beforeCache() {
+    if (!this.hasSurfaceTarget) return
+
+    if (this.surfaceTarget.uploadPreviewObjectUrls?.length) this.resetPreview()
+    this.restoreSuppressedServerPhotos()
   }
 
   beforeRender(event) {
@@ -66,7 +91,11 @@ export default class extends Controller {
       newState === "pending" &&
       sameRecord
 
-    if (keepPreview) return
+    if (keepPreview) {
+      this.captureServerSurface(newSurface)
+      this.suppressNewServerPhotos(newController)
+      return
+    }
 
     this.surfaceTarget.removeAttribute("data-turbo-permanent")
     newSurface?.removeAttribute("data-turbo-permanent")
@@ -81,6 +110,7 @@ export default class extends Controller {
       const image = document.createElement("img")
       image.src = objectUrl
       image.alt = files.length > 1 ? `Selected upload ${index + 1}` : "Selected upload"
+      image.decoding = "async"
       image.className = files.length > 1 ?
         "aspect-[4/3] w-full rounded-md object-cover" :
         "aspect-[16/9] w-full object-cover"
@@ -91,14 +121,64 @@ export default class extends Controller {
     const status = document.createElement("p")
     status.className = "absolute inset-x-3 bottom-3 rounded-md bg-slate-950/80 px-3 py-2 text-sm font-bold text-white shadow-sm"
     status.textContent = "Saving…"
+    status.role = "status"
+    status.setAttribute("aria-live", "polite")
     status.dataset.uploadPreviewStatus = "true"
 
     this.surfaceTarget.replaceChildren(grid, status)
+    this.scheduleFinishingCopy()
+  }
+
+  scheduleFinishingCopy() {
+    window.clearTimeout(this.surfaceTarget.uploadPreviewStatusTimer)
+    this.surfaceTarget.uploadPreviewStatusTimer = window.setTimeout(() => {
+      const status = this.surfaceTarget.querySelector("[data-upload-preview-status]")
+      if (status && this.surfaceTarget.uploadPreviewObjectUrls?.length) {
+        status.textContent = "Finishing upload…"
+      }
+    }, this.finishingDelayValue)
+  }
+
+  captureServerSurface(source) {
+    this.surfaceTarget.uploadPreviewServerContent = Array.from(source.childNodes, (node) => node.cloneNode(true))
+    this.surfaceTarget.uploadPreviewServerHidden = source.hidden
+  }
+
+  resetPreview() {
+    const surface = this.surfaceTarget
+    this.releaseObjectUrls(surface)
+    const content = (surface.uploadPreviewServerContent || []).map((node) => node.cloneNode(true))
+    surface.replaceChildren(...content)
+    surface.hidden = surface.uploadPreviewServerHidden ?? false
+    surface.removeAttribute("data-turbo-permanent")
+    delete surface.dataset.uploadPreviewIdentity
+  }
+
+  suppressNewServerPhotos(controller) {
+    if (!controller || this.flowValue !== "service-visit-photos") return
+
+    const existingCount = this.surfaceTarget.uploadPreviewExistingServerPhotoCount || 0
+    const serverPhotos = controller.querySelectorAll("[data-upload-preview-server-photo]")
+    serverPhotos.forEach((photo, index) => {
+      if (index < existingCount) return
+
+      photo.hidden = true
+      photo.dataset.uploadPreviewSuppressed = "true"
+    })
+  }
+
+  restoreSuppressedServerPhotos() {
+    this.element.querySelectorAll("[data-upload-preview-suppressed]").forEach((photo) => {
+      photo.hidden = false
+      delete photo.dataset.uploadPreviewSuppressed
+    })
   }
 
   releaseObjectUrls(surface = this.surfaceTarget) {
     const objectUrls = surface.uploadPreviewObjectUrls || []
     objectUrls.forEach((objectUrl) => URL.revokeObjectURL(objectUrl))
+    window.clearTimeout(surface.uploadPreviewStatusTimer)
+    surface.uploadPreviewStatusTimer = undefined
     surface.uploadPreviewObjectUrls = []
     surface.uploadPreviewSubmitted = false
   }

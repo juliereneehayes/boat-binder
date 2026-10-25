@@ -178,7 +178,7 @@ module ApplicationHelper
   def attachment_scan_message(attachment)
     case attachment_scan_status(attachment)
     when "pending"
-      "Saving…"
+      attachment_pending_message(attachment)
     when "rejected"
       "This upload was rejected by security scanning. Retry the upload. If you believe this is an error, contact support@boat-binder.com."
     else
@@ -191,7 +191,7 @@ module ApplicationHelper
     when "clean", "trusted_existing"
       available_label
     when "pending"
-      "Saving…"
+      attachment_pending_message(attachment)
     when "rejected"
       "Rejected"
     else
@@ -208,6 +208,17 @@ module ApplicationHelper
     else
       :warning
     end
+  end
+
+  def attachment_pending_message(attachment)
+    scan = attachment_scan_for(attachment)
+    copy = if scan&.created_at && scan.created_at <= 60.seconds.ago
+      "Finishing upload…"
+    else
+      "Saving…"
+    end
+
+    tag.span(copy, data: { attachment_pending_copy: true })
   end
 
   def attachment_group_scan_state(attachments)

@@ -70,6 +70,139 @@ class AttachmentStatusRefreshTest < ApplicationSystemTestCase
     assert_equal [ preview_url ], revoked_object_urls
   end
 
+  test "clearing a replacement selection restores the original protected image" do
+    account = create_account(name: "Cleared Replacement Account")
+    qualify_self_managed_subscription(account)
+    owner = create_user(email: "cleared-replacement@example.test", role: "owner")
+    create_account_membership(user: owner, account:, access_level: "editor")
+    vessel = create_vessel(account:, name: "Cleared Replacement Vessel")
+    vessel.primary_photo.attach(
+      io: file_fixture("sample.jpg").open,
+      filename: "original-photo.jpg",
+      content_type: "image/jpeg"
+    )
+    trust_attachment(vessel.primary_photo)
+    original_path = vessel_primary_photo_path(vessel, v: vessel.primary_photo.blob.id)
+    sign_in(owner)
+    visit edit_vessel_path(vessel)
+    track_object_urls
+
+    assert_selector "#vessel-primary-photo-upload-preview img[src='#{original_path}']"
+    attach_file "Replace photo", file_fixture("sample.png")
+
+    preview_url = created_object_urls.sole
+    assert_selector "#vessel-primary-photo-upload-preview img[src='#{preview_url}']"
+    assert_no_selector "#vessel-primary-photo-upload-preview img[src='#{original_path}']"
+
+    clear_file_input("Replace photo")
+
+    assert_selector "#vessel-primary-photo-upload-preview img[src='#{original_path}']"
+    assert_no_selector "#vessel-primary-photo-upload-preview img[data-upload-preview-local]"
+    assert_no_selector "#vessel-primary-photo-upload-preview[data-turbo-permanent]"
+    assert_no_text "Saving…"
+    assert_equal [ preview_url ], revoked_object_urls
+  end
+
+  test "clearing a new vessel selection restores the default placeholder" do
+    account = create_account(name: "Cleared New Vessel Account")
+    user = create_user(email: "cleared-new-vessel@example.test")
+    sign_in(user)
+    visit new_vessel_path
+    track_object_urls
+
+    assert_selector "#vessel-primary-photo-upload-preview [role='img']"
+    attach_file "Primary vessel photo", file_fixture("sample.jpg")
+
+    preview_url = created_object_urls.sole
+    assert_selector "#vessel-primary-photo-upload-preview img[src='#{preview_url}']"
+
+    clear_file_input("Primary vessel photo")
+
+    assert_selector "#vessel-primary-photo-upload-preview [role='img']"
+    assert_no_selector "#vessel-primary-photo-upload-preview img[data-upload-preview-local]"
+    assert_equal [ preview_url ], revoked_object_urls
+    assert_field "Owner account", with: ""
+    assert_text account.name
+  end
+
+  test "Turbo cache never restores a revoked local preview on Back navigation" do
+    user = create_user(email: "preview-back-cache@example.test")
+    sign_in(user)
+    visit new_vessel_path
+    track_object_urls
+    attach_file "Primary vessel photo", file_fixture("sample.jpg")
+
+    preview_url = created_object_urls.sole
+    assert_selector "#vessel-primary-photo-upload-preview img[src='#{preview_url}']"
+    click_link "Cancel"
+    assert_current_path vessels_path
+    assert_equal [ preview_url ], revoked_object_urls
+
+    page.go_back
+
+    assert_current_path new_vessel_path
+    assert_selector "#vessel-primary-photo-upload-preview [role='img']"
+    assert_no_selector "img[src^='blob:']"
+    assert_no_selector "#vessel-primary-photo-upload-preview[data-turbo-permanent]"
+  end
+
+  test "an unsuccessful submission cannot carry its preview to an unrelated pending vessel" do
+    user = create_user(email: "preview-submit-failure@example.test")
+    pending_vessel = create_vessel(name: "Unrelated Pending Vessel")
+    pending_vessel.primary_photo.attach(
+      io: file_fixture("sample.png").open,
+      filename: "pending.png",
+      content_type: "image/png"
+    )
+    AttachmentScan.create!(
+      active_storage_blob: pending_vessel.primary_photo.blob,
+      status: "pending",
+      provider: AttachmentScan::PROVIDER
+    )
+    sign_in(user)
+    visit new_vessel_path
+    track_object_urls
+    attach_file "Primary vessel photo", file_fixture("sample.jpg")
+
+    preview_url = created_object_urls.sole
+    page.execute_script(<<~JAVASCRIPT)
+      const surface = document.querySelector("#vessel-primary-photo-upload-preview")
+      const form = surface.closest("[data-controller~='upload-preview']").querySelector("form")
+      surface.uploadPreviewSubmitted = true
+      form.dispatchEvent(new CustomEvent("turbo:submit-end", {
+        bubbles: true,
+        detail: { success: false }
+      }))
+      window.__uploadPreviewSubmittedAfterFailure = surface.uploadPreviewSubmitted
+    JAVASCRIPT
+    assert_equal false, page.evaluate_script("window.__uploadPreviewSubmittedAfterFailure")
+    add_navigation_link(vessel_path(pending_vessel), "Open unrelated pending vessel")
+    click_link "Open unrelated pending vessel"
+
+    assert_current_path vessel_path(pending_vessel)
+    assert_no_selector "img[src='#{preview_url}']"
+    assert_no_selector "img[src^='blob:']"
+    assert_text "Saving…"
+    assert_equal [ preview_url ], revoked_object_urls
+  end
+
+  test "local preview copy becomes reassuring after the fast period" do
+    user = create_user(email: "preview-finishing-copy@example.test")
+    sign_in(user)
+    visit new_vessel_path
+    page.execute_script(<<~JAVASCRIPT)
+      document.querySelector("[data-controller~='upload-preview']")
+        .setAttribute("data-upload-preview-finishing-delay-value", "50")
+    JAVASCRIPT
+
+    attach_file "Primary vessel photo", file_fixture("sample.jpg")
+
+    assert_selector "img[data-upload-preview-local][decoding='async']"
+    assert_selector "[data-upload-preview-status][role='status'][aria-live='polite']", text: "Saving…"
+    assert_selector "[data-upload-preview-status]", text: "Finishing upload…", wait: 5
+    assert_no_text(/GuardDuty|malware|quarantine/i)
+  end
+
   test "service visit photo previews survive submission until protected images are clean" do
     account = create_account(name: "Visit Preview Account")
     qualify_self_managed_subscription(account)
@@ -104,6 +237,54 @@ class AttachmentStatusRefreshTest < ApplicationSystemTestCase
     protected_photo_paths.each { |path| assert_selector "img[src='#{path}']", wait: 10 }
     assert_no_selector "img[data-upload-preview-local='true']"
     assert_equal preview_urls.sort, revoked_object_urls.sort
+  end
+
+  test "service visit preview does not duplicate a newly clean photo while its batch remains pending" do
+    account = create_account(name: "Mixed Visit Preview Account")
+    qualify_self_managed_subscription(account)
+    owner = create_user(email: "mixed-visit-preview@example.test", role: "owner")
+    create_account_membership(user: owner, account:, access_level: "editor")
+    vessel = create_vessel(account:, name: "Mixed Visit Preview Vessel")
+    visit_record = ServiceVisit.create!(asset: vessel, performed_by_user: owner, visit_date: Date.current)
+    visit_record.photos.attach(
+      io: file_fixture("sample.jpg").open,
+      filename: "existing.jpg",
+      content_type: "image/jpeg"
+    )
+    trust_attachment(visit_record.photos.first)
+    existing_photo = visit_record.photos.attachments.first
+    sign_in(owner)
+    visit edit_vessel_service_visit_path(vessel, visit_record)
+    track_object_urls
+
+    attach_file "Choose or take photos", [ file_fixture("sample.jpg"), file_fixture("sample.png") ]
+    click_button "Save visit changes"
+
+    assert_text "Visit report updated."
+    visit_record.reload
+    new_photos = visit_record.photos.attachments.reject { |photo| photo.blob_id == existing_photo.blob_id }
+    assert_equal 2, new_photos.size
+    first_scan = AttachmentScan.find_by!(active_storage_blob_id: new_photos.first.blob_id)
+    second_scan = AttachmentScan.find_by!(active_storage_blob_id: new_photos.second.blob_id)
+    existing_path = service_visit_photo_path(vessel, visit_record, existing_photo)
+    first_new_path = service_visit_photo_path(vessel, visit_record, new_photos.first)
+    second_new_path = service_visit_photo_path(vessel, visit_record, new_photos.second)
+    assert_selector "img[src='#{existing_path}']"
+    assert_selector "img[data-upload-preview-local]", count: 2
+
+    first_scan.update!(status: "clean", status_code: "NO_THREATS_FOUND", completed_at: Time.current)
+    configure_refresh(fast_interval: 50, slow_interval: 50)
+
+    assert_selector "img[data-upload-preview-local]", count: 2, wait: 10
+    assert_selector "img[src='#{existing_path}']"
+    assert_no_selector "img[src='#{first_new_path}']", visible: true
+
+    second_scan.update!(status: "clean", status_code: "NO_THREATS_FOUND", completed_at: Time.current)
+    configure_refresh(fast_interval: 50, slow_interval: 50)
+
+    assert_selector "img[src='#{first_new_path}']", wait: 10
+    assert_selector "img[src='#{second_new_path}']"
+    assert_no_selector "img[data-upload-preview-local]"
   end
 
   test "normal Turbo navigation never carries one vessel photo into another vessel" do
@@ -171,6 +352,25 @@ class AttachmentStatusRefreshTest < ApplicationSystemTestCase
     assert_no_text "Saving…"
     assert_no_text "Processing"
     assert_no_selector "[data-controller='attachment-status-refresh']", visible: :all
+  end
+
+  test "pending PDF copy changes after the fast period without changing refresh semantics" do
+    account = create_account(name: "Pending Copy Account")
+    qualify_self_managed_subscription(account)
+    owner = create_user(email: "pending-copy@example.test", role: "owner")
+    create_account_membership(user: owner, account:, access_level: "editor")
+    create_pending_document(account:, title: "Long PDF upload")
+    sign_in(owner)
+    visit documents_path
+
+    assert_text "Saving…"
+    page.execute_script(<<~JAVASCRIPT)
+      const refresh = document.querySelector("[data-controller='attachment-status-refresh']")
+      refresh.setAttribute("data-attachment-status-refresh-fast-window-value", "50")
+    JAVASCRIPT
+
+    assert_selector "[data-attachment-pending-copy]", text: "Finishing upload…", wait: 5
+    assert_no_text(/GuardDuty|malware|quarantine/i)
   end
 
   test "dirty form input remains intact beyond refresh intervals" do
@@ -250,7 +450,7 @@ class AttachmentStatusRefreshTest < ApplicationSystemTestCase
     scan.update!(status: "clean", status_code: "NO_THREATS_FOUND", completed_at: Time.current)
     sleep 0.2
 
-    assert_text "Saving…"
+    assert_text "Finishing upload…"
     assert_no_link "Open file"
     assert_link "Open file", wait: 5
   end
@@ -289,6 +489,24 @@ class AttachmentStatusRefreshTest < ApplicationSystemTestCase
       const refresh = document.querySelector("[data-controller='attachment-status-refresh']")
       refresh.setAttribute("data-attachment-status-refresh-fast-interval-value", "#{fast_interval}")
       refresh.setAttribute("data-attachment-status-refresh-slow-interval-value", "#{slow_interval}")
+    JAVASCRIPT
+  end
+
+  def clear_file_input(label)
+    input = find_field(label)
+    page.execute_script(<<~JAVASCRIPT, input)
+      arguments[0].value = ""
+      arguments[0].dispatchEvent(new Event("change", { bubbles: true }))
+    JAVASCRIPT
+  end
+
+  def add_navigation_link(path, text)
+    page.execute_script(<<~JAVASCRIPT)
+      const link = document.createElement("a")
+      link.href = #{path.to_json}
+      link.textContent = #{text.to_json}
+      link.style.cssText = "position:fixed;top:0;right:0;z-index:9999;background:white;padding:12px"
+      document.body.appendChild(link)
     JAVASCRIPT
   end
 

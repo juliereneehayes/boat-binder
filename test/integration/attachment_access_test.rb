@@ -284,7 +284,7 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
     get document_path(@document)
 
     assert_response :success
-    assert_includes response.body, "Saving…"
+    assert_includes response.body, "Finishing upload…"
     assert_select "[data-controller='attachment-status-refresh']", count: 0
     assert_select "a[href^=?]", document_file_path(@document), count: 0
   end

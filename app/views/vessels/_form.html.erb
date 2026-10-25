@@ -2,7 +2,7 @@
 
 <div
   data-controller="upload-preview"
-  data-action="turbo:before-render@document->upload-preview#beforeRender"
+  data-action="turbo:before-render@document->upload-preview#beforeRender turbo:before-cache@document->upload-preview#beforeCache turbo:submit-end@document->upload-preview#submitEnd"
   data-upload-preview-flow-value="vessel-primary-photo"
   data-upload-preview-identity-value="<%= vessel.id %>"
   data-upload-preview-state-value="form">

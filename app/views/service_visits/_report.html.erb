@@ -204,7 +204,7 @@
     <section
       class="space-y-3"
       data-controller="upload-preview"
-      data-action="turbo:before-render@document->upload-preview#beforeRender"
+      data-action="turbo:before-render@document->upload-preview#beforeRender turbo:before-cache@document->upload-preview#beforeCache turbo:submit-end@document->upload-preview#submitEnd"
       data-upload-preview-flow-value="service-visit-photos"
       data-upload-preview-identity-value="<%= service_visit.id %>"
       data-upload-preview-state-value="<%= attachment_group_scan_state(service_visit.photos) %>">
@@ -219,9 +219,9 @@
             hidden></div>
           <% service_visit.photos.each do |photo| %>
             <% if attachment_available?(photo) %>
-              <%= image_tag service_visit_photo_path(vessel, service_visit, photo), alt: "", class: "aspect-[4/3] w-full rounded-md object-cover ring-1 ring-slate-200" %>
+              <%= image_tag service_visit_photo_path(vessel, service_visit, photo), alt: "", class: "aspect-[4/3] w-full rounded-md object-cover ring-1 ring-slate-200", data: { upload_preview_server_photo: true } %>
             <% else %>
-              <p class="flex aspect-[4/3] items-center justify-center rounded-md border border-slate-200 bg-slate-50 p-5 text-center text-sm font-semibold text-slate-700"><%= attachment_scan_message(photo) %></p>
+              <p class="flex aspect-[4/3] items-center justify-center rounded-md border border-slate-200 bg-slate-50 p-5 text-center text-sm font-semibold text-slate-700" data-upload-preview-server-photo><%= attachment_scan_message(photo) %></p>
             <% end %>
           <% end %>
         </div>

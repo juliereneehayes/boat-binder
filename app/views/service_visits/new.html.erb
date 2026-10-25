@@ -10,7 +10,8 @@
 
   <div
     data-controller="upload-preview"
-    data-action="turbo:before-render@document->upload-preview#beforeRender"
+    data-action="turbo:before-render@document->upload-preview#beforeRender turbo:before-cache@document->upload-preview#beforeCache turbo:submit-end@document->upload-preview#submitEnd"
+    data-upload-preview-existing-count-value="<%= @service_visit.photos.attachments.size %>"
     data-upload-preview-flow-value="service-visit-photos"
     data-upload-preview-identity-value="<%= @service_visit.id %>"
     data-upload-preview-state-value="form">
