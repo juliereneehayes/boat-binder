@@ -37,9 +37,9 @@ class AttachmentStatusRefreshTest < ApplicationSystemTestCase
     _account, owner, vessel, scan = create_vessel_refresh_scenario("dirty")
     sign_in(owner)
     visit vessel_path(vessel)
-    configure_refresh(fast_interval: 50, slow_interval: 50)
 
     fill_in "binder_note_title", with: "Unsaved customer note"
+    configure_refresh(fast_interval: 50, slow_interval: 50)
     scan.update!(status: "clean", status_code: "NO_THREATS_FOUND", completed_at: Time.current)
     wait_for_refresh_checks
 
@@ -56,9 +56,10 @@ class AttachmentStatusRefreshTest < ApplicationSystemTestCase
     _account, owner, vessel, scan = create_vessel_refresh_scenario("focus")
     sign_in(owner)
     visit vessel_path(vessel)
-    configure_refresh(fast_interval: 50, slow_interval: 50)
 
     find_field("binder_note_title").click
+    assert_equal "binder_note_title", page.evaluate_script("document.activeElement.id")
+    configure_refresh(fast_interval: 50, slow_interval: 50)
     scan.update!(status: "clean", status_code: "NO_THREATS_FOUND", completed_at: Time.current)
     wait_for_refresh_checks
 
@@ -78,9 +79,9 @@ class AttachmentStatusRefreshTest < ApplicationSystemTestCase
     scan = create_pending_document(account:, title: "Hidden transition")
     sign_in(owner)
     visit documents_path
-    configure_refresh(fast_interval: 50, slow_interval: 50)
 
     set_document_hidden(true)
+    configure_refresh(fast_interval: 50, slow_interval: 50)
     scan.update!(status: "clean", status_code: "NO_THREATS_FOUND", completed_at: Time.current)
     wait_for_refresh_checks
 
