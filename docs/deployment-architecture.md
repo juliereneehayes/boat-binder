@@ -1,6 +1,8 @@
 # Deployment Architecture Review
 
-This review documents the current Boat Binder deployment shape and the work required to add a dedicated staging environment. It is intentionally discovery-only: it does not implement staging, change deployment behavior, or introduce new infrastructure.
+This review documents the current Boat Binder deployment shape, including the established shared
+staging workflow. It is documentation-only: it does not change deployment behavior or introduce new
+infrastructure.
 
 ## Current Architecture
 
@@ -71,7 +73,7 @@ Rails signing uses `SECRET_KEY_BASE` from the production Heroku environment. Pro
 does not set `RAILS_MASTER_KEY`, and the repository no longer carries `config/credentials.yml.enc` as
 an alternate source. Retired signing and master keys must not be restored as fallbacks.
 
-GitHub Actions CI runs on pull requests and pushes to `main`. It includes separate jobs for Ruby security scanning, importmap audit, RuboCop, Rails tests, and system tests. CI uses PostgreSQL service containers and does not deploy the app.
+GitHub Actions CI runs on pull requests and pushes to `main`. It includes separate jobs for Ruby security scanning, importmap audit, RuboCop, Rails tests, and system tests. CI uses PostgreSQL service containers and does not deploy the app. After an approved pull request is merged and required checks complete, the existing Heroku GitHub integration automatically deploys `main` to the separate shared staging app. Feature and pull-request branches do not deploy directly to shared staging.
 
 Documentation currently includes:
 
@@ -100,8 +102,8 @@ work is separately owned by #103.
 
 - The separate Heroku staging app has no dedicated Rails environment file or checked-in staging
   configuration in the repository.
-- There is no documented deployment workflow from PR to staging to production.
-- CI validates code but does not deploy, promote, or run post-deploy smoke checks.
+- CI validates code but does not run post-deploy smoke checks. Human staging acceptance follows the
+  automatic deployment of `main` by the existing Heroku GitHub integration.
 - Production host authorization is still commented out. That may be acceptable behind Heroku routing, but staging should force an explicit decision for allowed hosts.
 - Production email configuration uses `ENV.fetch`, so a staging app using the production environment will fail to boot unless all SMTP and `APP_HOST` variables are present.
 - Production Active Storage uses one generic `:amazon` service. Staging needs a distinct bucket or prefix to avoid mixing user uploads with production files.
@@ -112,9 +114,9 @@ work is separately owned by #103.
   public or staging demo must be designed independently under #103 rather than weakening the
   production guard or restoring the retired contest workflow.
 
-## Production Assumptions Discovered
+## Environment Assumptions Discovered
 
-The following values or behaviors will need environment-specific decisions before staging exists:
+The following values or behaviors require environment-specific handling:
 
 - `APP_HOST` controls email and service-visit report links.
 - `SECRET_KEY_BASE` is required in production and must be unique to that environment.
@@ -148,7 +150,7 @@ Development
 
 ### Staging
 
-Create a separate Heroku app, for example `boat-binder-staging`, running the same Rails production environment:
+Use the existing separate shared Heroku staging app, running the same Rails production environment:
 
 - `RAILS_ENV=production`
 - separate `DATABASE_URL`
@@ -226,8 +228,10 @@ month and prorated by runtime. It does not require Redis or another add-on. Conf
 
 ### Deployment and smoke verification
 
-Deploy the reviewed commit first. Then enable exactly one worker; a `Procfile` declaration does not
-alter the running formation by itself:
+After an approved pull request merges, allow the existing Heroku GitHub integration to deploy
+`main`. The human owner then performs staging acceptance. When an explicitly authorized operational
+change requires enabling the worker, enable exactly one; a `Procfile` declaration does not alter the
+running formation by itself:
 
 ```sh
 heroku ps:scale worker=1:Basic --app boat-binder-staging
@@ -260,9 +264,10 @@ completion marker should appear after startup and the ready count should return 
 stores jobs in PostgreSQL, and graceful `TERM` handling returns unfinished work to the queue. Do not
 run destructive queue-table cleanup commands during this check.
 
-After staging passes, repeat the process inspection, one-worker scaling, harmless smoke job, backlog
-check, web health check, and connection-headroom review for production. Do not enqueue customer
-notification jobs until the production worker is confirmed healthy.
+After staging passes and production deployment is separately approved by the human owner, repeat the
+process inspection, one-worker scaling, harmless smoke job, backlog check, web health check, and
+connection-headroom review for production. Do not enqueue customer notification jobs until the
+production worker is confirmed healthy.
 
 ### Rollback
 
@@ -279,21 +284,26 @@ customer-data migration is involved.
 
 ## Recommended Deployment Flow
 
-1. Open PR from feature branch.
+1. Open or update a pull request from a feature branch after appropriate local verification.
 2. Require GitHub Actions CI to pass.
-3. Merge to `main`.
-4. Deploy `main` to staging automatically or manually.
-5. Run smoke checks on staging:
+3. Obtain human approval and resolve review conversations.
+4. Merge to `main`.
+5. Allow the existing Heroku GitHub integration to deploy `main` automatically to shared staging.
+   Feature and pull-request branches do not deploy directly to shared staging.
+6. Have the human owner run staging acceptance checks:
    - login
    - dashboard load
    - create/edit a vessel record
    - upload a safe test file/photo
    - request a password reset or invitation in staging email mode
    - send a Stripe CLI/Dashboard test webhook to staging
-6. Promote the same reviewed commit to production.
-7. Confirm release-phase migrations, the one-worker formation, queue health, and production web health.
+7. Treat production deployment as a separate, explicitly human-approved action.
+8. After that approval and deployment, confirm release-phase migrations, the one-worker formation,
+   queue health, and production web health.
 
-Heroku Pipelines are a good fit if the team wants explicit promotion from staging to production. GitHub Actions deployment can be added later if the team wants deployment events, environment approvals, or post-deploy smoke tests in CI.
+The existing Heroku GitHub integration is the deployment path from `main` to shared staging. A future
+Review App workflow could provide pull-request-specific environments only if it is separately
+designed and approved; until then, shared staging represents `main` only.
 
 ## Environment Separation Recommendations
 
@@ -311,7 +321,7 @@ Heroku Pipelines are a good fit if the team wants explicit promotion from stagin
   demo belongs to #103 and requires a separate design and security review.
 - Document which environment may contain fictional/demo data and which must not.
 
-## Documentation Updates Needed Once Staging Exists
+## Documentation Follow-Up
 
 - Update `README.md` with the staging URL and the high-level deployment flow.
 - Expand `docs/configuration.md` into per-environment config var tables.
@@ -327,7 +337,6 @@ Heroku Pipelines are a good fit if the team wants explicit promotion from stagin
 - Confirm database connection headroom before increasing web or queue concurrency beyond the documented one-process defaults.
 - Confirm whether production uses a dedicated S3 bucket and whether staging should use a separate AWS account, IAM user, bucket, or prefix.
 - Confirm whether Mailgun staging should send real email, use a sandbox, or redirect to internal test recipients.
-- Confirm whether Heroku deploys are manual, GitHub-connected, or pipeline-based today.
 - Decide whether staging should run `RAILS_ENV=production` or a dedicated Rails `staging` environment. The recommendation is `RAILS_ENV=production` for parity unless a concrete staging-only need appears.
 - Decide whether host authorization should be explicitly configured once staging and production domains are finalized.
 - Reconcile Stripe plan Price ID documentation with the application plan catalog when the plan catalog is present in the deployed branch.
@@ -336,13 +345,10 @@ Heroku Pipelines are a good fit if the team wants explicit promotion from stagin
 
 Recommended implementation order:
 
-1. Create the Heroku staging app and attach a separate PostgreSQL database.
-2. Configure a staging-only `SECRET_KEY_BASE`, plus staging `APP_HOST`, SMTP, S3, and Stripe test-mode
-   credentials. Do not restore retired Build Week configuration.
-3. Create a staging S3 bucket and least-privilege IAM credentials.
-4. Configure a staging Stripe webhook endpoint and store its signing secret.
-5. Deploy and validate the dedicated Solid Queue worker in staging, then explicitly scale one production worker before queued transactional work is enabled.
-6. Add a deployment runbook with staging smoke tests and production promotion steps.
-7. Add explicit host authorization for finalized production and staging domains if appropriate.
-8. Add optional GitHub Actions deployment automation or Heroku Pipeline promotion after manual deployment is stable.
-9. Add environment-specific observability checks for email delivery, Stripe webhook receipt, background jobs, and Active Storage uploads.
+1. Confirm the shared staging app retains environment-specific secrets, storage, email, database, and
+   Stripe test-mode configuration. Do not restore retired Build Week configuration.
+2. Add a deployment runbook covering human staging acceptance, separately approved production
+   deployment, rollback, and release-phase migration checks.
+3. Add explicit host authorization for finalized production and staging domains if appropriate.
+4. Add environment-specific observability checks for email delivery, Stripe webhook receipt,
+   background jobs, and Active Storage uploads.
