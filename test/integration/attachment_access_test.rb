@@ -98,6 +98,28 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
     assert_select "[src^='/rails/active_storage'], [href^='/rails/active_storage']", count: 0
   end
 
+  test "document index batches attachment scan state for every rendered file" do
+    4.times do |index|
+      document = Document.create!(
+        account: @account,
+        asset: @vessel,
+        title: "Additional policy #{index}",
+        document_type: "insurance"
+      )
+      document.file.attach(fixture_file_upload("sample.pdf", "application/pdf"))
+      trust_attachment(document.file)
+    end
+    sign_in_as(@owner)
+
+    scan_queries = count_sql_queries(->(sql) { sql.include?(%q("attachment_scans")) }) do
+      get documents_path
+    end
+
+    assert_response :success
+    assert_equal 1, scan_queries
+    assert_select "a[href^=?]", document_file_path(@document), minimum: 1
+  end
+
   test "logged out requests cannot retrieve protected attachments" do
     [
       document_file_path(@document),
@@ -203,7 +225,8 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
     document_scan.update!(status: "pending", status_code: nil, completed_at: nil)
     get document_path(@document)
     assert_response :success
-    assert_includes response.body, "Processing"
+    assert_includes response.body, "Saving…"
+    assert_not_includes response.body, "Processing"
     assert_select "[data-controller='attachment-status-refresh']" \
       "[data-attachment-status-refresh-fast-interval-value='5000']" \
       "[data-attachment-status-refresh-slow-interval-value='30000']" \
@@ -228,13 +251,14 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
     get document_path(@document)
     assert_select "[data-controller='attachment-status-refresh']", count: 0
     assert_select "a[href^=?]", document_file_path(@document), minimum: 1
+    assert_not_includes response.body, "Saving…"
     assert_not_includes response.body, "Processing"
 
     vessel_scan = AttachmentScan.find_by!(active_storage_blob: @vessel.primary_photo.blob)
     vessel_scan.update!(status: "pending", status_code: nil, completed_at: nil)
     get vessel_path(@vessel)
     assert_response :success
-    assert_includes response.body, "Processing"
+    assert_includes response.body, "Saving…"
     assert_select "[data-controller='attachment-status-refresh']", count: 1
     assert_select "img[src^=?]", vessel_primary_photo_path(@vessel), count: 0
 
@@ -242,7 +266,7 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
     photo_scan.update!(status: "pending", status_code: nil, completed_at: nil)
     get vessel_service_visit_path(@vessel, @visit)
     assert_response :success
-    assert_includes response.body, "Processing"
+    assert_includes response.body, "Saving…"
     assert_select "[data-controller='attachment-status-refresh']", count: 1
     assert_select "img[src=?]", service_visit_photo_path(@vessel, @visit, @photo), count: 0
   end
@@ -260,7 +284,7 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
     get document_path(@document)
 
     assert_response :success
-    assert_includes response.body, "Processing"
+    assert_includes response.body, "Finishing upload…"
     assert_select "[data-controller='attachment-status-refresh']", count: 0
     assert_select "a[href^=?]", document_file_path(@document), count: 0
   end
@@ -464,6 +488,18 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
   end
 
   private
+
+  def count_sql_queries(matcher)
+    count = 0
+    callback = lambda do |_name, _started, _finished, _unique_id, payload|
+      next if payload[:name] == "SCHEMA" || payload[:cached]
+
+      count += 1 if matcher.call(payload[:sql].to_s)
+    end
+
+    ActiveSupport::Notifications.subscribed(callback, "sql.active_record") { yield }
+    count
+  end
 
   def assert_private_no_store
     assert_includes response.headers.fetch("Cache-Control"), "private"

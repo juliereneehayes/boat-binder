@@ -138,7 +138,7 @@ module ApplicationHelper
     else
       tag.div class: placeholder_class, role: "img", aria: { label: "Primary photo placeholder for #{vessel.name}" } do
         content = [
-          tag.div(vessel.name.first.to_s.upcase, class: "text-4xl font-black text-white/90"),
+          tag.div(vessel.name.to_s.first.to_s.upcase, class: "text-4xl font-black text-white/90"),
           tag.div(vessel.location_label, class: "mt-2 text-xs font-black uppercase tracking-normal text-[#B9D5DA]")
         ]
         if vessel.primary_photo.attached?
@@ -147,6 +147,24 @@ module ApplicationHelper
         safe_join(content)
       end
     end
+  end
+
+  def vessel_primary_photo_upload_surface(vessel, surface_class:, image_class:, placeholder_class:)
+    tag.div(
+      vessel_primary_photo(vessel, image_class:, placeholder_class:),
+      id: "vessel-primary-photo-upload-preview",
+      class: surface_class,
+      data: {
+        turbo_permanent: true,
+        upload_preview_target: "surface"
+      }
+    )
+  end
+
+  def vessel_primary_photo_scan_state(vessel)
+    return "empty" unless vessel.primary_photo.attached?
+
+    attachment_scan_status(vessel.primary_photo) || "failed"
   end
 
   def attachment_available?(attachment)
@@ -160,7 +178,7 @@ module ApplicationHelper
   def attachment_scan_message(attachment)
     case attachment_scan_status(attachment)
     when "pending"
-      "Processing"
+      attachment_pending_message(attachment)
     when "rejected"
       "This upload was rejected by security scanning. Retry the upload. If you believe this is an error, contact support@boat-binder.com."
     else
@@ -173,7 +191,7 @@ module ApplicationHelper
     when "clean", "trusted_existing"
       available_label
     when "pending"
-      "Processing"
+      attachment_pending_message(attachment)
     when "rejected"
       "Rejected"
     else
@@ -190,6 +208,29 @@ module ApplicationHelper
     else
       :warning
     end
+  end
+
+  def attachment_pending_message(attachment)
+    scan = attachment_scan_for(attachment)
+    copy = if scan&.created_at && scan.created_at <= 60.seconds.ago
+      "Finishing upload…"
+    else
+      "Saving…"
+    end
+
+    tag.span(copy, data: { attachment_pending_copy: true })
+  end
+
+  def attachment_group_scan_state(attachments)
+    attachments = attachments.to_a
+    return "empty" if attachments.empty?
+
+    statuses = attachments.map { |attachment| attachment_scan_status(attachment) }
+    return "pending" if statuses.include?("pending")
+    return "rejected" if statuses.include?("rejected")
+    return "failed" if statuses.any? { |status| status.blank? || status == "failed" }
+
+    "clean"
   end
 
   def attachment_status_refresh_tag

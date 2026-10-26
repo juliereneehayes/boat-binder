@@ -1,0 +1,344 @@
+import { Controller } from "@hotwired/stimulus"
+import { ATTACHMENT_INITIAL_SAVING_WINDOW_MS } from "controllers/attachment_timing"
+
+const previewTransfers = new Map()
+const PREVIEW_DECODE_WAIT_MS = 1000
+
+export default class extends Controller {
+  static targets = [ "surface" ]
+  static values = {
+    existingCount: { type: Number, default: 0 },
+    finishingDelay: { type: Number, default: ATTACHMENT_INITIAL_SAVING_WINDOW_MS },
+    flow: String,
+    identity: String,
+    state: String
+  }
+
+  connect() {
+    if (!this.hasSurfaceTarget) return
+
+    const transfer = previewTransfers.get(this.surfaceTarget.id)
+    if (transfer && this.transferMatchesCurrentContext(transfer)) {
+      this.surfaceTarget.uploadPreviewFiles = transfer.files
+      this.surfaceTarget.uploadPreviewServerContent = transfer.serverContent
+      this.surfaceTarget.uploadPreviewServerHidden = transfer.serverHidden
+      this.surfaceTarget.uploadPreviewExistingServerPhotoCount = transfer.existingServerPhotoCount
+      this.surfaceTarget.uploadPreviewStartedAt = transfer.startedAt
+      this.surfaceTarget.uploadPreviewFinishingDelay = transfer.finishingDelay
+      this.surfaceTarget.uploadPreviewSubmitted = true
+      this.surfaceTarget.uploadPreviewIdentity = this.identityValue
+      this.surfaceTarget.dataset.uploadPreviewIdentity = this.identityValue
+      this.surfaceTarget.dataset.turboPermanent = ""
+      this.surfaceTarget.hidden = false
+
+      const objectUrls = transfer.objectUrls || transfer.files.map((file) => URL.createObjectURL(file))
+      this.surfaceTarget.uploadPreviewObjectUrls = objectUrls
+      previewTransfers.delete(this.surfaceTarget.id)
+      if (this.surfaceTarget.querySelector("img[data-upload-preview-local]")) {
+        this.scheduleFinishingCopy()
+      } else {
+        this.render(transfer.files, objectUrls)
+      }
+      return
+    }
+
+    if (transfer) this.discardTransfer()
+
+    if (this.surfaceTarget.uploadPreviewObjectUrls?.length) {
+      this.surfaceTarget.dataset.uploadPreviewIdentity = this.identityValue
+      return
+    }
+
+    this.captureServerSurface(this.surfaceTarget)
+  }
+
+  disconnect() {
+    if (!this.hasSurfaceTarget) return
+
+    const surface = this.surfaceTarget
+    queueMicrotask(() => {
+      if (!surface.isConnected && !previewTransfers.has(surface.id)) this.releaseObjectUrls(surface)
+    })
+  }
+
+  select(event) {
+    const files = Array.from(event.target.files || []).filter((file) => file.type.startsWith("image/"))
+    if (!this.hasSurfaceTarget) return
+
+    if (files.length === 0) {
+      if (this.surfaceTarget.uploadPreviewObjectUrls?.length) this.resetPreview()
+      return
+    }
+
+    this.releaseObjectUrls()
+    const objectUrls = files.map((file) => URL.createObjectURL(file))
+    this.surfaceTarget.uploadPreviewFiles = files
+    this.surfaceTarget.uploadPreviewObjectUrls = objectUrls
+    this.surfaceTarget.uploadPreviewSubmitted = false
+    this.surfaceTarget.uploadPreviewIdentity = this.identityValue
+    this.surfaceTarget.uploadPreviewExistingServerPhotoCount = this.existingCountValue
+    this.surfaceTarget.uploadPreviewStartedAt = window.performance.now()
+    this.surfaceTarget.uploadPreviewFinishingDelay = this.finishingDelayValue
+    this.surfaceTarget.dataset.uploadPreviewIdentity = this.identityValue
+    this.surfaceTarget.dataset.turboPermanent = ""
+    this.surfaceTarget.hidden = false
+    this.render(files, objectUrls)
+  }
+
+  submit() {
+    if (!this.hasSurfaceTarget || !this.surfaceTarget.uploadPreviewObjectUrls?.length) return
+
+    this.surfaceTarget.uploadPreviewSubmitted = true
+  }
+
+  submitEnd(event) {
+    if (!this.hasSurfaceTarget || !this.element.contains(event.target)) return
+    if (event.detail.success === false) {
+      this.surfaceTarget.uploadPreviewSubmitted = false
+      previewTransfers.delete(this.surfaceTarget.id)
+    }
+  }
+
+  beforeCache() {
+    if (!this.hasSurfaceTarget) return
+
+    const surface = this.surfaceTarget
+    const files = surface.uploadPreviewFiles || []
+    const submitted = surface.uploadPreviewSubmitted === true
+    const transfer = submitted && files.length ? {
+      files,
+      flow: this.flowValue,
+      identity: surface.uploadPreviewIdentity ?? surface.dataset.uploadPreviewIdentity ?? this.identityValue,
+      existingServerPhotoCount: surface.uploadPreviewExistingServerPhotoCount,
+      startedAt: surface.uploadPreviewStartedAt,
+      finishingDelay: surface.uploadPreviewFinishingDelay
+    } : null
+
+    if (surface.uploadPreviewObjectUrls?.length) this.resetPreview()
+    if (transfer) {
+      previewTransfers.set(surface.id, transfer)
+      queueMicrotask(() => this.restoreCurrentSurfaceDuringTransfer(surface, transfer))
+    }
+    this.restoreSuppressedServerPhotos()
+  }
+
+  beforeRender(event) {
+    if (!this.hasSurfaceTarget) return
+
+    const newSurface = event.detail.newBody.querySelector(`#${CSS.escape(this.surfaceTarget.id)}`)
+    let transfer = previewTransfers.get(this.surfaceTarget.id)
+    if (transfer && !this.transferMatchesCurrentContext(transfer)) {
+      this.discardTransfer()
+      transfer = null
+    }
+    if (!this.surfaceTarget.uploadPreviewObjectUrls?.length && !transfer) {
+      this.surfaceTarget.removeAttribute("data-turbo-permanent")
+      newSurface?.removeAttribute("data-turbo-permanent")
+      return
+    }
+
+    const newController = newSurface?.closest("[data-controller~='upload-preview']")
+    const newFlow = newController?.dataset.uploadPreviewFlowValue
+    const newIdentity = newController?.dataset.uploadPreviewIdentityValue || ""
+    const newState = newController?.dataset.uploadPreviewStateValue
+    const currentIdentity = transfer?.identity ?? this.surfaceTarget.uploadPreviewIdentity ?? this.surfaceTarget.dataset.uploadPreviewIdentity ?? this.identityValue ?? ""
+    const successfulCreate = currentIdentity === "" && this.stateValue === "form"
+    const sameRecord = successfulCreate || currentIdentity === newIdentity
+    const keepPreview = (transfer?.files.length || this.surfaceTarget.uploadPreviewSubmitted) &&
+      newSurface &&
+      newFlow === this.flowValue &&
+      newState === "pending" &&
+      sameRecord
+
+    if (keepPreview) {
+      this.suppressNewServerPhotos(newController)
+      if (!transfer) {
+        transfer = {
+          files: this.surfaceTarget.uploadPreviewFiles,
+          flow: this.flowValue,
+          identity: currentIdentity,
+          existingServerPhotoCount: this.surfaceTarget.uploadPreviewExistingServerPhotoCount,
+          startedAt: this.surfaceTarget.uploadPreviewStartedAt,
+          finishingDelay: this.surfaceTarget.uploadPreviewFinishingDelay
+        }
+        this.resetPreview()
+        previewTransfers.set(this.surfaceTarget.id, transfer)
+      }
+      transfer.serverContent = Array.from(newSurface.childNodes, (node) => node.cloneNode(true))
+      transfer.serverHidden = newSurface.hidden
+      transfer.flow = newFlow
+      transfer.identity = newIdentity
+      const images = this.prepareTransferSurface(newSurface, transfer)
+      event.preventDefault()
+      Promise.race([
+        Promise.allSettled(images.map((image) => image.decode())),
+        new Promise((resolve) => window.setTimeout(resolve, PREVIEW_DECODE_WAIT_MS))
+      ]).then(() => event.detail.resume())
+      return
+    }
+
+    this.discardTransfer()
+    newSurface?.removeAttribute("data-turbo-permanent")
+  }
+
+  render(files, objectUrls) {
+    this.renderSurface(this.surfaceTarget, files, objectUrls)
+    this.scheduleFinishingCopy()
+  }
+
+  renderSurface(surface, files, objectUrls) {
+    const grid = document.createElement("div")
+    grid.className = files.length > 1 ? "grid grid-cols-2 gap-2" : ""
+
+    objectUrls.forEach((objectUrl, index) => {
+      const image = document.createElement("img")
+      image.src = objectUrl
+      image.alt = files.length > 1 ? `Selected upload ${index + 1}` : "Selected upload"
+      image.decoding = "async"
+      image.className = files.length > 1 ?
+        "aspect-[4/3] w-full rounded-md object-cover" :
+        "aspect-[16/10] w-full object-cover"
+      image.dataset.uploadPreviewLocal = "true"
+      grid.appendChild(image)
+    })
+
+    const status = document.createElement("p")
+    status.className = "absolute inset-x-3 bottom-3 rounded-md bg-slate-950/80 px-3 py-2 text-sm font-bold text-white shadow-sm"
+    status.textContent = this.finishingCopyDue(surface) ? "Finishing upload…" : "Saving…"
+    status.setAttribute("role", "status")
+    status.setAttribute("aria-live", "polite")
+    status.dataset.uploadPreviewStatus = "true"
+
+    surface.replaceChildren(grid, status)
+  }
+
+  scheduleFinishingCopy() {
+    window.clearTimeout(this.surfaceTarget.uploadPreviewStatusTimer)
+    const delay = this.finishingCopyRemainingDuration(this.surfaceTarget)
+    if (delay <= 0) {
+      this.showFinishingCopy()
+      return
+    }
+
+    this.surfaceTarget.uploadPreviewStatusTimer = window.setTimeout(() => {
+      this.showFinishingCopy()
+    }, delay)
+  }
+
+  finishingCopyDue(surface = this.surfaceTarget) {
+    return this.finishingCopyRemainingDuration(surface) <= 0
+  }
+
+  finishingCopyRemainingDuration(surface = this.surfaceTarget) {
+    const startedAt = surface.uploadPreviewStartedAt ?? window.performance.now()
+    const finishingDelay = surface.uploadPreviewFinishingDelay ?? this.finishingDelayValue
+
+    return finishingDelay - (window.performance.now() - startedAt)
+  }
+
+  showFinishingCopy() {
+    const status = this.surfaceTarget.querySelector("[data-upload-preview-status]")
+    if (status && this.surfaceTarget.uploadPreviewObjectUrls?.length) {
+      status.textContent = "Finishing upload…"
+    }
+  }
+
+  captureServerSurface(source) {
+    this.surfaceTarget.uploadPreviewServerContent = Array.from(source.childNodes, (node) => node.cloneNode(true))
+    this.surfaceTarget.uploadPreviewServerHidden = source.hidden
+  }
+
+  prepareTransferSurface(surface, transfer) {
+    const objectUrls = transfer.files.map((file) => URL.createObjectURL(file))
+    transfer.objectUrls = objectUrls
+    surface.uploadPreviewFiles = transfer.files
+    surface.uploadPreviewObjectUrls = objectUrls
+    surface.uploadPreviewSubmitted = true
+    surface.uploadPreviewIdentity = transfer.identity
+    surface.uploadPreviewExistingServerPhotoCount = transfer.existingServerPhotoCount
+    surface.uploadPreviewStartedAt = transfer.startedAt
+    surface.uploadPreviewFinishingDelay = transfer.finishingDelay
+    surface.dataset.uploadPreviewIdentity = transfer.identity
+    surface.hidden = false
+    this.renderSurface(surface, transfer.files, objectUrls)
+
+    return Array.from(surface.querySelectorAll("img[data-upload-preview-local]"))
+  }
+
+  restoreCurrentSurfaceDuringTransfer(surface, transfer) {
+    if (!surface.isConnected || surface.uploadPreviewObjectUrls?.length) return
+    if (previewTransfers.get(surface.id) !== transfer) return
+
+    const objectUrls = transfer.files.map((file) => URL.createObjectURL(file))
+    surface.uploadPreviewFiles = transfer.files
+    surface.uploadPreviewObjectUrls = objectUrls
+    surface.uploadPreviewSubmitted = true
+    surface.uploadPreviewIdentity = this.identityValue
+    surface.uploadPreviewExistingServerPhotoCount = transfer.existingServerPhotoCount
+    surface.uploadPreviewStartedAt = transfer.startedAt
+    surface.uploadPreviewFinishingDelay = transfer.finishingDelay
+    surface.dataset.uploadPreviewIdentity = this.identityValue
+    surface.hidden = false
+    this.renderSurface(surface, transfer.files, objectUrls)
+    this.scheduleFinishingCopy()
+  }
+
+  resetPreview() {
+    const surface = this.surfaceTarget
+    this.releaseObjectUrls(surface)
+    const content = (surface.uploadPreviewServerContent || []).map((node) => node.cloneNode(true))
+    surface.replaceChildren(...content)
+    surface.hidden = surface.uploadPreviewServerHidden ?? false
+    surface.removeAttribute("data-turbo-permanent")
+    delete surface.dataset.uploadPreviewIdentity
+  }
+
+  suppressNewServerPhotos(controller) {
+    if (!controller || this.flowValue !== "service-visit-photos") return
+
+    const existingCount = this.surfaceTarget.uploadPreviewExistingServerPhotoCount || 0
+    const serverPhotos = controller.querySelectorAll("[data-upload-preview-server-photo]")
+    serverPhotos.forEach((photo, index) => {
+      if (index < existingCount) return
+
+      photo.hidden = true
+      photo.classList.add("hidden")
+      photo.dataset.uploadPreviewSuppressed = "true"
+    })
+  }
+
+  restoreSuppressedServerPhotos() {
+    this.element.querySelectorAll("[data-upload-preview-suppressed]").forEach((photo) => {
+      photo.hidden = false
+      photo.classList.remove("hidden")
+      delete photo.dataset.uploadPreviewSuppressed
+    })
+  }
+
+  transferMatchesCurrentContext(transfer) {
+    return transfer.flow === this.flowValue && transfer.identity === this.identityValue
+  }
+
+  discardTransfer() {
+    const transfer = previewTransfers.get(this.surfaceTarget.id)
+    transfer?.objectUrls?.forEach((objectUrl) => URL.revokeObjectURL(objectUrl))
+    previewTransfers.delete(this.surfaceTarget.id)
+    this.releaseObjectUrls()
+    this.surfaceTarget.removeAttribute("data-turbo-permanent")
+    delete this.surfaceTarget.dataset.uploadPreviewIdentity
+  }
+
+  releaseObjectUrls(surface = this.surfaceTarget) {
+    const objectUrls = surface.uploadPreviewObjectUrls || []
+    objectUrls.forEach((objectUrl) => URL.revokeObjectURL(objectUrl))
+    window.clearTimeout(surface.uploadPreviewStatusTimer)
+    surface.uploadPreviewStatusTimer = undefined
+    surface.uploadPreviewObjectUrls = []
+    surface.uploadPreviewFiles = []
+    surface.uploadPreviewSubmitted = false
+    surface.uploadPreviewStartedAt = undefined
+    surface.uploadPreviewFinishingDelay = undefined
+    previewTransfers.delete(surface.id)
+    delete surface.uploadPreviewIdentity
+  }
+}
