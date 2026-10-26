@@ -1,11 +1,12 @@
 import { Controller } from "@hotwired/stimulus"
 import { Turbo } from "@hotwired/turbo-rails"
+import { ATTACHMENT_INITIAL_SAVING_WINDOW_MS } from "controllers/attachment_timing"
 
 export default class extends Controller {
   static values = {
     fastInterval: { type: Number, default: 5000 },
     slowInterval: { type: Number, default: 30000 },
-    fastWindow: { type: Number, default: 60000 },
+    fastWindow: { type: Number, default: ATTACHMENT_INITIAL_SAVING_WINDOW_MS },
     scanAge: Number,
     remainingDuration: Number
   }

@@ -13,7 +13,8 @@ class AttachmentStatusRefreshTest < ApplicationSystemTestCase
     attach_file "Primary vessel photo", file_fixture("sample.jpg")
 
     preview_url = created_object_urls.sole
-    assert_selector "#vessel-primary-photo-upload-preview img[src='#{preview_url}']"
+    local_preview = find("#vessel-primary-photo-upload-preview img[src='#{preview_url}']")
+    assert_includes local_preview[:class], "aspect-[16/10]"
     assert_text "Saving…"
 
     fill_in "Vessel name", with: "Preview Passage"
@@ -29,12 +30,16 @@ class AttachmentStatusRefreshTest < ApplicationSystemTestCase
     assert pending_preview_url.start_with?("blob:")
     assert_includes revoked_object_urls, preview_url
     refute_includes revoked_object_urls, pending_preview_url
+    pending_height = page.evaluate_script("document.querySelector('#vessel-primary-photo-upload-preview img').getBoundingClientRect().height")
 
     scan = AttachmentScan.find_by!(active_storage_blob: vessel.primary_photo.blob)
     scan.update!(status: "clean", status_code: "NO_THREATS_FOUND", completed_at: Time.current)
     configure_refresh(fast_interval: 50, slow_interval: 50)
 
-    assert_selector "img[src='#{vessel_primary_photo_path(vessel, v: vessel.primary_photo.blob.id)}']", wait: 10
+    server_image = find("img[src='#{vessel_primary_photo_path(vessel, v: vessel.primary_photo.blob.id)}']", wait: 10)
+    assert_includes server_image[:class], "aspect-[16/10]"
+    server_height = page.evaluate_script("document.querySelector('#vessel-primary-photo-upload-preview img').getBoundingClientRect().height")
+    assert_in_delta pending_height, server_height, 1
     assert_no_selector "img[src^='blob:']"
     assert_equal created_object_urls.sort, revoked_object_urls.sort
   end
@@ -208,6 +213,98 @@ class AttachmentStatusRefreshTest < ApplicationSystemTestCase
     assert_selector "[data-upload-preview-status][role='status'][aria-live='polite']", text: "Saving…"
     assert_selector "[data-upload-preview-status]", text: "Finishing upload…", wait: 5
     assert_no_text(/GuardDuty|malware|quarantine/i)
+  end
+
+  test "repeated pending refreshes preserve preview age without blank frames" do
+    account = create_account(name: "Repeated Preview Refresh Account")
+    user = create_user(email: "repeated-preview-refresh@example.test")
+    sign_in(user)
+    visit new_vessel_path
+    track_object_urls
+    page.execute_script(<<~JAVASCRIPT)
+      document.querySelector("[data-controller~='upload-preview']")
+        .setAttribute("data-upload-preview-finishing-delay-value", "500")
+    JAVASCRIPT
+
+    attach_file "Primary vessel photo", file_fixture("sample.jpg")
+    page.execute_script(<<~JAVASCRIPT)
+      window.__originalUploadPreviewStartedAt =
+        document.querySelector("#vessel-primary-photo-upload-preview").uploadPreviewStartedAt
+    JAVASCRIPT
+    fill_in "Vessel name", with: "Repeated Preview Refresh"
+    select account.name, from: "Owner account"
+    click_button "Add vessel"
+
+    assert_current_path "/vessels/repeated-preview-refresh"
+    vessel = Asset.find_by!(name: "Repeated Preview Refresh")
+    assert_current_path vessel_path(vessel)
+    assert_selector "[data-controller='attachment-status-refresh']", visible: :all
+    page.execute_script(<<~JAVASCRIPT)
+      window.__previewBlankFrames = 0
+      window.__previewFrameMonitorActive = true
+      document.addEventListener("turbo:before-render", (event) => {
+        const refresh = event.detail.newBody.querySelector("[data-controller='attachment-status-refresh']")
+        refresh?.setAttribute("data-attachment-status-refresh-fast-interval-value", "50")
+        refresh?.setAttribute("data-attachment-status-refresh-slow-interval-value", "50")
+      })
+      const samplePreviewFrame = () => {
+        if (!window.__previewFrameMonitorActive) return
+        const controller = document.querySelector("[data-upload-preview-flow-value='vessel-primary-photo']")
+        const image = document.querySelector("#vessel-primary-photo-upload-preview img[data-upload-preview-local]")
+        if (controller?.dataset.uploadPreviewStateValue === "pending" &&
+            (!image || !image.complete || image.naturalWidth === 0)) {
+          window.__previewBlankFrames += 1
+        }
+        requestAnimationFrame(samplePreviewFrame)
+      }
+      requestAnimationFrame(samplePreviewFrame)
+    JAVASCRIPT
+    configure_refresh(fast_interval: 50, slow_interval: 50)
+
+    Selenium::WebDriver::Wait.new(timeout: 5).until { created_object_urls.length >= 5 }
+    assert_selector "[data-upload-preview-status]", text: "Finishing upload…", wait: 5
+    assert_equal page.evaluate_script("window.__originalUploadPreviewStartedAt"),
+      page.evaluate_script("document.querySelector('#vessel-primary-photo-upload-preview').uploadPreviewStartedAt")
+    assert_equal 0, page.evaluate_script("window.__previewBlankFrames")
+
+    scan = AttachmentScan.find_by!(active_storage_blob: vessel.primary_photo.blob)
+    scan.update!(status: "clean", status_code: "NO_THREATS_FOUND", completed_at: Time.current)
+    assert_selector "img[src='#{vessel_primary_photo_path(vessel, v: vessel.primary_photo.blob.id)}']", wait: 10
+    page.execute_script("window.__previewFrameMonitorActive = false")
+    assert_equal created_object_urls.sort, revoked_object_urls.sort
+  end
+
+  test "a submitted replacement preview is discarded for a different vessel identity" do
+    user = create_user(email: "mismatched-preview-transfer@example.test")
+    source_vessel = create_vessel(name: "Preview Transfer Source")
+    target_vessel = create_vessel(account: create_account(name: "Preview Transfer Target Account"), name: "Preview Transfer Target")
+    target_vessel.primary_photo.attach(
+      io: file_fixture("sample.png").open,
+      filename: "pending.png",
+      content_type: "image/png"
+    )
+    AttachmentScan.create!(
+      active_storage_blob: target_vessel.primary_photo.blob,
+      status: "pending",
+      provider: AttachmentScan::PROVIDER
+    )
+    sign_in(user)
+    visit edit_vessel_path(source_vessel)
+    track_object_urls
+    attach_file "Primary vessel photo", file_fixture("sample.jpg")
+
+    preview_url = created_object_urls.sole
+    page.execute_script(<<~JAVASCRIPT)
+      document.querySelector("#vessel-primary-photo-upload-preview").uploadPreviewSubmitted = true
+    JAVASCRIPT
+    add_navigation_link(vessel_path(target_vessel), "Open different pending vessel")
+    click_link "Open different pending vessel"
+
+    assert_current_path vessel_path(target_vessel)
+    assert_no_selector "img[data-upload-preview-local]"
+    assert_no_selector "img[src='#{preview_url}']"
+    assert_text "Saving…"
+    assert_equal created_object_urls.sort, revoked_object_urls.sort
   end
 
   test "service visit photo previews survive submission until protected images are clean" do
