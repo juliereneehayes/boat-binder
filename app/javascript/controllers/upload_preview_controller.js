@@ -2,7 +2,7 @@ import { Controller } from "@hotwired/stimulus"
 import { ATTACHMENT_INITIAL_SAVING_WINDOW_MS } from "controllers/attachment_timing"
 
 const previewTransfers = new Map()
-const PREVIEW_DECODE_WAIT_MS = 250
+const PREVIEW_DECODE_WAIT_MS = 1000
 
 export default class extends Controller {
   static targets = [ "surface" ]
