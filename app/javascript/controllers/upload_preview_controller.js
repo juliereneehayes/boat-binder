@@ -1,5 +1,7 @@
 import { Controller } from "@hotwired/stimulus"
 
+const previewTransfers = new Map()
+
 export default class extends Controller {
   static targets = [ "surface" ]
   static values = {
@@ -12,6 +14,25 @@ export default class extends Controller {
 
   connect() {
     if (!this.hasSurfaceTarget) return
+
+    const transfer = previewTransfers.get(this.surfaceTarget.id)
+    if (transfer) {
+      this.surfaceTarget.uploadPreviewFiles = transfer.files
+      this.surfaceTarget.uploadPreviewServerContent = transfer.serverContent
+      this.surfaceTarget.uploadPreviewServerHidden = transfer.serverHidden
+      this.surfaceTarget.uploadPreviewExistingServerPhotoCount = transfer.existingServerPhotoCount
+      this.surfaceTarget.uploadPreviewSubmitted = true
+      this.surfaceTarget.uploadPreviewIdentity = this.identityValue
+      this.surfaceTarget.dataset.uploadPreviewIdentity = this.identityValue
+      this.surfaceTarget.dataset.turboPermanent = ""
+      this.surfaceTarget.hidden = false
+
+      const objectUrls = transfer.files.map((file) => URL.createObjectURL(file))
+      this.surfaceTarget.uploadPreviewObjectUrls = objectUrls
+      previewTransfers.delete(this.surfaceTarget.id)
+      this.render(transfer.files, objectUrls)
+      return
+    }
 
     if (this.surfaceTarget.uploadPreviewObjectUrls?.length) {
       this.surfaceTarget.dataset.uploadPreviewIdentity = this.identityValue
@@ -26,7 +47,7 @@ export default class extends Controller {
 
     const surface = this.surfaceTarget
     queueMicrotask(() => {
-      if (!surface.isConnected) this.releaseObjectUrls(surface)
+      if (!surface.isConnected && !previewTransfers.has(surface.id)) this.releaseObjectUrls(surface)
     })
   }
 
@@ -41,8 +62,10 @@ export default class extends Controller {
 
     this.releaseObjectUrls()
     const objectUrls = files.map((file) => URL.createObjectURL(file))
+    this.surfaceTarget.uploadPreviewFiles = files
     this.surfaceTarget.uploadPreviewObjectUrls = objectUrls
     this.surfaceTarget.uploadPreviewSubmitted = false
+    this.surfaceTarget.uploadPreviewIdentity = this.identityValue
     this.surfaceTarget.uploadPreviewExistingServerPhotoCount = this.existingCountValue
     this.surfaceTarget.dataset.uploadPreviewIdentity = this.identityValue
     this.surfaceTarget.dataset.turboPermanent = ""
@@ -58,13 +81,26 @@ export default class extends Controller {
 
   submitEnd(event) {
     if (!this.hasSurfaceTarget || !this.element.contains(event.target)) return
-    if (event.detail.success === false) this.surfaceTarget.uploadPreviewSubmitted = false
+    if (event.detail.success === false) {
+      this.surfaceTarget.uploadPreviewSubmitted = false
+      previewTransfers.delete(this.surfaceTarget.id)
+    }
   }
 
   beforeCache() {
     if (!this.hasSurfaceTarget) return
 
-    if (this.surfaceTarget.uploadPreviewObjectUrls?.length) this.resetPreview()
+    const surface = this.surfaceTarget
+    const files = surface.uploadPreviewFiles || []
+    const submitted = surface.uploadPreviewSubmitted === true
+    const transfer = submitted && files.length ? {
+      files,
+      identity: surface.uploadPreviewIdentity ?? surface.dataset.uploadPreviewIdentity ?? this.identityValue,
+      existingServerPhotoCount: surface.uploadPreviewExistingServerPhotoCount
+    } : null
+
+    if (surface.uploadPreviewObjectUrls?.length) this.resetPreview()
+    if (transfer) previewTransfers.set(surface.id, transfer)
     this.restoreSuppressedServerPhotos()
   }
 
@@ -72,7 +108,8 @@ export default class extends Controller {
     if (!this.hasSurfaceTarget) return
 
     const newSurface = event.detail.newBody.querySelector(`#${CSS.escape(this.surfaceTarget.id)}`)
-    if (!this.surfaceTarget.uploadPreviewObjectUrls?.length) {
+    let transfer = previewTransfers.get(this.surfaceTarget.id)
+    if (!this.surfaceTarget.uploadPreviewObjectUrls?.length && !transfer) {
       this.surfaceTarget.removeAttribute("data-turbo-permanent")
       newSurface?.removeAttribute("data-turbo-permanent")
       return
@@ -82,21 +119,32 @@ export default class extends Controller {
     const newFlow = newController?.dataset.uploadPreviewFlowValue
     const newIdentity = newController?.dataset.uploadPreviewIdentityValue || ""
     const newState = newController?.dataset.uploadPreviewStateValue
-    const currentIdentity = this.surfaceTarget.dataset.uploadPreviewIdentity || this.identityValue || ""
+    const currentIdentity = transfer?.identity ?? this.surfaceTarget.uploadPreviewIdentity ?? this.surfaceTarget.dataset.uploadPreviewIdentity ?? this.identityValue ?? ""
     const successfulCreate = currentIdentity === "" && this.stateValue === "form"
     const sameRecord = successfulCreate || currentIdentity === newIdentity
-    const keepPreview = this.surfaceTarget.uploadPreviewSubmitted &&
+    const keepPreview = (transfer?.files.length || this.surfaceTarget.uploadPreviewSubmitted) &&
       newSurface &&
       newFlow === this.flowValue &&
       newState === "pending" &&
       sameRecord
 
     if (keepPreview) {
-      this.captureServerSurface(newSurface)
       this.suppressNewServerPhotos(newController)
+      if (!transfer) {
+        transfer = {
+          files: this.surfaceTarget.uploadPreviewFiles,
+          identity: currentIdentity,
+          existingServerPhotoCount: this.surfaceTarget.uploadPreviewExistingServerPhotoCount
+        }
+        this.resetPreview()
+        previewTransfers.set(this.surfaceTarget.id, transfer)
+      }
+      transfer.serverContent = Array.from(newSurface.childNodes, (node) => node.cloneNode(true))
+      transfer.serverHidden = newSurface.hidden
       return
     }
 
+    previewTransfers.delete(this.surfaceTarget.id)
     this.surfaceTarget.removeAttribute("data-turbo-permanent")
     newSurface?.removeAttribute("data-turbo-permanent")
     this.releaseObjectUrls()
@@ -182,6 +230,9 @@ export default class extends Controller {
     window.clearTimeout(surface.uploadPreviewStatusTimer)
     surface.uploadPreviewStatusTimer = undefined
     surface.uploadPreviewObjectUrls = []
+    surface.uploadPreviewFiles = []
     surface.uploadPreviewSubmitted = false
+    previewTransfers.delete(surface.id)
+    delete surface.uploadPreviewIdentity
   }
 }

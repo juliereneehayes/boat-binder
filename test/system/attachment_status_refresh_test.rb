@@ -23,8 +23,12 @@ class AttachmentStatusRefreshTest < ApplicationSystemTestCase
     assert_current_path "/vessels/preview-passage"
     vessel = Asset.find_by!(name: "Preview Passage")
     assert_current_path vessel_path(vessel)
-    assert_selector "#vessel-primary-photo-upload-preview[data-turbo-permanent] img[src='#{preview_url}']"
+    assert_selector "#vessel-primary-photo-upload-preview[data-turbo-permanent] img[data-upload-preview-local]"
     assert_no_selector "img[src^='#{vessel_primary_photo_path(vessel)}']"
+    pending_preview_url = find("#vessel-primary-photo-upload-preview img[data-upload-preview-local]")[:src]
+    assert pending_preview_url.start_with?("blob:")
+    assert_includes revoked_object_urls, preview_url
+    refute_includes revoked_object_urls, pending_preview_url
 
     scan = AttachmentScan.find_by!(active_storage_blob: vessel.primary_photo.blob)
     scan.update!(status: "clean", status_code: "NO_THREATS_FOUND", completed_at: Time.current)
@@ -32,7 +36,7 @@ class AttachmentStatusRefreshTest < ApplicationSystemTestCase
 
     assert_selector "img[src='#{vessel_primary_photo_path(vessel, v: vessel.primary_photo.blob.id)}']", wait: 10
     assert_no_selector "img[src^='blob:']"
-    assert_equal [ preview_url ], revoked_object_urls
+    assert_equal created_object_urls.sort, revoked_object_urls.sort
   end
 
   test "replacement preview hides the old image and is removed after rejection" do
@@ -60,14 +64,17 @@ class AttachmentStatusRefreshTest < ApplicationSystemTestCase
     click_button "Save vessel"
 
     assert_current_path vessel_path(vessel)
-    assert_selector "#vessel-primary-photo-upload-preview img[src='#{preview_url}']"
+    assert_selector "#vessel-primary-photo-upload-preview img[data-upload-preview-local]"
+    active_preview_url = find("#vessel-primary-photo-upload-preview img[data-upload-preview-local]")[:src]
+    assert active_preview_url.start_with?("blob:")
+    refute_includes revoked_object_urls, active_preview_url
     replacement_scan = AttachmentScan.find_by!(active_storage_blob: vessel.reload.primary_photo.blob)
     replacement_scan.update!(status: "rejected", status_code: "THREATS_FOUND", completed_at: Time.current)
     configure_refresh(fast_interval: 50, slow_interval: 50)
 
     assert_text "This upload was rejected by security scanning.", wait: 10
     assert_no_selector "img[src^='blob:']"
-    assert_equal [ preview_url ], revoked_object_urls
+    assert_equal created_object_urls.sort, revoked_object_urls.sort
   end
 
   test "clearing a replacement selection restores the original protected image" do
@@ -236,7 +243,7 @@ class AttachmentStatusRefreshTest < ApplicationSystemTestCase
 
     protected_photo_paths.each { |path| assert_selector "img[src='#{path}']", wait: 10 }
     assert_no_selector "img[data-upload-preview-local='true']"
-    assert_equal preview_urls.sort, revoked_object_urls.sort
+    assert_equal created_object_urls.sort, revoked_object_urls.sort
   end
 
   test "service visit preview does not duplicate a newly clean photo while its batch remains pending" do
@@ -279,6 +286,9 @@ class AttachmentStatusRefreshTest < ApplicationSystemTestCase
     assert_selector "img[src='#{existing_path}']"
     assert_no_selector "img[src='#{first_new_path}']", visible: true
     assert_selector "[data-upload-preview-server-photo]", visible: true, count: 1
+    current_preview_urls = page.evaluate_script("document.querySelector('#service-visit-photos-upload-preview').uploadPreviewObjectUrls")
+    assert_equal 2, current_preview_urls.length
+    assert_empty current_preview_urls & revoked_object_urls
 
     second_scan.update!(status: "clean", status_code: "NO_THREATS_FOUND", completed_at: Time.current)
     configure_refresh(fast_interval: 50, slow_interval: 50)
@@ -286,6 +296,7 @@ class AttachmentStatusRefreshTest < ApplicationSystemTestCase
     assert_selector "img[src='#{first_new_path}']", wait: 10
     assert_selector "img[src='#{second_new_path}']"
     assert_no_selector "img[data-upload-preview-local]"
+    assert_equal created_object_urls.sort, revoked_object_urls.sort
   end
 
   test "normal Turbo navigation never carries one vessel photo into another vessel" do
