@@ -155,7 +155,6 @@ module ApplicationHelper
       id: "vessel-primary-photo-upload-preview",
       class: surface_class,
       data: {
-        turbo_permanent: true,
         upload_preview_target: "surface"
       }
     )
@@ -178,7 +177,7 @@ module ApplicationHelper
   def attachment_scan_message(attachment)
     case attachment_scan_status(attachment)
     when "pending"
-      attachment_pending_message(attachment)
+      attachment_pending_message
     when "rejected"
       "This upload was rejected by security scanning. Retry the upload. If you believe this is an error, contact support@boat-binder.com."
     else
@@ -191,7 +190,7 @@ module ApplicationHelper
     when "clean", "trusted_existing"
       available_label
     when "pending"
-      attachment_pending_message(attachment)
+      attachment_pending_message
     when "rejected"
       "Rejected"
     else
@@ -210,15 +209,18 @@ module ApplicationHelper
     end
   end
 
-  def attachment_pending_message(attachment)
-    scan = attachment_scan_for(attachment)
-    copy = if scan&.created_at && scan.created_at <= 60.seconds.ago
-      "Finishing upload…"
-    else
-      "Saving…"
-    end
+  def attachment_pending_message
+    "Processing upload…"
+  end
 
-    tag.span(copy, data: { attachment_pending_copy: true })
+  def attachment_status_check_link(path = request.fullpath, accessible_name: nil)
+    options = {
+      class: "inline-flex min-h-10 items-center rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50",
+      data: { turbo_action: "replace" }
+    }
+    options[:aria] = { label: accessible_name } if accessible_name
+
+    link_to "Check status", path, **options
   end
 
   def attachment_group_scan_state(attachments)
@@ -233,29 +235,6 @@ module ApplicationHelper
     "clean"
   end
 
-  def attachment_status_refresh_tag
-    return unless @attachment_status_refresh_required && request.get?
-
-    scan_started_at = @attachment_status_refresh_started_at
-    return unless scan_started_at
-
-    now = Time.current
-    remaining_duration_ms = ((scan_started_at + Storage::AttachmentScanJob::POLL_WINDOW - now) * 1_000).ceil
-    return unless remaining_duration_ms.positive?
-
-    tag.div(
-      hidden: true,
-      data: {
-        controller: "attachment-status-refresh",
-        attachment_status_refresh_fast_interval_value: 5_000,
-        attachment_status_refresh_slow_interval_value: 30_000,
-        attachment_status_refresh_fast_window_value: 60_000,
-        attachment_status_refresh_scan_age_value: [ ((now - scan_started_at) * 1_000).floor, 0 ].max,
-        attachment_status_refresh_remaining_duration_value: remaining_duration_ms
-      }
-    )
-  end
-
   private
 
   def attachment_scan_for(attachment)
@@ -266,11 +245,6 @@ module ApplicationHelper
     @attachment_scan_cache ||= {}
     scan = @attachment_scan_cache.fetch(blob.id) do
       @attachment_scan_cache[blob.id] = AttachmentScan.find_by(active_storage_blob_id: blob.id)
-    end
-    if scan&.status == "pending"
-      # Pending discovery during view rendering records page-level refresh state for the layout after `yield`.
-      @attachment_status_refresh_required = true
-      @attachment_status_refresh_started_at = [ @attachment_status_refresh_started_at, scan.created_at ].compact.max
     end
     scan
   end

@@ -74,6 +74,16 @@ class DocumentManagementTest < ActionDispatch::IntegrationTest
     attached_document = vessel.documents.create!(account: account, title: "Attached file", document_type: "registration")
     attached_document.file.attach(fixture_file_upload("sample.pdf", "application/pdf"))
     trust_attachment(attached_document.file)
+    pending_documents = [ "Pending insurance", "Pending registration" ].map do |title|
+      pending_document = vessel.documents.create!(account: account, title:, document_type: "other")
+      pending_document.file.attach(fixture_file_upload("sample.pdf", "application/pdf"))
+      AttachmentScan.create!(
+        active_storage_blob: pending_document.file.blob,
+        status: "pending",
+        provider: AttachmentScan::PROVIDER
+      )
+      pending_document
+    end
     editor_owner = create_user(email: "document-index-editor@example.test", role: "owner")
     qualify_self_managed_subscription(account)
     create_account_membership(user: editor_owner, account: account, access_level: "editor")
@@ -89,6 +99,9 @@ class DocumentManagementTest < ActionDispatch::IntegrationTest
     assert_select "a[href=?]", document_path(attached_document), text: "Attached file"
     assert_includes response.body, "Open file"
     assert_includes response.body, "Download"
+    pending_documents.each do |pending_document|
+      assert_select "a[aria-label=?]", "Check status for #{pending_document.title}", text: "Check status", count: 1
+    end
   end
 
   test "owner editor can view and edit document metadata" do
@@ -158,8 +171,8 @@ class DocumentManagementTest < ActionDispatch::IntegrationTest
     assert_equal "pending", scan.status
     refute scan.available?
     follow_redirect!
-    assert_includes response.body, "Saving…"
-    assert_not_includes response.body, "Processing"
+    assert_includes response.body, "Processing upload…"
+    assert_select "a", text: "Check status", count: 1
     assert_includes response.body, document.file.filename.to_s
     assert_select "a[href^=?]", document_file_path(document), count: 0
     refute_match(/malware|security scan|GuardDuty/i, response.body)

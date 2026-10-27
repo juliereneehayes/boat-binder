@@ -201,20 +201,20 @@
       </section>
     <% end %>
 
+    <% photo_scan_state = attachment_group_scan_state(service_visit.photos) %>
     <section
       class="space-y-3"
       data-controller="upload-preview"
       data-action="turbo:before-render@document->upload-preview#beforeRender turbo:before-cache@document->upload-preview#beforeCache turbo:submit-end@document->upload-preview#submitEnd"
       data-upload-preview-flow-value="service-visit-photos"
       data-upload-preview-identity-value="<%= service_visit.id %>"
-      data-upload-preview-state-value="<%= attachment_group_scan_state(service_visit.photos) %>">
+      data-upload-preview-state-value="<%= photo_scan_state %>">
       <h2 class="text-xl font-black">Photos</h2>
       <% if service_visit.photos.attached? && show_photos %>
         <div class="grid gap-3 sm:grid-cols-2">
           <div
             id="service-visit-photos-upload-preview"
             class="relative overflow-hidden rounded-md border border-slate-200 bg-slate-50 p-2"
-            data-turbo-permanent
             data-upload-preview-target="surface"
             hidden></div>
           <% service_visit.photos.each do |photo| %>
