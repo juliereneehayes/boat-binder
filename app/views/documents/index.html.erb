@@ -44,7 +44,7 @@
           <% elsif document.file.attached? %>
             <p class="w-full text-sm font-semibold text-slate-700"><%= attachment_scan_message(document.file) %></p>
             <% if attachment_scan_status(document.file) == "pending" %>
-              <%= attachment_status_check_link %>
+              <%= attachment_status_check_link(accessible_name: "Check status for #{document.title}") %>
             <% end %>
           <% end %>
           <% if can_manage_account?(document.account) %>

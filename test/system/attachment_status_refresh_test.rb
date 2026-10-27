@@ -3,7 +3,7 @@ require "application_system_test_case"
 class AttachmentStatusRefreshTest < ApplicationSystemTestCase
   driven_by :selenium, using: :headless_chrome, screen_size: [ 1200, 900 ]
 
-  test "new vessel photo preview survives the redirect and changes only after a manual clean check" do
+  test "new vessel photo preview survives the redirect and resolves clean on later navigation" do
     account = create_account(name: "Preview Vessel Account")
     user = create_user(email: "new-vessel-preview@example.test")
     sign_in(user)
@@ -24,26 +24,21 @@ class AttachmentStatusRefreshTest < ApplicationSystemTestCase
     assert_selector "#vessel-primary-photo-upload-preview img[src='#{preview_url}'][data-upload-preview-local]"
     assert_text "Processing photo…"
     assert_no_selector "img[src^='#{vessel_primary_photo_path(vessel)}']"
-    assert_link "Check status"
-    assert_equal [ preview_url ], created_object_urls
-    assert_empty revoked_object_urls
-
-    click_link "Check status", match: :first
-
-    assert_selector "#vessel-primary-photo-upload-preview img[src='#{preview_url}'][data-upload-preview-local]"
+    assert_no_link "Check status"
     assert_equal [ preview_url ], created_object_urls
     assert_empty revoked_object_urls
 
     scan = AttachmentScan.find_by!(active_storage_blob: vessel.primary_photo.blob)
     scan.update!(status: "clean", status_code: "NO_THREATS_FOUND", completed_at: Time.current)
-    click_link "Check status", match: :first
+    add_navigation_link(vessel_path(vessel), "Reload vessel")
+    click_link "Reload vessel"
 
     assert_selector "img[src='#{vessel_primary_photo_path(vessel, v: vessel.primary_photo.blob.id)}']"
     assert_no_selector "img[src^='blob:']"
     assert_equal [ preview_url ], revoked_object_urls
   end
 
-  test "replacement preview hides the old image and is removed after a manual rejected check" do
+  test "replacement preview hides the old image and resolves rejected on later navigation" do
     account = create_account(name: "Replacement Preview Account")
     qualify_self_managed_subscription(account)
     owner = create_user(email: "replacement-preview@example.test", role: "owner")
@@ -65,9 +60,11 @@ class AttachmentStatusRefreshTest < ApplicationSystemTestCase
     assert_current_path vessel_path(vessel)
     assert_selector "#vessel-primary-photo-upload-preview img[src='#{preview_url}'][data-upload-preview-local]"
     assert_no_selector "img[src='#{old_path}']"
+    assert_no_link "Check status"
     replacement_scan = AttachmentScan.find_by!(active_storage_blob: vessel.reload.primary_photo.blob)
     replacement_scan.update!(status: "rejected", status_code: "THREATS_FOUND", completed_at: Time.current)
-    click_link "Check status", match: :first
+    add_navigation_link(vessel_path(vessel), "Reload vessel")
+    click_link "Reload vessel"
 
     assert_text "This upload was rejected by security scanning."
     assert_no_selector "img[src^='blob:']"
@@ -149,7 +146,7 @@ class AttachmentStatusRefreshTest < ApplicationSystemTestCase
     assert_equal [ preview_url ], revoked_object_urls
   end
 
-  test "service visit previews remain stable until a manual clean check" do
+  test "service visit previews remain stable until later clean navigation" do
     account = create_account(name: "Visit Preview Account")
     qualify_self_managed_subscription(account)
     owner = create_user(email: "visit-preview@example.test", role: "owner")
@@ -169,15 +166,14 @@ class AttachmentStatusRefreshTest < ApplicationSystemTestCase
     assert_current_path vessel_service_visit_path(vessel, visit_record)
     assert_selector "#service-visit-photos-upload-preview img[data-upload-preview-local]", count: 2
     assert_equal preview_urls.sort, current_preview_urls.sort
-    click_link "Check status"
-    assert_no_selector "html[aria-busy='true']", wait: 5
-    assert_equal preview_urls.sort, current_preview_urls.sort
+    assert_no_link "Check status"
     assert_empty revoked_object_urls
 
     AttachmentScan.where(active_storage_blob_id: visit_record.photos.blobs.ids).update_all(
       status: "clean", status_code: "NO_THREATS_FOUND", completed_at: Time.current
     )
-    click_link "Check status"
+    add_navigation_link(vessel_service_visit_path(vessel, visit_record), "Reload visit")
+    click_link "Reload visit"
 
     visit_record.photos.attachments.each do |photo|
       assert_selector "img[src='#{service_visit_photo_path(vessel, visit_record, photo)}']"

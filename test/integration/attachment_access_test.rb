@@ -258,7 +258,7 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
     assert_response :success
     assert_includes response.body, "Processing upload…"
     assert_select "[data-controller='attachment-status-refresh']", count: 0
-    assert_select "a", text: "Check status", count: 1
+    assert_select "a", text: "Check status", count: 0
     assert_select "img[src^=?]", vessel_primary_photo_path(@vessel), count: 0
 
     photo_scan = AttachmentScan.find_by!(active_storage_blob: @photo.blob)
@@ -267,7 +267,7 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
     assert_response :success
     assert_includes response.body, "Processing upload…"
     assert_select "[data-controller='attachment-status-refresh']", count: 0
-    assert_select "a", text: "Check status", count: 1
+    assert_select "a", text: "Check status", count: 0
     assert_select "img[src=?]", service_visit_photo_path(@vessel, @visit, @photo), count: 0
   end
 

@@ -34,9 +34,6 @@
               image_class: "aspect-[16/10] w-full object-cover",
               placeholder_class: "flex aspect-[16/10] w-full flex-col items-center justify-center bg-[#12304D] p-5 text-center"
             ) %>
-          <% if primary_photo_scan_state == "pending" %>
-            <div class="mt-3 flex justify-end"><%= attachment_status_check_link %></div>
-          <% end %>
         </div>
       </div>
 
@@ -369,7 +366,7 @@
               <% elsif document.file.attached? %>
                 <p class="w-full text-sm font-semibold text-slate-700"><%= attachment_scan_message(document.file) %></p>
                 <% if attachment_scan_status(document.file) == "pending" %>
-                  <%= attachment_status_check_link %>
+                  <%= attachment_status_check_link(accessible_name: "Check status for #{document.title}") %>
                 <% end %>
               <% else %>
                 <span class="inline-flex min-h-10 items-center rounded-md border border-dashed border-slate-300 px-4 py-2 text-sm font-bold text-slate-500">No file attached</span>

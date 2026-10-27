@@ -177,7 +177,7 @@ module ApplicationHelper
   def attachment_scan_message(attachment)
     case attachment_scan_status(attachment)
     when "pending"
-      attachment_pending_message(attachment)
+      attachment_pending_message
     when "rejected"
       "This upload was rejected by security scanning. Retry the upload. If you believe this is an error, contact support@boat-binder.com."
     else
@@ -190,7 +190,7 @@ module ApplicationHelper
     when "clean", "trusted_existing"
       available_label
     when "pending"
-      attachment_pending_message(attachment)
+      attachment_pending_message
     when "rejected"
       "Rejected"
     else
@@ -209,14 +209,18 @@ module ApplicationHelper
     end
   end
 
-  def attachment_pending_message(_attachment)
+  def attachment_pending_message
     "Processing upload…"
   end
 
-  def attachment_status_check_link(path = request.fullpath)
-    link_to "Check status", path,
+  def attachment_status_check_link(path = request.fullpath, accessible_name: nil)
+    options = {
       class: "inline-flex min-h-10 items-center rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50",
       data: { turbo_action: "replace" }
+    }
+    options[:aria] = { label: accessible_name } if accessible_name
+
+    link_to "Check status", path, **options
   end
 
   def attachment_group_scan_state(attachments)

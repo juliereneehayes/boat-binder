@@ -225,9 +225,6 @@
             <% end %>
           <% end %>
         </div>
-        <% if photo_scan_state == "pending" %>
-          <div class="flex justify-end"><%= attachment_status_check_link %></div>
-        <% end %>
       <% elsif service_visit.photos.attached? %>
         <p class="leading-7 text-slate-700">Photos are attached to this visit.</p>
       <% else %>

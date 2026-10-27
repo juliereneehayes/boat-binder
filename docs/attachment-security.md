@@ -58,20 +58,19 @@ check approved scan state before reading content. Rejected objects remain in the
 may remain attached for investigation or later operator action; this phase does not add a purge
 workflow.
 
-GET pages that render a `pending` attachment add one browser-side refresh timer. The timer checks
-every five seconds during the pending scan's first minute, then every 30 seconds, and stops at the
-existing 15-minute scan deadline. It pauses while the document is hidden, while an editable form
-control has focus, or after a form emits an `input` or `change` event. Non-GET responses, including
-validation re-renders, never include the controller. An unsafe refresh is skipped rather than
-submitting, copying, or persisting the user's draft.
+Image previews are browser-memory-only UX affordances backed by local object URLs. A selected image
+preview may survive the initial successful Turbo redirect only when the upload flow and record
+identity match and the server-rendered scan state is still `pending`. The browser does not poll or
+schedule automatic page refreshes. On a later ordinary page load or navigation, the authoritative
+server scan state determines whether the protected image or the safe pending/rejected/failed state
+is rendered.
 
-Each safe refresh uses Turbo to revisit the same authenticated page URL, so it repeats that page's
-existing authentication, Account scope, lifecycle, and authorization checks. The server-rendered
-scan state remains authoritative: pending bytes are never requested or displayed, and the timer
-disappears as soon as no rendered attachment remains pending. There is no separate status or
-attachment-delivery endpoint, and the browser receives no provider status, object key, bucket, or
-scan details. This improves ordinary completion feedback but does not promise a fixed GuardDuty
-completion time.
+Documents and other non-image files do not expose their contents locally while pending. Their
+pages may offer a manual `Check status` action that revisits the normal authenticated and authorized
+page and reads Boat Binder's local `AttachmentScan` state. There is no separate status or
+attachment-delivery endpoint, and a status check does not contact GuardDuty or trigger rescanning.
+The browser receives no provider status, object key, bucket, or scan details. Pending and rejected
+stored bytes remain unavailable through protected delivery routes.
 
 The rollout migration creates exactly one `trusted_existing` row for each blob attached when the
 migration runs. Those attachments remain available without rescan or bulk Active Storage metadata
@@ -155,12 +154,13 @@ and never use customer data or production storage for that check.
 
 1. Upload a new Document, vessel primary photo, and service-visit photo. Confirm each has one
    `pending` scan row and a queued/running scan job, using database IDs only.
-2. Before GuardDuty completes, confirm the UI says `Processing`, offers no open/download action or
-   image, and the protected route returns not found. Do not use a Rails console script to advance
-   scan state.
-3. After GuardDuty writes `NO_THREATS_FOUND`, confirm the page updates automatically, the row becomes
-   `clean`, and the same protected route works with private/no-store/nosniff headers. Record the
-   approximate observed time for internal validation only; do not present it as an SLA.
+2. Before GuardDuty completes, confirm the UI says `Processing`, offers no open/download action,
+   and the protected route returns not found. A just-selected image may remain visible only as its
+   browser-local preview. Do not use a Rails console script to advance scan state.
+3. After GuardDuty writes `NO_THREATS_FOUND`, use `Check status` for a pending document or perform a
+   later ordinary page load for an image. Confirm the row becomes `clean` and the same protected
+   route works with private/no-store/nosniff headers. Record the approximate observed time for
+   internal validation only; do not present it as an SLA.
 4. Confirm a pre-rollout attachment has one `trusted_existing` row and remains accessible without a
    scan job.
 5. With a second staging Account, confirm its user cannot read or infer any attachment from the first
