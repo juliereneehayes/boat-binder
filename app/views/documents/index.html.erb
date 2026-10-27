@@ -43,6 +43,9 @@
             <%= link_to "Download", document_file_path(document, disposition: "attachment"), class: "inline-flex min-h-11 items-center rounded-md border border-slate-200 px-4 py-2 text-sm font-bold text-slate-700", data: { turbo: false } %>
           <% elsif document.file.attached? %>
             <p class="w-full text-sm font-semibold text-slate-700"><%= attachment_scan_message(document.file) %></p>
+            <% if attachment_scan_status(document.file) == "pending" %>
+              <%= attachment_status_check_link %>
+            <% end %>
           <% end %>
           <% if can_manage_account?(document.account) %>
             <%= button_to "Delete", document_path(document), method: :delete, form: { data: { turbo_confirm: "Delete #{document.title}?" } }, class: "min-h-11 rounded-md border border-red-200 px-4 py-2 text-sm font-bold text-red-700", data: { turbo_submits_with: "Deleting..." } %>

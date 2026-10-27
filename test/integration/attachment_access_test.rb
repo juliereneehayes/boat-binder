@@ -225,12 +225,9 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
     document_scan.update!(status: "pending", status_code: nil, completed_at: nil)
     get document_path(@document)
     assert_response :success
-    assert_includes response.body, "Saving…"
-    assert_not_includes response.body, "Processing"
-    assert_select "[data-controller='attachment-status-refresh']" \
-      "[data-attachment-status-refresh-fast-interval-value='5000']" \
-      "[data-attachment-status-refresh-slow-interval-value='30000']" \
-      "[data-attachment-status-refresh-fast-window-value='60000']", count: 1
+    assert_includes response.body, "Processing upload…"
+    assert_select "[data-controller='attachment-status-refresh']", count: 0
+    assert_select "a", text: "Check status", count: 1
     assert_select "a[href^=?]", document_file_path(@document), count: 0
 
     document_scan.update!(status: "failed", status_code: "FAILED", completed_at: Time.current)
@@ -238,6 +235,7 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
     assert_includes response.body,
       "This upload is temporarily unavailable. Retry the upload. If the problem continues, contact support@boat-binder.com."
     assert_select "[data-controller='attachment-status-refresh']", count: 0
+    assert_select "a", text: "Check status", count: 0
     assert_select "a[href^=?]", document_file_path(@document), count: 0
 
     document_scan.update!(status: "rejected", status_code: "THREATS_FOUND", completed_at: Time.current)
@@ -245,29 +243,31 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
     assert_includes response.body,
       "This upload was rejected by security scanning. Retry the upload. If you believe this is an error, contact support@boat-binder.com."
     assert_select "[data-controller='attachment-status-refresh']", count: 0
+    assert_select "a", text: "Check status", count: 0
     assert_select "a[href^=?]", document_file_path(@document), count: 0
 
     document_scan.update!(status: "clean", status_code: "NO_THREATS_FOUND", completed_at: Time.current)
     get document_path(@document)
     assert_select "[data-controller='attachment-status-refresh']", count: 0
     assert_select "a[href^=?]", document_file_path(@document), minimum: 1
-    assert_not_includes response.body, "Saving…"
     assert_not_includes response.body, "Processing"
 
     vessel_scan = AttachmentScan.find_by!(active_storage_blob: @vessel.primary_photo.blob)
     vessel_scan.update!(status: "pending", status_code: nil, completed_at: nil)
     get vessel_path(@vessel)
     assert_response :success
-    assert_includes response.body, "Saving…"
-    assert_select "[data-controller='attachment-status-refresh']", count: 1
+    assert_includes response.body, "Processing upload…"
+    assert_select "[data-controller='attachment-status-refresh']", count: 0
+    assert_select "a", text: "Check status", count: 1
     assert_select "img[src^=?]", vessel_primary_photo_path(@vessel), count: 0
 
     photo_scan = AttachmentScan.find_by!(active_storage_blob: @photo.blob)
     photo_scan.update!(status: "pending", status_code: nil, completed_at: nil)
     get vessel_service_visit_path(@vessel, @visit)
     assert_response :success
-    assert_includes response.body, "Saving…"
-    assert_select "[data-controller='attachment-status-refresh']", count: 1
+    assert_includes response.body, "Processing upload…"
+    assert_select "[data-controller='attachment-status-refresh']", count: 0
+    assert_select "a", text: "Check status", count: 1
     assert_select "img[src=?]", service_visit_photo_path(@vessel, @visit, @photo), count: 0
   end
 
@@ -284,8 +284,9 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
     get document_path(@document)
 
     assert_response :success
-    assert_includes response.body, "Finishing upload…"
+    assert_includes response.body, "Processing upload…"
     assert_select "[data-controller='attachment-status-refresh']", count: 0
+    assert_select "a", text: "Check status", count: 1
     assert_select "a[href^=?]", document_file_path(@document), count: 0
   end
 

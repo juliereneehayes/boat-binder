@@ -158,8 +158,8 @@ class DocumentManagementTest < ActionDispatch::IntegrationTest
     assert_equal "pending", scan.status
     refute scan.available?
     follow_redirect!
-    assert_includes response.body, "Saving…"
-    assert_not_includes response.body, "Processing"
+    assert_includes response.body, "Processing upload…"
+    assert_select "a", text: "Check status", count: 1
     assert_includes response.body, document.file.filename.to_s
     assert_select "a[href^=?]", document_file_path(document), count: 0
     refute_match(/malware|security scan|GuardDuty/i, response.body)
