@@ -100,24 +100,60 @@ failure notifications and that attachment changes can detach a schedule. Giving 
 a Heroku credential would expand a customer-data application credential into the deployment control
 plane, so this implementation does not do that.
 
-The remaining #229 acceptance criterion requires an approved external check for schedule presence,
-latest scheduled-capture success, and freshness within the daily cadence plus an owner-approved
-grace period. The smallest options are:
+The external managed-backup monitor is implemented by
+`.github/workflows/managed-backup-monitor.yml` and `script/managed_backup_monitor`. It runs at
+minute 17 twice daily and can also be dispatched manually. The monitor uses direct HTTPS GETs only;
+it does not install the Heroku CLI, run inside Rails, create or restore backups, change schedules,
+or persist provider responses. GitHub Actions job failure is the operator-visible alert. The owner
+must enable the appropriate GitHub Actions failure notifications for the repository.
 
-- a scheduled GitHub Actions check using a dedicated Heroku identity/token stored as a repository
-  secret; a public-repository scheduled run can have no incremental Actions fee within GitHub's
-  included allowance, but the identity's app access and secret rotation require explicit approval;
-  Heroku supports scopes including `read` and `read-protected`, but the follow-up must validate the
-  exact API or CLI permissions needed for backup schedule and freshness inspection before choosing
-  a scope; or
-- a third-party Heroku monitoring/add-on plan, with recurring vendor cost and a separate security,
-  data handling, and credential review. A service that replaces or duplicates the established
-  backup system is out of scope.
+The monitor requires two owner-supplied GitHub Actions values:
 
-For the MVP, prefer the first option only after the owner approves the external workflow and the
-least-access Heroku identity and token available. No Heroku credential is added by this PR. Manual
-verification remains an interim control, not closure of the automated backup-freshness criterion.
-See Heroku's [OAuth documentation](https://devcenter.heroku.com/articles/oauth) for the supported
-scope model and its warning that read-only resources can still expose sensitive metadata. See its
+- repository secret `HEROKU_MANAGED_BACKUP_MONITOR_TOKEN`, containing an OAuth authorization with
+  scope exactly `read-protected`; and
+- repository variable `HEROKU_MANAGED_BACKUP_MONITOR_APP`, containing the production app reference.
+
+The permanent authorization belongs to the dedicated Heroku identity that is limited to Boat
+Binder production, not the owner's primary Heroku account. `read` cannot retrieve the required
+transfer history, while `read-protected` can. `global` must not be used. To rotate the credential,
+the owner creates a replacement `read-protected` authorization while signed in as the dedicated
+identity, replaces the GitHub Actions secret without exposing it in logs or issues, verifies a
+healthy manual workflow run, and then revokes the prior authorization. Removing the monitor
+requires revoking its authorization as well as deleting the GitHub secret.
+
+Each run resolves the current `DATABASE` attachment, requires exactly one recurring schedule,
+correlates scheduled captures using the schedule UUID, filters backup transfers from restores and
+copies, and loads verbose detail for the newest relevant transfers. A running newest capture is not
+treated as failed; freshness of the most recent successful scheduled capture remains controlling.
+The freshness threshold is 30 hours: the expected daily cadence plus six hours for ordinary
+schedule variation and capture duration.
+
+Healthy runs log only `managed_backup_monitor result=healthy`. Unhealthy runs fail with one of these
+sanitized categories:
+
+- `database_resolution_failed`;
+- `schedule_missing`;
+- `schedule_ambiguous`;
+- `scheduled_capture_failed`;
+- `freshness_stale`;
+- `authorization_failed`;
+- `schema_error`; or
+- `check_error`.
+
+Logs exclude tokens, authorization headers, response bodies, app and resource identifiers, URLs,
+timestamps, backup metadata, and customer data. Do not copy raw production responses or operational
+inventory into this public repository, issues, or pull requests.
+
+The following are accepted constraints rather than implementation blockers:
+
+1. Boat Binder currently uses a Personal Heroku account, so the dedicated collaborator has broader
+   in-app permissions than ideal. A paid Heroku Team is not being adopted solely for this monitor.
+2. The automation credential itself is limited to `read-protected`, and the dedicated identity is
+   limited to Boat Binder production.
+3. The Heroku Data API endpoints used by the official CLI do not have the same documented public
+   contract as Platform API v3. Any endpoint or schema change therefore fails the monitor closed.
+
+See Heroku's [OAuth documentation](https://devcenter.heroku.com/articles/oauth) for the scope model
+and its warning that read-only resources can still expose sensitive metadata. See its
 [PGBackups documentation](https://devcenter.heroku.com/articles/heroku-postgres-backups) for the
 schedule, status, and notification limitations.

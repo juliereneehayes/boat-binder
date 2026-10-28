@@ -1,0 +1,8 @@
+{
+  "num": 106,
+  "from_type": "pg_dump",
+  "to_type": "gof3r",
+  "schedule": {
+    "uuid": "fixture-schedule-id"
+  }
+}

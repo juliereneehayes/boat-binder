@@ -1,0 +1,33 @@
+name: Managed backup monitor
+
+"on":
+  schedule:
+    - cron: "17 */12 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: managed-backup-monitor
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      HEROKU_MANAGED_BACKUP_MONITOR_TOKEN: ${{ secrets.HEROKU_MANAGED_BACKUP_MONITOR_TOKEN }}
+      HEROKU_MANAGED_BACKUP_MONITOR_APP: ${{ vars.HEROKU_MANAGED_BACKUP_MONITOR_APP }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Ruby
+        uses: ruby/setup-ruby@824c0e29fdfc7d689c191c27acc969d2d04b7dd8 # v1.331.0
+
+      - name: Check managed backup health
+        run: ruby script/managed_backup_monitor
