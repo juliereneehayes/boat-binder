@@ -5,6 +5,7 @@ module Operations
     queue_as :background
 
     ALERT_REMINDER_INTERVAL = 24.hours
+    FAILED_SCAN_ALERT_LOOKBACK = 7.days
     STALE_SCAN_RECOVERY_GRACE = 10.minutes
     MAX_FAILED_JOB_CLASSES = 25
     CACHE_NAMESPACE = "operations/health-monitor/v2".freeze
@@ -44,7 +45,7 @@ module Operations
     def health_conditions(now:)
       [
         failed_jobs_condition,
-        failed_attachment_scans_condition,
+        failed_attachment_scans_condition(now:),
         stale_attachment_scans_condition(now:)
       ].compact
     end
@@ -90,8 +91,14 @@ module Operations
       scope.distinct.count("solid_queue_jobs.class_name")
     end
 
-    def failed_attachment_scans_condition
-      scope = AttachmentScan.where(status: "failed")
+    def failed_attachment_scans_condition(now:)
+      cutoff = now - FAILED_SCAN_ALERT_LOOKBACK
+      scope = AttachmentScan
+        .where(status: "failed")
+        .where(
+          "completed_at >= :cutoff OR (completed_at IS NULL AND updated_at >= :cutoff)",
+          cutoff:
+        )
       total_count = scope.count
       return if total_count.zero?
 
@@ -140,17 +147,30 @@ module Operations
         when "failed_background_jobs"
           {
             category: condition[:category],
-            job_classes: condition[:job_classes]
+            job_classes: condition[:job_classes],
+            count_bucket: count_bucket(condition[:total_count])
           }
         when "failed_attachment_scans"
           {
             category: condition[:category],
-            status_codes: condition[:groups].pluck(:status_code).uniq.sort
+            status_codes: condition[:groups].pluck(:status_code).uniq.sort,
+            count_bucket: count_bucket(condition[:total_count])
           }
         else
-          { category: condition[:category] }
+          {
+            category: condition[:category],
+            count_bucket: count_bucket(condition[:count])
+          }
         end
       end.sort_by { |condition| condition[:category] }
+    end
+
+    def count_bucket(count)
+      return "1" if count == 1
+      return "2-9" if count < 10
+      return "10-99" if count < 100
+
+      "100+"
     end
 
     def recently_alerted?(cache_key)

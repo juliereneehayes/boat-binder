@@ -14,7 +14,8 @@ The monitor reports:
 
 - failed Solid Queue executions, grouped by sanitized job class with counts and first/most-recent
   failure timestamps;
-- failed `AttachmentScan` rows, grouped by the model's bounded status codes; and
+- failed `AttachmentScan` rows completed within the last seven days, grouped by the model's
+  bounded status codes; and
 - pending attachment scans older than the 15-minute polling window plus a 10-minute recurring
   recovery allowance.
 
@@ -28,18 +29,21 @@ customer data, and vessel data. Investigators must keep those values out of publ
 logs as well.
 
 Solid Cache stores a structural fingerprint after successful delivery. The fingerprint includes
-only health categories, sanitized failed-job classes, and failed-scan status categories. Counts and
-timestamps remain in the email but cannot churn the fingerprint. The same failure shape is
-suppressed for 24 hours, after which it can produce a reminder; a new job class, status category, or
-health category can alert sooner. Cache loss can cause a duplicate but cannot make an unhealthy
-query appear healthy.
+health categories, sanitized failed-job classes, failed-scan status categories, and coarse growth
+buckets (`1`, `2-9`, `10-99`, and `100+`). Exact counts and timestamps remain in the email but
+cannot churn the fingerprint. The same failure shape and growth bucket is suppressed for 24 hours,
+after which it can produce a reminder; a new job class, status category, health category, or growth
+bucket can alert sooner. Cache loss can cause a duplicate but cannot make an unhealthy query appear
+healthy.
 
 A successful monitor run reports failed prior `Operations::HealthMonitorJob` executions through the
 same failed-job path. SMTP failures caught during the current run are logged with exception class
 only, do not create a suppression fingerprint, and do not deliberately fail the monitor job. This
-avoids recursive queue-failure noise while allowing the next run to try delivery again. Complete
-worker or recurring-scheduler failure remains invisible to this application-level monitor and
-requires a separately approved external heartbeat or scheduler check.
+avoids recursive queue-failure noise while allowing the next run to try delivery again. This
+application-level monitor cannot detect complete Solid Queue worker failure, recurring scheduler
+failure, or `Operations::HealthMonitorJob` failing on every execution such that no successful run
+remains to report prior failures. All three require a separately approved external heartbeat or
+control-plane check.
 
 If `OPERATIONAL_ALERT_RECIPIENT` is missing, the job records a sanitized configuration error and
 does not send. Do not derive this recipient from customer or administrator records.
@@ -52,9 +56,13 @@ customer data, filenames, object keys, or production identifiers into public iss
 evidence.
 
 Do not change an `AttachmentScan` from `failed` to `clean` or `trusted_existing` merely to clear an
-alert. Attachment availability remains governed by the authoritative scan state. Failed scan rows
-can remain as historical and security state after the operational cause is resolved and must not be
-altered solely for alert suppression.
+alert. `AttachmentScan` is authoritative security history, while the operational monitor covers
+actionable, recent incidents. It uses `completed_at` to include failures from the last seven days;
+an unexpected nil completion time safely falls back to `updated_at` for alert-window evaluation.
+When a failure ages out of operational alerts, its scan row remains unchanged: aging out does not
+resolve the failure, make the attachment available, or alter the fail-closed availability boundary.
+Failed scan rows can remain as historical and security state after the operational cause is resolved
+and must not be altered solely for alert suppression.
 
 After the root cause is understood and resolved, failed queue records may be cleared through Solid
 Queue's supported operational path. Escalation must use sanitized job classes, status categories,

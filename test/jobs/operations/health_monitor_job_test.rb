@@ -75,16 +75,36 @@ module Operations
       assert_not_includes logs, "bucket/key"
     end
 
-    test "increasing counts and timestamps for the same failure shape remain suppressed" do
+    test "count buckets alert on growth boundaries and suppress ordinary count churn" do
       create_failed_execution(class_name: "Storage::AttachmentScanJob", failed_at: @now - 4.minutes)
 
       assert_difference -> { ActionMailer::Base.deliveries.size }, 1 do
         perform_monitor
       end
-      create_failed_execution(class_name: "Storage::AttachmentScanJob", failed_at: @now + 10.minutes)
 
+      add_failed_executions(1, starting_at: @now + 1.minute)
+      assert_difference -> { ActionMailer::Base.deliveries.size }, 1 do
+        perform_monitor(now: @now + 2.minutes)
+      end
+
+      add_failed_executions(6, starting_at: @now + 3.minutes)
       assert_no_difference -> { ActionMailer::Base.deliveries.size } do
-        perform_monitor(now: @now + 15.minutes)
+        perform_monitor(now: @now + 4.minutes)
+      end
+
+      add_failed_executions(2, starting_at: @now + 5.minutes)
+      assert_difference -> { ActionMailer::Base.deliveries.size }, 1 do
+        perform_monitor(now: @now + 6.minutes)
+      end
+
+      add_failed_executions(65, starting_at: @now + 7.minutes)
+      assert_no_difference -> { ActionMailer::Base.deliveries.size } do
+        perform_monitor(now: @now + 8.minutes)
+      end
+
+      add_failed_executions(25, starting_at: @now + 9.minutes)
+      assert_difference -> { ActionMailer::Base.deliveries.size }, 1 do
+        perform_monitor(now: @now + 10.minutes)
       end
     end
 
@@ -110,6 +130,96 @@ module Operations
         perform_monitor(now: @now + 2.minutes)
       end
       assert_includes rendered_alert, "ENQUEUE_FAILED"
+    end
+
+    test "recent failed attachment scan alerts" do
+      failed_scan(status_code: "FAILED", completed_at: @now - 1.minute)
+
+      assert_difference -> { ActionMailer::Base.deliveries.size }, 1 do
+        perform_monitor
+      end
+      assert_includes rendered_alert, "Failed attachment scans: 1"
+    end
+
+    test "failed attachment scan inside the lookback alerts" do
+      failed_scan(
+        status_code: "FAILED",
+        completed_at: @now - HealthMonitorJob::FAILED_SCAN_ALERT_LOOKBACK + 1.second
+      )
+
+      assert_difference -> { ActionMailer::Base.deliveries.size }, 1 do
+        perform_monitor
+      end
+    end
+
+    test "failed attachment scan older than the lookback does not alert" do
+      failed_scan(
+        status_code: "FAILED",
+        completed_at: @now - HealthMonitorJob::FAILED_SCAN_ALERT_LOOKBACK - 1.second
+      )
+
+      assert_no_difference -> { ActionMailer::Base.deliveries.size } do
+        perform_monitor
+      end
+    end
+
+    test "failed attachment scan at the exact lookback boundary alerts" do
+      failed_scan(
+        status_code: "FAILED",
+        completed_at: @now - HealthMonitorJob::FAILED_SCAN_ALERT_LOOKBACK
+      )
+
+      assert_difference -> { ActionMailer::Base.deliveries.size }, 1 do
+        perform_monitor
+      end
+    end
+
+    test "aging out of failed scan alerts does not modify scan state or availability" do
+      scan = failed_scan(
+        status_code: "FAILED",
+        completed_at: @now - HealthMonitorJob::FAILED_SCAN_ALERT_LOOKBACK + 1.second
+      )
+      original_attributes = scan.attributes
+
+      perform_monitor
+
+      assert_no_difference -> { ActionMailer::Base.deliveries.size } do
+        perform_monitor(now: @now + 2.seconds)
+      end
+      assert_equal original_attributes, scan.reload.attributes
+      assert_not scan.available?
+    end
+
+    test "failed attachment scan with nil completion time uses recent update time safely" do
+      scan = create_scan(
+        status: "failed",
+        status_code: "FAILED",
+        completed_at: nil,
+        created_at: @now - 1.minute
+      )
+      original_attributes = scan.attributes
+
+      assert_difference -> { ActionMailer::Base.deliveries.size }, 1 do
+        perform_monitor
+      end
+      assert_equal original_attributes, scan.reload.attributes
+      assert_not scan.available?
+    end
+
+    test "failed attachment scan with nil completion time ages out by update time" do
+      scan = create_scan(
+        status: "failed",
+        status_code: "FAILED",
+        completed_at: nil,
+        created_at: @now - HealthMonitorJob::FAILED_SCAN_ALERT_LOOKBACK - 1.second
+      )
+      original_attributes = scan.attributes
+
+      assert_no_difference -> { ActionMailer::Base.deliveries.size } do
+        perform_monitor
+      end
+      assert_equal original_attributes, scan.reload.attributes
+      assert_not scan.available?
     end
 
     test "unchanged conditions produce a reminder after 24 hours" do
@@ -349,6 +459,12 @@ module Operations
         },
         created_at: failed_at
       )
+    end
+
+    def add_failed_executions(count, class_name: "Storage::AttachmentScanJob", starting_at:)
+      count.times do |index|
+        create_failed_execution(class_name:, failed_at: starting_at + index.seconds)
+      end
     end
 
     def pending_scan(created_at:)
