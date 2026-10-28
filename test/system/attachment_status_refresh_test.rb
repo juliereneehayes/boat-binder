@@ -13,7 +13,8 @@ class AttachmentStatusRefreshTest < ApplicationSystemTestCase
 
     preview_url = created_object_urls.sole
     assert_selector "#vessel-primary-photo-upload-preview img[src='#{preview_url}']"
-    assert_text "Selected photo"
+    assert_no_selector "[data-upload-preview-status]"
+    assert_no_text(/Selected photo|Processing photo/)
     fill_in "Vessel name", with: "Preview Passage"
     select account.name, from: "Owner account"
     click_button "Add vessel"
@@ -22,7 +23,8 @@ class AttachmentStatusRefreshTest < ApplicationSystemTestCase
     vessel = Asset.find_by!(name: "Preview Passage")
     assert_current_path vessel_path(vessel)
     assert_selector "#vessel-primary-photo-upload-preview img[src='#{preview_url}'][data-upload-preview-local]"
-    assert_text "Processing photo…"
+    assert_no_selector "[data-upload-preview-status]"
+    assert_no_text(/Selected photo|Processing photo/)
     assert_no_selector "img[src^='#{vessel_primary_photo_path(vessel)}']"
     assert_no_link "Check status"
     assert_equal [ preview_url ], created_object_urls
@@ -159,12 +161,16 @@ class AttachmentStatusRefreshTest < ApplicationSystemTestCase
 
     preview_urls = created_object_urls
     assert_selector "#service-visit-photos-upload-preview img[data-upload-preview-local]", count: 2
+    assert_no_selector "[data-upload-preview-status]"
+    assert_no_text(/Selected photo|Processing photo/)
     click_button "Save visit report"
 
     assert_text "Visit report saved."
     visit_record = vessel.service_visits.reload.order(:id).last
     assert_current_path vessel_service_visit_path(vessel, visit_record)
     assert_selector "#service-visit-photos-upload-preview img[data-upload-preview-local]", count: 2
+    assert_no_selector "[data-upload-preview-status]"
+    assert_no_text(/Selected photo|Processing photo/)
     assert_equal preview_urls.sort, current_preview_urls.sort
     assert_no_link "Check status"
     assert_empty revoked_object_urls

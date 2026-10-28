@@ -56,15 +56,11 @@ export default class extends Controller {
     if (!this.hasSurfaceTarget || !this.surfaceTarget.uploadPreviewObjectUrls?.length) return
 
     this.surfaceTarget.uploadPreviewSubmitted = true
-    this.setStatus("Processing photo…")
   }
 
   submitEnd(event) {
     if (!this.hasSurfaceTarget || !this.element.contains(event.target)) return
-    if (event.detail.success === false) {
-      this.surfaceTarget.uploadPreviewSubmitted = false
-      this.setStatus("Selected photo")
-    }
+    if (event.detail.success === false) this.surfaceTarget.uploadPreviewSubmitted = false
   }
 
   beforeCache() {
@@ -131,17 +127,7 @@ export default class extends Controller {
       grid.appendChild(image)
     })
 
-    const status = document.createElement("p")
-    status.className = "absolute inset-x-3 bottom-3 rounded-md bg-slate-950/80 px-3 py-2 text-sm font-bold text-white shadow-sm"
-    status.textContent = files.length > 1 ? "Selected photos" : "Selected photo"
-    status.dataset.uploadPreviewStatus = "true"
-
-    surface.replaceChildren(grid, status)
-  }
-
-  setStatus(copy) {
-    const status = this.surfaceTarget.querySelector("[data-upload-preview-status]")
-    if (status) status.textContent = copy
+    surface.replaceChildren(grid)
   }
 
   transferPreview(surface, newSurface, newIdentity) {
