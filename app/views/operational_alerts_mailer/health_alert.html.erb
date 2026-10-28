@@ -1,0 +1,49 @@
+<div style="background: #F7F5F2; color: #0B1F35; font-family: Arial, sans-serif; padding: 24px;">
+  <div style="margin: 0 auto; max-width: 680px;">
+    <div style="background: #0B1F35; border-radius: 8px; color: #FFFFFF; padding: 24px;">
+      <p style="color: #7DAAB3; font-size: 12px; font-weight: 700; margin: 0 0 10px; text-transform: uppercase;">Boat Binder operations</p>
+      <h1 style="font-size: 27px; line-height: 1.25; margin: 0;">Operational health alert</h1>
+      <p style="color: #D7E4E7; font-size: 15px; line-height: 1.6; margin: 12px 0 0;">Detected at <strong><%= @detected_at %></strong></p>
+    </div>
+
+    <div style="background: #FFFFFF; border: 1px solid #E7DED2; border-radius: 8px; margin-top: 18px; padding: 22px;">
+      <p style="font-size: 15px; line-height: 1.6; margin: 0;">
+        Boat Binder detected one or more application health conditions. This message contains only sanitized aggregates. It excludes job arguments, exception messages, attachment names, storage keys, customer data, and vessel data.
+      </p>
+    </div>
+
+    <% @conditions.each do |condition| %>
+      <div style="background: #FFFFFF; border: 1px solid #E7DED2; border-radius: 8px; margin-top: 18px; padding: 22px;">
+        <% case condition[:category] %>
+        <% when "failed_background_jobs" %>
+          <h2 style="font-size: 18px; margin: 0 0 12px;">Failed background jobs: <%= condition[:total_count] %></h2>
+          <ul style="font-size: 14px; line-height: 1.6; margin: 0; padding-left: 20px;">
+            <% condition[:groups].each do |group| %>
+              <li><strong><%= group[:job_class] %></strong>: <%= group[:count] %> failure(s); first <%= group[:first_failed_at] %>; most recent <%= group[:most_recent_failed_at] %></li>
+            <% end %>
+            <% if condition[:omitted_job_class_count].positive? %>
+              <li>Additional job classes omitted: <%= condition[:omitted_job_class_count] %></li>
+            <% end %>
+          </ul>
+        <% when "failed_attachment_scans" %>
+          <h2 style="font-size: 18px; margin: 0 0 12px;">Failed attachment scans: <%= condition[:total_count] %></h2>
+          <ul style="font-size: 14px; line-height: 1.6; margin: 0; padding-left: 20px;">
+            <% condition[:groups].each do |group| %>
+              <li><strong><%= group[:status_code] %></strong>: <%= group[:count] %> failure(s); first <%= group[:first_failed_at] %>; most recent <%= group[:most_recent_failed_at] %></li>
+            <% end %>
+          </ul>
+        <% when "stale_attachment_scans" %>
+          <h2 style="font-size: 18px; margin: 0 0 12px;">Stale pending attachment scans: <%= condition[:count] %></h2>
+          <ul style="font-size: 14px; line-height: 1.6; margin: 0; padding-left: 20px;">
+            <li>Oldest created at: <%= condition[:oldest_created_at] %></li>
+            <li>Most recent created at: <%= condition[:most_recent_created_at] %></li>
+          </ul>
+        <% end %>
+      </div>
+    <% end %>
+
+    <p style="color: #526579; font-size: 12px; line-height: 1.5; margin: 18px 4px 0;">
+      Investigate in an authenticated operational environment. Do not copy serialized job payloads, raw exception text, or attachment metadata into tickets or shared logs.
+    </p>
+  </div>
+</div>

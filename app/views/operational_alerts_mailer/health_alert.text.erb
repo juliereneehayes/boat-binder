@@ -1,0 +1,29 @@
+Boat Binder operational health alert
+
+Detected at: <%= @detected_at %>
+
+Boat Binder detected one or more application health conditions. This message contains only sanitized aggregates. It excludes job arguments, exception messages, attachment names, storage keys, customer data, and vessel data.
+
+<% @conditions.each do |condition| %>
+<% case condition[:category] %>
+<% when "failed_background_jobs" %>
+Failed background jobs: <%= condition[:total_count] %>
+<% condition[:groups].each do |group| %>
+- <%= group[:job_class] %>: <%= group[:count] %> failure(s); first <%= group[:first_failed_at] %>; most recent <%= group[:most_recent_failed_at] %>
+<% end %>
+<% if condition[:omitted_job_class_count].positive? %>
+- Additional job classes omitted: <%= condition[:omitted_job_class_count] %>
+<% end %>
+<% when "failed_attachment_scans" %>
+Failed attachment scans: <%= condition[:total_count] %>
+<% condition[:groups].each do |group| %>
+- <%= group[:status_code] %>: <%= group[:count] %> failure(s); first <%= group[:first_failed_at] %>; most recent <%= group[:most_recent_failed_at] %>
+<% end %>
+<% when "stale_attachment_scans" %>
+Stale pending attachment scans: <%= condition[:count] %>
+- Oldest created at: <%= condition[:oldest_created_at] %>
+- Most recent created at: <%= condition[:most_recent_created_at] %>
+<% end %>
+
+<% end %>
+Investigate in an authenticated operational environment. Do not copy serialized job payloads, raw exception text, or attachment metadata into tickets or shared logs.

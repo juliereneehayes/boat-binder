@@ -31,4 +31,13 @@ class SolidQueueRuntimeConfigurationTest < ActiveSupport::TestCase
     assert_equal "background", recovery.fetch(:queue)
     assert_equal "every 5 minutes", recovery.fetch(:schedule)
   end
+
+  test "production schedules one operational health monitor on the background queue" do
+    recurring_config = Rails.application.config_for(:recurring, env: "production")
+    monitor = recurring_config.fetch(:monitor_operational_health)
+
+    assert_equal "Operations::HealthMonitorJob", monitor.fetch(:class)
+    assert_equal "background", monitor.fetch(:queue)
+    assert_equal "every 15 minutes", monitor.fetch(:schedule)
+  end
 end
