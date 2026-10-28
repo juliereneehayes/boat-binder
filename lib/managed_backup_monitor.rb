@@ -2,6 +2,7 @@
 
 require "json"
 require "net/http"
+require "openssl"
 require "time"
 require "uri"
 
@@ -9,6 +10,8 @@ module ManagedBackupMonitor
   TOKEN_ENV = "HEROKU_MANAGED_BACKUP_MONITOR_TOKEN"
   APP_ENV = "HEROKU_MANAGED_BACKUP_MONITOR_APP"
   FRESHNESS_THRESHOLD = 30 * 60 * 60
+  CLOCK_SKEW_TOLERANCE = 5 * 60
+  DETAIL_REQUEST_LIMIT = 10
 
   Result = Data.define(:category) do
     def healthy?
@@ -25,12 +28,30 @@ module ManagedBackupMonitor
     DATA_HOST = "api.data.heroku.com"
     PLATFORM_ACCEPT = "application/vnd.heroku+json; version=3"
     DATA_ACCEPT = "application/json"
+    MAX_RETRIES = 1
+    RETRY_DELAY = 0.25
 
-    def initialize(token:, app:, open_timeout: 10, read_timeout: 20)
+    class TransientRequestError < StandardError; end
+
+    TRANSIENT_ERRORS = [
+      TransientRequestError,
+      Timeout::Error,
+      SocketError,
+      EOFError,
+      IOError,
+      SystemCallError,
+      Net::HTTPBadResponse,
+      Net::ProtocolError,
+      OpenSSL::SSL::SSLError
+    ].freeze
+
+    def initialize(token:, app:, open_timeout: 10, read_timeout: 20, retry_delay: RETRY_DELAY, sleeper: Kernel)
       @token = token
       @app = app
       @open_timeout = open_timeout
       @read_timeout = read_timeout
+      @retry_delay = retry_delay
+      @sleeper = sleeper
     end
 
     def database_attachment
@@ -69,14 +90,25 @@ module ManagedBackupMonitor
     private
 
     def get_json(host:, path:, accept:, not_found: :raise)
-      response = request(host:, path:, accept:)
-      status = response.code.to_i
+      attempts = 0
 
-      raise AuthorizationError if status == 401 || status == 403
-      return not_found if status == 404 && not_found != :raise
-      raise RequestError unless status.between?(200, 299)
+      begin
+        response = request(host:, path:, accept:)
+        status = response.code.to_i
 
-      JSON.parse(response.body)
+        raise AuthorizationError if status == 401 || status == 403
+        raise TransientRequestError if status == 429 || status.between?(500, 599)
+        return not_found if status == 404 && not_found != :raise
+        raise RequestError unless status.between?(200, 299)
+
+        JSON.parse(response.body)
+      rescue *TRANSIENT_ERRORS
+        attempts += 1
+        raise RequestError if attempts > MAX_RETRIES
+
+        @sleeper.sleep(@retry_delay)
+        retry
+      end
     rescue JSON::ParserError, TypeError
       raise SchemaError
     rescue AuthorizationError, RequestError, SchemaError
@@ -182,16 +214,16 @@ module ManagedBackupMonitor
 
       return Result.new(category: "freshness_stale") if candidates.empty?
 
-      candidates.sort_by(&:first).reverse
+      candidates.sort_by(&:first).reverse.first(DETAIL_REQUEST_LIMIT)
     end
 
     def evaluate_candidates(candidates, schedule_id)
-      candidates.each_with_index do |(_created_at, number), index|
+      candidates.each do |(_created_at, number)|
         detail = @client.transfer_detail(number)
         state, finished_at = transfer_state(detail, schedule_id)
 
-        return Result.new(category: "scheduled_capture_failed") if index.zero? && state == :failed
-        next unless state == :succeeded
+        next if state == :running
+        return Result.new(category: "scheduled_capture_failed") if state == :failed
 
         return freshness_result(finished_at)
       end
@@ -208,21 +240,37 @@ module ManagedBackupMonitor
       succeeded = detail["succeeded"]
       raise SchemaError unless [ true, false, nil ].include?(succeeded)
 
+      finished_value = detail["finished_at"]
+      canceled_value = detail["canceled_at"]
+      finished = !finished_value.nil?
+      canceled = !canceled_value.nil?
+
+      unless finished || canceled
+        raise SchemaError if succeeded
+
+        return [ :running, nil ]
+      end
+
+      finished_at = parse_time(finished_value) if finished
+      canceled_at = parse_time(canceled_value) if canceled
+      raise SchemaError if (finished && finished_at.nil?) || (canceled && canceled_at.nil?)
+
       if succeeded
-        finished_at = parse_time(detail["finished_at"])
-        raise SchemaError if finished_at.nil?
+        raise SchemaError if canceled || !finished
 
         [ :succeeded, finished_at ]
-      elsif succeeded == false || present_string?(detail["canceled_at"]) || present_string?(detail["finished_at"])
+      elsif succeeded == false
         [ :failed, nil ]
       else
-        [ :running, nil ]
+        raise SchemaError
       end
     end
 
     def freshness_result(finished_at)
       age = @now - finished_at
-      raise SchemaError if age.negative?
+      raise SchemaError if age < -CLOCK_SKEW_TOLERANCE
+
+      age = 0 if age.negative?
 
       category = age <= @freshness_threshold ? "healthy" : "freshness_stale"
       Result.new(category:)
@@ -231,7 +279,11 @@ module ManagedBackupMonitor
     def parse_time(value)
       Time.iso8601(value).utc if present_string?(value)
     rescue ArgumentError
-      nil
+      begin
+        Time.parse(value).utc
+      rescue ArgumentError
+        nil
+      end
     end
 
     def present_string?(value)

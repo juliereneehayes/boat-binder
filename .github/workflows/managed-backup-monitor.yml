@@ -14,11 +14,10 @@ concurrency:
 
 jobs:
   check:
+    if: github.repository == 'juliereneehayes/boat-binder' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    env:
-      HEROKU_MANAGED_BACKUP_MONITOR_TOKEN: ${{ secrets.HEROKU_MANAGED_BACKUP_MONITOR_TOKEN }}
-      HEROKU_MANAGED_BACKUP_MONITOR_APP: ${{ vars.HEROKU_MANAGED_BACKUP_MONITOR_APP }}
+    environment: production-monitoring
 
     steps:
       - name: Checkout code
@@ -30,4 +29,7 @@ jobs:
         uses: ruby/setup-ruby@824c0e29fdfc7d689c191c27acc969d2d04b7dd8 # v1.331.0
 
       - name: Check managed backup health
+        env:
+          HEROKU_MANAGED_BACKUP_MONITOR_TOKEN: ${{ secrets.HEROKU_MANAGED_BACKUP_MONITOR_TOKEN }}
+          HEROKU_MANAGED_BACKUP_MONITOR_APP: ${{ vars.HEROKU_MANAGED_BACKUP_MONITOR_APP }}
         run: ruby script/managed_backup_monitor

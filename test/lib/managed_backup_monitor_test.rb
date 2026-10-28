@@ -7,6 +7,31 @@ require Rails.root.join("lib/managed_backup_monitor")
 
 class ManagedBackupMonitorTest < ActiveSupport::TestCase
   NOW = Time.utc(2026, 1, 2, 12)
+  FakeResponse = Data.define(:code, :body)
+
+  class StubHerokuClient < ManagedBackupMonitor::HerokuClient
+    attr_reader :request_count, :retry_delays
+
+    def initialize(responses:)
+      @responses = responses
+      @request_count = 0
+      @retry_delays = []
+      sleeper = Object.new
+      retry_delays = @retry_delays
+      sleeper.define_singleton_method(:sleep) { |delay| retry_delays << delay }
+      super(token: "fixture-token", app: "fixture-app", sleeper:)
+    end
+
+    private
+
+    def request(**)
+      @request_count += 1
+      response = @responses.shift
+      raise response if response.is_a?(Exception)
+
+      response
+    end
+  end
 
   class FakeClient
     attr_accessor :attachment, :schedules, :transfers, :details, :errors
@@ -96,6 +121,50 @@ class ManagedBackupMonitorTest < ActiveSupport::TestCase
     assert_result "check_error", client
   end
 
+  test "transient HTTP failure retries once and succeeds" do
+    client = StubHerokuClient.new(responses: [
+      response(429),
+      response(200, JSON.generate(@attachment))
+    ])
+
+    assert_equal @attachment, client.database_attachment
+    assert_equal 2, client.request_count
+    assert_equal [ ManagedBackupMonitor::HerokuClient::RETRY_DELAY ], client.retry_delays
+  end
+
+  test "transient network failure retries once and succeeds" do
+    client = StubHerokuClient.new(responses: [
+      Net::ReadTimeout.new("fixture timeout"),
+      response(200, JSON.generate(@attachment))
+    ])
+
+    assert_equal @attachment, client.database_attachment
+    assert_equal 2, client.request_count
+  end
+
+  test "persistent transient failure becomes a check error after one retry" do
+    client = StubHerokuClient.new(responses: [ response(503), response(503) ])
+
+    assert_result "check_error", client
+    assert_equal 2, client.request_count
+  end
+
+  test "authorization failures are not retried" do
+    client = StubHerokuClient.new(responses: [ response(403), response(200, JSON.generate(@attachment)) ])
+
+    assert_result "authorization_failed", client
+    assert_equal 1, client.request_count
+    assert_empty client.retry_delays
+  end
+
+  test "schema failures are not retried" do
+    client = StubHerokuClient.new(responses: [ response(200, "not-json"), response(200, JSON.generate(@attachment)) ])
+
+    assert_result "schema_error", client
+    assert_equal 1, client.request_count
+    assert_empty client.retry_delays
+  end
+
   test "exactly one schedule is accepted" do
     client = build_client(details: { 106 => @success })
 
@@ -160,6 +229,33 @@ class ManagedBackupMonitorTest < ActiveSupport::TestCase
     assert_result "scheduled_capture_failed", client
   end
 
+  test "false success flag without completion metadata is treated as running" do
+    client = build_client(details: {
+      106 => @running.merge("succeeded" => false, "finished_at" => nil, "canceled_at" => nil),
+      105 => success_detail(number: 105, finished_at: "2026-01-02T06:00:00Z")
+    })
+
+    assert_result "healthy", client
+    assert_equal [ 106, 105 ], client.detail_requests
+  end
+
+  test "newest running then failed then older success reports the completed failure" do
+    transfers = [
+      scheduled_transfer(number: 108, created_at: "2026-01-02T11:30:00Z"),
+      scheduled_transfer(number: 107, created_at: "2026-01-02T10:30:00Z"),
+      scheduled_transfer(number: 106, created_at: "2026-01-02T09:30:00Z")
+    ]
+    client = build_client(details: {
+      108 => running_detail(number: 108),
+      107 => failed_detail(number: 107),
+      106 => success_detail
+    })
+    client.transfers = transfers
+
+    assert_result "scheduled_capture_failed", client
+    assert_equal [ 108, 107 ], client.detail_requests
+  end
+
   test "running newest backup does not fail when previous success is fresh" do
     client = build_client(details: {
       106 => @running,
@@ -177,6 +273,24 @@ class ManagedBackupMonitorTest < ActiveSupport::TestCase
     })
 
     assert_result "freshness_stale", client
+  end
+
+  test "all candidates running within the detail cap fails closed without an eleventh request" do
+    transfers = (1..11).map do |offset|
+      scheduled_transfer(number: 200 + offset, created_at: (NOW - offset * 60).iso8601)
+    end
+    details = transfers.to_h do |transfer|
+      number = transfer.fetch("num")
+      [ number, running_detail(number:) ]
+    end
+    oldest_number = transfers.last.fetch("num")
+    details[oldest_number] = success_detail(number: oldest_number)
+    client = build_client(details:)
+    client.transfers = transfers
+
+    assert_result "freshness_stale", client
+    assert_equal ManagedBackupMonitor::DETAIL_REQUEST_LIMIT, client.detail_requests.length
+    refute_includes client.detail_requests, oldest_number
   end
 
   test "missing transfer detail fields fail closed" do
@@ -201,6 +315,27 @@ class ManagedBackupMonitorTest < ActiveSupport::TestCase
     client = build_client(details: { 106 => success_detail(finished_at: "2026-01-01T05:59:59Z") })
 
     assert_result "freshness_stale", client
+  end
+
+  test "alternate valid timestamp representation is accepted" do
+    detail = success_detail(finished_at: "2026-01-02 11:05:00 +0000")
+    client = build_client(details: { 106 => detail })
+
+    assert_result "healthy", client
+  end
+
+  test "small future clock skew is treated as fresh" do
+    detail = success_detail(finished_at: "2026-01-02T12:05:00Z")
+    client = build_client(details: { 106 => detail })
+
+    assert_result "healthy", client
+  end
+
+  test "future clock skew beyond tolerance is a schema error" do
+    detail = success_detail(finished_at: "2026-01-02T12:05:01Z")
+    client = build_client(details: { 106 => detail })
+
+    assert_result "schema_error", client
   end
 
   test "CLI prints only the healthy result category" do
@@ -262,6 +397,28 @@ class ManagedBackupMonitorTest < ActiveSupport::TestCase
 
   def success_detail(number: 106, finished_at: "2026-01-02T11:05:00Z")
     @success.merge("num" => number, "finished_at" => finished_at)
+  end
+
+  def failed_detail(number: 106)
+    @failed.merge("num" => number)
+  end
+
+  def running_detail(number: 106)
+    @running.merge("num" => number)
+  end
+
+  def scheduled_transfer(number:, created_at:)
+    {
+      "num" => number,
+      "created_at" => created_at,
+      "from_type" => "pg_dump",
+      "to_type" => "gof3r",
+      "schedule" => { "uuid" => "fixture-schedule-id" }
+    }
+  end
+
+  def response(code, body = "")
+    FakeResponse.new(code: code.to_s, body:)
   end
 
   def fixture_json(name)

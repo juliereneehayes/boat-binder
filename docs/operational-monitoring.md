@@ -105,28 +105,46 @@ The external managed-backup monitor is implemented by
 minute 17 twice daily and can also be dispatched manually. The monitor uses direct HTTPS GETs only;
 it does not install the Heroku CLI, run inside Rails, create or restore backups, change schedules,
 or persist provider responses. GitHub Actions job failure is the operator-visible alert. The owner
-must enable the appropriate GitHub Actions failure notifications for the repository.
+must enable the appropriate GitHub Actions failure notifications for the repository. Scheduled
+GitHub Actions runs can be delayed, and GitHub can disable scheduled workflows in a public
+repository after prolonged inactivity. This check is therefore not a complete dead-man monitor.
+That limitation is accepted for the current launch scope; the owner must periodically confirm that
+scheduled monitor runs continue to occur.
 
-The monitor requires two owner-supplied GitHub Actions values:
+The monitor job uses the protected GitHub Environment `production-monitoring` and requires two
+owner-supplied values stored in that Environment:
 
-- repository secret `HEROKU_MANAGED_BACKUP_MONITOR_TOKEN`, containing an OAuth authorization with
+- Environment secret `HEROKU_MANAGED_BACKUP_MONITOR_TOKEN`, containing an OAuth authorization with
   scope exactly `read-protected`; and
-- repository variable `HEROKU_MANAGED_BACKUP_MONITOR_APP`, containing the production app reference.
+- Environment variable `HEROKU_MANAGED_BACKUP_MONITOR_APP`, containing the production app
+  reference.
 
 The permanent authorization belongs to the dedicated Heroku identity that is limited to Boat
 Binder production, not the owner's primary Heroku account. `read` cannot retrieve the required
-transfer history, while `read-protected` can. `global` must not be used. To rotate the credential,
-the owner creates a replacement `read-protected` authorization while signed in as the dedicated
-identity, replaces the GitHub Actions secret without exposing it in logs or issues, verifies a
-healthy manual workflow run, and then revokes the prior authorization. Removing the monitor
-requires revoking its authorization as well as deleting the GitHub secret.
+transfer history, while `read-protected` can. `global` must not be used. Although it is read-only,
+`read-protected` can read protected runtime configuration, including highly sensitive production
+values such as database connection strings and other application secrets. Compromise of this
+GitHub Actions credential is therefore a material security event. The dedicated identity and its
+production-only Boat Binder app access reduce the blast radius. The permanent token must be stored
+only in the protected `production-monitoring` Environment, and Codex or other agents must never
+receive it.
+
+To rotate the credential, the owner creates a replacement `read-protected` authorization while
+signed in as the dedicated identity, replaces the Environment secret without exposing it in logs
+or issues, verifies a healthy manual workflow run, and then revokes the prior authorization.
+Removing the monitor requires revoking its authorization as well as deleting the Environment
+secret.
 
 Each run resolves the current `DATABASE` attachment, requires exactly one recurring schedule,
 correlates scheduled captures using the schedule UUID, filters backup transfers from restores and
-copies, and loads verbose detail for the newest relevant transfers. A running newest capture is not
-treated as failed; freshness of the most recent successful scheduled capture remains controlling.
-The freshness threshold is 30 hours: the expected daily cadence plus six hours for ordinary
-schedule variation and capture duration.
+copies, and loads verbose detail for at most the ten newest relevant transfers. Running transfers
+are skipped, and the newest completed scheduled transfer determines health: failure is unhealthy,
+while success is checked for freshness. If no completed transfer can be established within the
+bounded lookup, the monitor fails closed as stale. The freshness threshold is 30 hours: the
+expected daily cadence plus six hours for ordinary schedule variation and capture duration. A
+small future timestamp skew of at most five minutes is tolerated. Transient network failures, HTTP
+429, and HTTP 5xx responses receive one short retry; authorization, schema, and backup-health
+failures are not retried.
 
 Healthy runs log only `managed_backup_monitor result=healthy`. Unhealthy runs fail with one of these
 sanitized categories:
@@ -152,6 +170,34 @@ The following are accepted constraints rather than implementation blockers:
    limited to Boat Binder production.
 3. The Heroku Data API endpoints used by the official CLI do not have the same documented public
    contract as Platform API v3. Any endpoint or schema change therefore fails the monitor closed.
+
+### Owner setup and first production run
+
+The workflow intentionally does not treat missing configuration as healthy. Complete setup in this
+order:
+
+1. Merge PR #290 through the normal required-review and required-CI workflow.
+2. Create the GitHub Environment `production-monitoring`.
+3. Restrict that Environment's deployment branches to `main`. Do not add required reviewers,
+   because scheduled checks must run unattended.
+4. While signed in as `support@boat-binder.com`, create the permanent Heroku OAuth authorization
+   with scope exactly `read-protected`.
+5. Store the token directly in the Environment secret
+   `HEROKU_MANAGED_BACKUP_MONITOR_TOKEN`.
+6. Store the production app reference in the Environment variable
+   `HEROKU_MANAGED_BACKUP_MONITOR_APP`.
+7. Never provide either production value to Codex or another agent.
+8. Enable appropriate GitHub Actions failure notifications.
+9. From `main`, manually dispatch the first production monitor run.
+10. Confirm the run reports only the sanitized healthy result before considering #229 complete.
+
+A scheduled run can occur between merge and owner setup. An initial red run is expected if the
+Environment or required values are not yet configured; complete setup and verify a subsequent
+manual run rather than weakening the fail-closed behavior.
+
+The existing required pull request, human review, ruleset, required CI, and no-bypass protections
+remain the authoritative repository security controls. A paid Heroku Team is not being adopted
+solely for this monitor.
 
 See Heroku's [OAuth documentation](https://devcenter.heroku.com/articles/oauth) for the scope model
 and its warning that read-only resources can still expose sensitive metadata. See its

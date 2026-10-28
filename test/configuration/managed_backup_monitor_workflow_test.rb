@@ -29,13 +29,30 @@ class ManagedBackupMonitorWorkflowTest < ActiveSupport::TestCase
     refute_includes @source, "deployments:"
   end
 
-  test "references owner supplied configuration without defining credentials" do
-    environment = @workflow.dig("jobs", "check", "env")
+  test "uses the protected environment and canonical main branch guard" do
+    job = @workflow.dig("jobs", "check")
+
+    assert_equal "production-monitoring", job.fetch("environment")
+    assert_includes job.fetch("if"), "github.repository == 'juliereneehayes/boat-binder'"
+    assert_includes job.fetch("if"), "github.ref == 'refs/heads/main'"
+  end
+
+  test "exposes owner supplied configuration only to the monitor step" do
+    job = @workflow.dig("jobs", "check")
+    monitor_step = job.fetch("steps").find { |step| step["name"] == "Check managed backup health" }
+    environment = monitor_step.fetch("env")
 
     assert_equal "${{ secrets.HEROKU_MANAGED_BACKUP_MONITOR_TOKEN }}",
       environment.fetch("HEROKU_MANAGED_BACKUP_MONITOR_TOKEN")
     assert_equal "${{ vars.HEROKU_MANAGED_BACKUP_MONITOR_APP }}",
       environment.fetch("HEROKU_MANAGED_BACKUP_MONITOR_APP")
+    refute job.key?("env")
+    job.fetch("steps").reject { |step| step.equal?(monitor_step) }.each do |step|
+      refute_includes step.fetch("env", {}).keys, "HEROKU_MANAGED_BACKUP_MONITOR_TOKEN"
+      refute_includes step.fetch("env", {}).keys, "HEROKU_MANAGED_BACKUP_MONITOR_APP"
+    end
+    assert_equal 1, @source.scan("secrets.HEROKU_MANAGED_BACKUP_MONITOR_TOKEN").length
+    assert_equal 1, @source.scan("vars.HEROKU_MANAGED_BACKUP_MONITOR_APP").length
     refute_match(/HRKU-[A-Za-z0-9_-]+/, @source)
   end
 
