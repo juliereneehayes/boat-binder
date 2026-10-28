@@ -111,7 +111,9 @@ module Operations
       assert_includes rendered, "Failed attachment scans: 1"
       assert_includes rendered, "ENQUEUE_FAILED"
       assert_not_includes rendered, "private-customer-document.pdf"
-      assert_not_includes rendered, scan.active_storage_blob_id.to_s
+      assert_not_includes rendered, scan.active_storage_blob.key
+      assert_not_includes rendered, "active_storage_blob_id"
+      assert_not_includes rendered, "blob_id"
       assert_equal original_attributes,
         scan.reload.attributes.slice("status", "status_code", "completed_at", "updated_at")
     end
