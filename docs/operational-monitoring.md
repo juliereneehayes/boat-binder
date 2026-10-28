@@ -106,10 +106,13 @@ minute 17 twice daily and can also be dispatched manually. The monitor uses dire
 it does not install the Heroku CLI, run inside Rails, create or restore backups, change schedules,
 or persist provider responses. GitHub Actions job failure is the operator-visible alert. The owner
 must enable the appropriate GitHub Actions failure notifications for the repository. Scheduled
-GitHub Actions runs can be delayed, and GitHub can disable scheduled workflows in a public
-repository after prolonged inactivity. This check is therefore not a complete dead-man monitor.
-That limitation is accepted for the current launch scope; the owner must periodically confirm that
-scheduled monitor runs continue to occur.
+workflow notifications are associated with the user who created the scheduled workflow; if another
+user changes its cron syntax, notification ownership can move to that user. Ensure the owner account
+remains the intended recipient for failure notifications. Scheduled GitHub Actions runs can be
+delayed, and GitHub can disable scheduled workflows in a public repository after prolonged
+inactivity. This check is therefore not a complete dead-man monitor. That limitation is accepted
+for the current launch scope. Once per month, verify in the GitHub Actions tab that the
+managed-backup monitor has recent scheduled runs.
 
 The monitor job uses the protected GitHub Environment `production-monitoring` and requires two
 owner-supplied values stored in that Environment:
@@ -180,8 +183,8 @@ order:
 2. Create the GitHub Environment `production-monitoring`.
 3. Restrict that Environment's deployment branches to `main`. Do not add required reviewers,
    because scheduled checks must run unattended.
-4. While signed in as `support@boat-binder.com`, create the permanent Heroku OAuth authorization
-   with scope exactly `read-protected`.
+4. While signed in as the dedicated monitoring identity, create the permanent Heroku OAuth
+   authorization with scope exactly `read-protected`.
 5. Store the token directly in the Environment secret
    `HEROKU_MANAGED_BACKUP_MONITOR_TOKEN`.
 6. Store the production app reference in the Environment variable
@@ -190,6 +193,10 @@ order:
 8. Enable appropriate GitHub Actions failure notifications.
 9. From `main`, manually dispatch the first production monitor run.
 10. Confirm the run reports only the sanitized healthy result before considering #229 complete.
+
+GitHub can automatically create a referenced Environment without protection rules if it does not
+already exist. The owner must therefore complete Environment creation and the `main` restriction
+before placing any secrets into it.
 
 A scheduled run can occur between merge and owner setup. An initial red run is expected if the
 Environment or required values are not yet configured; complete setup and verify a subsequent

@@ -12,6 +12,8 @@ module ManagedBackupMonitor
   FRESHNESS_THRESHOLD = 30 * 60 * 60
   CLOCK_SKEW_TOLERANCE = 5 * 60
   DETAIL_REQUEST_LIMIT = 10
+  ALTERNATE_TIMESTAMP_FORMAT = "%Y-%m-%d %H:%M:%S %z"
+  ALTERNATE_TIMESTAMP_PATTERN = /\A\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2} [+-]\d{4}\z/
 
   Result = Data.define(:category) do
     def healthy?
@@ -279,11 +281,15 @@ module ManagedBackupMonitor
     def parse_time(value)
       Time.iso8601(value).utc if present_string?(value)
     rescue ArgumentError
-      begin
-        Time.parse(value).utc
-      rescue ArgumentError
-        nil
-      end
+      parse_alternate_time(value)
+    end
+
+    def parse_alternate_time(value)
+      return unless value.match?(ALTERNATE_TIMESTAMP_PATTERN)
+
+      Time.strptime(value, ALTERNATE_TIMESTAMP_FORMAT).utc
+    rescue ArgumentError
+      nil
     end
 
     def present_string?(value)

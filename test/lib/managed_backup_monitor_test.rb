@@ -305,6 +305,48 @@ class ManagedBackupMonitorTest < ActiveSupport::TestCase
     assert_result "schema_error", client
   end
 
+  test "successful state without finished timestamp is a schema error" do
+    detail = @success.merge("finished_at" => nil)
+    client = build_client(details: { 106 => detail })
+
+    assert_result "schema_error", client
+  end
+
+  test "successful state with cancellation timestamp is a schema error" do
+    detail = @success.merge("canceled_at" => "2026-01-02T11:05:00Z")
+    client = build_client(details: { 106 => detail })
+
+    assert_result "schema_error", client
+  end
+
+  test "indeterminate success state with finished timestamp is a schema error" do
+    detail = @success.merge("succeeded" => nil)
+    client = build_client(details: { 106 => detail })
+
+    assert_result "schema_error", client
+  end
+
+  test "failed state with cancellation timestamp is a completed failure" do
+    detail = @failed.merge("finished_at" => nil, "canceled_at" => "2026-01-02T11:05:00Z")
+    client = build_client(details: { 106 => detail })
+
+    assert_result "scheduled_capture_failed", client
+  end
+
+  test "empty finished timestamp is a schema error" do
+    detail = @success.merge("finished_at" => "")
+    client = build_client(details: { 106 => detail })
+
+    assert_result "schema_error", client
+  end
+
+  test "unparseable finished timestamp is a schema error" do
+    detail = @success.merge("finished_at" => "not-a-timestamp")
+    client = build_client(details: { 106 => detail })
+
+    assert_result "schema_error", client
+  end
+
   test "successful backup exactly at the 30 hour boundary is fresh" do
     client = build_client(details: { 106 => success_detail(finished_at: "2026-01-01T06:00:00Z") })
 
@@ -322,6 +364,20 @@ class ManagedBackupMonitorTest < ActiveSupport::TestCase
     client = build_client(details: { 106 => detail })
 
     assert_result "healthy", client
+  end
+
+  test "short numeric timestamp is rejected" do
+    detail = success_detail(finished_at: "12")
+    client = build_client(details: { 106 => detail })
+
+    assert_result "schema_error", client
+  end
+
+  test "natural language timestamp is rejected" do
+    detail = success_detail(finished_at: "January 2, 2026 11:05 UTC")
+    client = build_client(details: { 106 => detail })
+
+    assert_result "schema_error", client
   end
 
   test "small future clock skew is treated as fresh" do
