@@ -21,3 +21,7 @@ production:
     class: Storage::RecoverStaleAttachmentScansJob
     queue: background
     schedule: every 5 minutes
+  monitor_operational_health:
+    class: Operations::HealthMonitorJob
+    queue: background
+    schedule: every 15 minutes

@@ -66,6 +66,19 @@ per-process cache is not safe for multi-process production MFA enforcement.
 
 These are required before production transactional email can actually deliver.
 
+## Operational alerts
+
+- `OPERATIONAL_ALERT_RECIPIENT` - the single operator-controlled mailbox that receives sanitized
+  application health alerts.
+
+The value is optional at boot so local and test environments do not need an operator mailbox. In a
+deployed environment, an unhealthy condition with no configured recipient is logged as a sanitized
+configuration error and is not considered delivered. Keep the value in environment configuration;
+do not commit it, derive it from customer/admin records, or publish it in operational evidence.
+
+See [Operational Monitoring](operational-monitoring.md) for alert conditions, suppression behavior,
+privacy boundaries, and the external storage/backup monitoring gaps.
+
 ## Stripe
 
 - `STRIPE_SECRET_KEY` - secret API key for Stripe-dependent operations.

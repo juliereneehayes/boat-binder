@@ -121,4 +121,5 @@ Planned GPT-5.6 feature: a Vessel Ownership Brief that synthesizes reminders, se
 - [Deployment Architecture Review](docs/deployment-architecture.md)
 - [Seed Operations](docs/seed-operations.md)
 - [Production Email](docs/email.md)
+- [Operational Monitoring](docs/operational-monitoring.md)
 - [Stripe Foundation](docs/stripe.md)
