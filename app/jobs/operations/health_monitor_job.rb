@@ -5,9 +5,9 @@ module Operations
     queue_as :background
 
     ALERT_REMINDER_INTERVAL = 24.hours
-    STALE_SCAN_RECOVERY_GRACE = 5.minutes
+    STALE_SCAN_RECOVERY_GRACE = 10.minutes
     MAX_FAILED_JOB_CLASSES = 25
-    CACHE_NAMESPACE = "operations/health-monitor/v1".freeze
+    CACHE_NAMESPACE = "operations/health-monitor/v2".freeze
     SAFE_CLASS_NAME = /\A[A-Z]\w*(?:::[A-Z]\w*)*\z/
 
     def perform(now: Time.current)
@@ -51,7 +51,6 @@ module Operations
 
     def failed_jobs_condition
       scope = SolidQueue::FailedExecution.joins(:job)
-        .where.not(solid_queue_jobs: { class_name: self.class.name })
       total_count = scope.count
       return if total_count.zero?
 
@@ -77,9 +76,14 @@ module Operations
       {
         category: "failed_background_jobs",
         total_count:,
+        job_classes: failed_job_classes(scope),
         omitted_job_class_count: failed_job_class_count(scope) - groups.size,
         groups:
       }
+    end
+
+    def failed_job_classes(scope)
+      scope.distinct.pluck("solid_queue_jobs.class_name").map { |name| safe_class_name(name) }.uniq.sort
     end
 
     def failed_job_class_count(scope)
@@ -126,8 +130,27 @@ module Operations
     end
 
     def alert_cache_key(conditions)
-      fingerprint = Digest::SHA256.hexdigest(conditions.to_json)
+      fingerprint = Digest::SHA256.hexdigest(structural_conditions(conditions).to_json)
       "#{CACHE_NAMESPACE}/#{fingerprint}"
+    end
+
+    def structural_conditions(conditions)
+      conditions.map do |condition|
+        case condition[:category]
+        when "failed_background_jobs"
+          {
+            category: condition[:category],
+            job_classes: condition[:job_classes]
+          }
+        when "failed_attachment_scans"
+          {
+            category: condition[:category],
+            status_codes: condition[:groups].pluck(:status_code).uniq.sort
+          }
+        else
+          { category: condition[:category] }
+        end
+      end.sort_by { |condition| condition[:category] }
     end
 
     def recently_alerted?(cache_key)

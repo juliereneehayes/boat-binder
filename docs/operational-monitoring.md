@@ -15,7 +15,7 @@ The monitor reports:
 - failed Solid Queue executions, grouped by sanitized job class with counts and first/most-recent
   failure timestamps;
 - failed `AttachmentScan` rows, grouped by the model's bounded status codes; and
-- pending attachment scans older than the 15-minute polling window plus the five-minute recurring
+- pending attachment scans older than the 15-minute polling window plus a 10-minute recurring
   recovery allowance.
 
 This single failed-job path naturally covers `Storage::AttachmentScanJob`,
@@ -27,15 +27,38 @@ blob identifiers, filenames, object keys, signed IDs, provider payloads, email c
 customer data, and vessel data. Investigators must keep those values out of public issues and shared
 logs as well.
 
-Solid Cache stores a fingerprint after successful delivery. An unchanged condition is suppressed
-for 24 hours, after which it can produce a reminder. A changed count, job class, status category, or
-timestamp produces a new fingerprint and can alert sooner. Cache loss can cause a duplicate but
-cannot make an unhealthy query appear healthy. The monitor excludes its own failed executions to
-prevent a delivery or rendering failure from recursively alerting on itself; delivery and cache
-failures are logged with exception class only.
+Solid Cache stores a structural fingerprint after successful delivery. The fingerprint includes
+only health categories, sanitized failed-job classes, and failed-scan status categories. Counts and
+timestamps remain in the email but cannot churn the fingerprint. The same failure shape is
+suppressed for 24 hours, after which it can produce a reminder; a new job class, status category, or
+health category can alert sooner. Cache loss can cause a duplicate but cannot make an unhealthy
+query appear healthy.
+
+A successful monitor run reports failed prior `Operations::HealthMonitorJob` executions through the
+same failed-job path. SMTP failures caught during the current run are logged with exception class
+only, do not create a suppression fingerprint, and do not deliberately fail the monitor job. This
+avoids recursive queue-failure noise while allowing the next run to try delivery again. Complete
+worker or recurring-scheduler failure remains invisible to this application-level monitor and
+requires a separately approved external heartbeat or scheduler check.
 
 If `OPERATIONAL_ALERT_RECIPIENT` is missing, the job records a sanitized configuration error and
 does not send. Do not derive this recipient from customer or administrator records.
+
+## Response and remediation
+
+Investigate the underlying job failure before removing failed execution records, and preserve only
+the minimum evidence needed to diagnose the cause. Do not copy job arguments, raw exception text,
+customer data, filenames, object keys, or production identifiers into public issues or shared
+evidence.
+
+Do not change an `AttachmentScan` from `failed` to `clean` or `trusted_existing` merely to clear an
+alert. Attachment availability remains governed by the authoritative scan state. Failed scan rows
+can remain as historical and security state after the operational cause is resolved and must not be
+altered solely for alert suppression.
+
+After the root cause is understood and resolved, failed queue records may be cleared through Solid
+Queue's supported operational path. Escalation must use sanitized job classes, status categories,
+counts, and timestamps suitable for this public repository.
 
 ## Storage-health boundary
 
@@ -75,14 +98,18 @@ grace period. The smallest options are:
 
 - a scheduled GitHub Actions check using a dedicated Heroku identity/token stored as a repository
   secret; a public-repository scheduled run can have no incremental Actions fee within GitHub's
-  included allowance, but Heroku Platform API OAuth scope is broad (`global`), so the identity's app
-  access and secret rotation require explicit approval; or
+  included allowance, but the identity's app access and secret rotation require explicit approval;
+  Heroku supports scopes including `read` and `read-protected`, but the follow-up must validate the
+  exact API or CLI permissions needed for backup schedule and freshness inspection before choosing
+  a scope; or
 - a third-party Heroku monitoring/add-on plan, with recurring vendor cost and a separate security,
   data handling, and credential review. A service that replaces or duplicates the established
   backup system is out of scope.
 
 For the MVP, prefer the first option only after the owner approves the external workflow and the
-least-access Heroku identity available. Manual verification remains an interim control, not closure
-of the automated backup-freshness criterion. See Heroku's
+least-access Heroku identity and token available. No Heroku credential is added by this PR. Manual
+verification remains an interim control, not closure of the automated backup-freshness criterion.
+See Heroku's [OAuth documentation](https://devcenter.heroku.com/articles/oauth) for the supported
+scope model and its warning that read-only resources can still expose sensitive metadata. See its
 [PGBackups documentation](https://devcenter.heroku.com/articles/heroku-postgres-backups) for the
 schedule, status, and notification limitations.

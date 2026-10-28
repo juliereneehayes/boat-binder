@@ -2,6 +2,29 @@ require "test_helper"
 
 module Operations
   class HealthMonitorJobTest < ActiveJob::TestCase
+    class CacheDouble
+      attr_reader :writes
+
+      def initialize(read_error: nil, write_error: nil)
+        @read_error = read_error
+        @write_error = write_error
+        @writes = []
+      end
+
+      def exist?(_key)
+        raise @read_error if @read_error
+
+        false
+      end
+
+      def write(key, value, **options)
+        raise @write_error if @write_error
+
+        @writes << [ key, value, options ]
+        true
+      end
+    end
+
     setup do
       @now = Time.zone.local(2026, 10, 27, 12)
       @cache_store = ActiveSupport::Cache::MemoryStore.new
@@ -33,6 +56,7 @@ module Operations
       )
 
       logs = capture_logs do
+        ActionMailer::Base.logger.info("mailer_logger_capture=active")
         assert_difference -> { ActionMailer::Base.deliveries.size }, 1 do
           perform_monitor
         end
@@ -45,17 +69,20 @@ module Operations
       assert_not_includes rendered, "gid://boat-binder/Document/123"
       assert_not_includes rendered, "bucket/key"
       assert_not_includes rendered, "StandardError"
+      assert_includes logs, "mailer_logger_capture=active"
       assert_not_includes logs, "operator@example.test"
       assert_not_includes logs, "private-filename.pdf"
       assert_not_includes logs, "bucket/key"
     end
 
-    test "repeated runs suppress an unchanged condition" do
+    test "increasing counts and timestamps for the same failure shape remain suppressed" do
       create_failed_execution(class_name: "Storage::AttachmentScanJob", failed_at: @now - 4.minutes)
 
       assert_difference -> { ActionMailer::Base.deliveries.size }, 1 do
         perform_monitor
       end
+      create_failed_execution(class_name: "Storage::AttachmentScanJob", failed_at: @now + 10.minutes)
+
       assert_no_difference -> { ActionMailer::Base.deliveries.size } do
         perform_monitor(now: @now + 15.minutes)
       end
@@ -71,6 +98,31 @@ module Operations
         perform_monitor(now: @now + 2.minutes)
       end
       assert_includes rendered_alert, "Storage::PurgeUnattachedBlobsJob"
+    end
+
+    test "a new attachment failure status category produces a new alert" do
+      failed_scan(status_code: "FAILED", completed_at: @now - 4.minutes)
+      perform_monitor
+
+      failed_scan(status_code: "ENQUEUE_FAILED", completed_at: @now + 1.minute)
+
+      assert_difference -> { ActionMailer::Base.deliveries.size }, 1 do
+        perform_monitor(now: @now + 2.minutes)
+      end
+      assert_includes rendered_alert, "ENQUEUE_FAILED"
+    end
+
+    test "unchanged conditions produce a reminder after 24 hours" do
+      create_failed_execution(class_name: "Storage::AttachmentScanJob", failed_at: @now - 4.minutes)
+
+      travel_to(@now) do
+        perform_monitor(now: Time.current)
+        travel HealthMonitorJob::ALERT_REMINDER_INTERVAL + 1.second
+
+        assert_difference -> { ActionMailer::Base.deliveries.size }, 1 do
+          perform_monitor(now: Time.current)
+        end
+      end
     end
 
     test "stale pending scan beyond polling and recovery windows is surfaced without mutation" do
@@ -89,11 +141,52 @@ module Operations
         scan.reload.attributes.slice("status", "check_count", "last_checked_at", "updated_at")
     end
 
-    test "pending scan inside the polling and recovery windows is healthy" do
-      pending_scan(created_at: @now - Storage::AttachmentScanJob::POLL_WINDOW)
+    test "pending scan exactly at the polling and recovery grace boundary is healthy" do
+      pending_scan(
+        created_at: @now - Storage::AttachmentScanJob::POLL_WINDOW -
+          HealthMonitorJob::STALE_SCAN_RECOVERY_GRACE
+      )
 
       assert_no_difference -> { ActionMailer::Base.deliveries.size } do
         perform_monitor
+      end
+    end
+
+    test "unsafe job class is reported as UnknownJob" do
+      create_failed_execution(class_name: "unsafe private filename.pdf", failed_at: @now - 2.minutes)
+
+      perform_monitor
+
+      assert_includes rendered_alert, "UnknownJob"
+      assert_not_includes rendered_alert, "unsafe private filename.pdf"
+    end
+
+    test "unknown attachment scan status code is reported as UNKNOWN" do
+      failed_scan(status_code: nil, completed_at: @now - 2.minutes)
+
+      perform_monitor
+
+      assert_includes rendered_alert, "UNKNOWN"
+    end
+
+    test "failed job classes are capped with the omitted count retained" do
+      (HealthMonitorJob::MAX_FAILED_JOB_CLASSES + 2).times do |index|
+        create_failed_execution(
+          class_name: "Synthetic::FailureJob#{index}",
+          failed_at: @now - index.seconds
+        )
+      end
+
+      condition = health_conditions.fetch(0)
+
+      assert_equal HealthMonitorJob::MAX_FAILED_JOB_CLASSES, condition.fetch(:groups).size
+      assert_equal 2, condition.fetch(:omitted_job_class_count)
+      perform_monitor
+      assert_includes rendered_alert, "Additional job classes omitted: 2"
+
+      create_failed_execution(class_name: "Synthetic::FailureJob26", failed_at: @now + 1.minute)
+      assert_no_difference -> { ActionMailer::Base.deliveries.size } do
+        perform_monitor(now: @now + 2.minutes)
       end
     end
 
@@ -151,21 +244,85 @@ module Operations
       assert_not_includes logs, "private provider detail"
     end
 
-    test "monitor failures are excluded from recursive failed-job alerts" do
+    test "a prior monitor failure is surfaced by a later successful monitor run" do
       create_failed_execution(class_name: "Operations::HealthMonitorJob", failed_at: @now - 2.minutes)
 
-      assert_no_difference -> { ActionMailer::Base.deliveries.size } do
+      assert_difference -> { ActionMailer::Base.deliveries.size }, 1 do
         perform_monitor
+      end
+      assert_includes rendered_alert, "Operations::HealthMonitorJob"
+    end
+
+    test "SMTP failure writes no fingerprint logs only its class and retries next run" do
+      create_failed_execution(class_name: "Storage::AttachmentScanJob", failed_at: @now - 2.minutes)
+      cache_key = alert_cache_key
+      failing_message = Object.new
+      failing_message.define_singleton_method(:deliver_now) do
+        raise IOError, "private SMTP provider detail"
+      end
+
+      logs = capture_logs do
+        with_mailer_health_alert(->(**) { failing_message }) do
+          assert_no_difference -> { ActionMailer::Base.deliveries.size } do
+            perform_monitor
+          end
+        end
+      end
+
+      assert_not @cache_store.exist?(cache_key)
+      assert_includes logs, "result=delivery_failed exception_class=IOError"
+      assert_not_includes logs, "private SMTP provider detail"
+      assert_difference -> { ActionMailer::Base.deliveries.size }, 1 do
+        perform_monitor(now: @now + 15.minutes)
+      end
+    end
+
+    test "cache read failure fails open and logs only its class" do
+      create_failed_execution(class_name: "Storage::AttachmentScanJob", failed_at: @now - 2.minutes)
+      store = CacheDouble.new(read_error: IOError.new("private cache read detail"))
+
+      logs = capture_logs do
+        assert_difference -> { ActionMailer::Base.deliveries.size }, 1 do
+          perform_monitor(cache_store: store)
+        end
+      end
+
+      assert_equal 1, store.writes.size
+      assert_includes logs, "cache result=read_failed exception_class=IOError"
+      assert_not_includes logs, "private cache read detail"
+    end
+
+    test "cache write failure preserves delivery and allows a later duplicate" do
+      create_failed_execution(class_name: "Storage::AttachmentScanJob", failed_at: @now - 2.minutes)
+      store = CacheDouble.new(write_error: IOError.new("private cache write detail"))
+
+      logs = capture_logs do
+        assert_difference -> { ActionMailer::Base.deliveries.size }, 1 do
+          perform_monitor(cache_store: store)
+        end
+      end
+
+      assert_includes logs, "cache result=write_failed exception_class=IOError"
+      assert_not_includes logs, "private cache write detail"
+      assert_difference -> { ActionMailer::Base.deliveries.size }, 1 do
+        perform_monitor(cache_store: store, now: @now + 15.minutes)
       end
     end
 
     private
 
-    def perform_monitor(now: @now)
+    def perform_monitor(now: @now, cache_store: @cache_store)
       job = HealthMonitorJob.new
-      cache_store = @cache_store
       job.define_singleton_method(:cache_store) { cache_store }
       job.perform(now:)
+    end
+
+    def health_conditions(now: @now)
+      HealthMonitorJob.new.send(:health_conditions, now:)
+    end
+
+    def alert_cache_key(now: @now)
+      HealthMonitorJob.new.send(:alert_cache_key, health_conditions(now:))
     end
 
     def create_failed_execution(class_name:, failed_at:, arguments: [], exception_message: "private failure detail")
@@ -232,12 +389,26 @@ module Operations
 
     def capture_logs
       previous_logger = Rails.logger
+      previous_mailer_logger = ActionMailer::Base.logger
       output = StringIO.new
-      Rails.logger = ActiveSupport::TaggedLogging.new(ActiveSupport::Logger.new(output))
+      logger = ActiveSupport::TaggedLogging.new(ActiveSupport::Logger.new(output))
+      Rails.logger = logger
+      ActionMailer::Base.logger = logger
       yield
       output.string
     ensure
       Rails.logger = previous_logger
+      ActionMailer::Base.logger = previous_mailer_logger
+    end
+
+    def with_mailer_health_alert(replacement)
+      original = OperationalAlertsMailer.method(:health_alert)
+      OperationalAlertsMailer.define_singleton_method(:health_alert) do |**arguments|
+        replacement.call(**arguments)
+      end
+      yield
+    ensure
+      OperationalAlertsMailer.define_singleton_method(:health_alert, original)
     end
   end
 end
