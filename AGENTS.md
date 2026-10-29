@@ -124,6 +124,12 @@ of truth.
 Do not introduce duplicate scanners, dependency bots, protection systems, or CI enforcement without
 a concrete gap.
 
+**Scheduled workflow ownership:** For `.github/workflows/managed-backup-monitor.yml`, agents must
+not modify the `cron:` schedule or re-enable the scheduled workflow. The repository owner must
+perform those actions personally so GitHub Actions failure notifications remain associated with
+the intended owner account. Agents may propose schedule changes, but must leave the actual cron
+edit or workflow re-enable action to the owner.
+
 ## Pull-request completion
 
 Before declaring a pull request ready, report:
