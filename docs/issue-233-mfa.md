@@ -73,7 +73,9 @@ Privileged MFA enforcement is part of the application policy and has no runtime 
 
 After deployment, verify with dedicated non-customer identities that an unenrolled Admin or Captain receives restricted enrollment without a normal Session, enrolled privileged TOTP and recovery-code sign-in succeed, and an unenrolled Owner still signs in normally. Inspect only privacy-minimized audit metadata and sanitized application health/error results.
 
-Prefer a forward fix for defects. If rollback is necessary, revert and deploy the prior known-good application release; do not add another runtime bypass. Keep the additive MFA columns and all encrypted credentials and recovery-code digests intact. Retain the configured Active Record Encryption key and salt through rollback so the prior release can continue reading existing MFA secrets.
+Prefer a forward fix for defects. If rollback is necessary, revert and deploy the prior known-good application release; do not add another runtime bypass. A previous release may still contain the disabled-state compatibility path, so keep its existing `PRIVILEGED_MFA_ENFORCEMENT=true` configuration enabled through rollback and verify that an unenrolled Admin or Captain still cannot establish a normal Session. Keep the additive MFA columns and all encrypted credentials and recovery-code digests intact. Retain the configured Active Record Encryption key and salt through rollback so the prior release can continue reading existing MFA secrets.
+
+Do not remove the production `PRIVILEGED_MFA_ENFORCEMENT` config variable as part of this code cleanup. The unconditional policy safely ignores it. Retire the variable only after this release has deployed successfully, privileged MFA has passed post-deployment verification, the rollback stabilization window has closed, and flag-dependent releases are no longer eligible rollback targets.
 
 If any enrolled active user, including an Owner, loses both authenticator and recovery codes, first complete out-of-band identity verification and create a support/ticket record identifying the operator and reason. Then use a production console with a narrowly selected numeric User ID:
 

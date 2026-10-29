@@ -17,6 +17,12 @@ class Mfa::PolicyTest < ActiveSupport::TestCase
     assert Mfa::Policy.required_for_sign_in?(owner)
   end
 
+  test "first-time unenrolled Owner does not require MFA" do
+    owner = create_user(email: "policy-unenrolled-owner@example.test", role: "owner")
+
+    assert_not Mfa::Policy.required_for_sign_in?(owner)
+  end
+
   test "first-time pending privileged setup requires MFA and cannot be cancelled" do
     admin = create_user(email: "policy-pending-admin@example.test", role: "admin")
     admin.begin_mfa_enrollment!
