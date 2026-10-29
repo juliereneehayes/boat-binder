@@ -46,6 +46,64 @@ class RestrictedVesselAuthorizationTest < ActiveSupport::TestCase
     assert_not restricted_readable?(inactive_member, @managed_vessel)
   end
 
+  test "managed service owner access is independent of unrelated subscription plans and owner limits" do
+    first_owner = create_user(email: "managed-first-owner@example.test", role: "owner")
+    second_owner = create_user(email: "managed-second-owner@example.test", role: "owner")
+    create_account_membership(user: first_owner, account: @managed_account, access_level: "editor")
+    create_account_membership(user: second_owner, account: @managed_account, access_level: "editor")
+
+    [ "legacy", "starter", "professional" ].each do |plan|
+      @managed_account.subscription.update!(provider: "local", plan:, status: "active")
+
+      assert restricted_manageable?(first_owner, @managed_vessel), plan
+      assert restricted_manageable?(second_owner, @managed_vessel), plan
+    end
+
+    now = Time.current
+    @managed_account.subscription.update_columns(
+      provider: "stripe",
+      plan: "self_managed",
+      status: "active",
+      external_customer_id: "cus_managed_multiple_owners",
+      external_subscription_id: "sub_managed_multiple_owners",
+      current_period_ends_at: now + 1.month,
+      last_synced_at: now
+    )
+    assert_not Billing::OwnerUserLimit.compliant?(@managed_account.reload)
+    assert restricted_manageable?(first_owner, @managed_vessel), "noncompliant Self Managed state"
+    assert restricted_manageable?(second_owner, @managed_vessel), "noncompliant Self Managed state"
+  end
+
+  test "managed service owner access remains isolated across mixed account memberships" do
+    other_account = create_account(name: "Other Managed Authorization Account")
+    other_account.create_managed_service_relationship!(active: true)
+    other_vessel = create_vessel(account: other_account, name: "Other Managed Authorization Vessel")
+    owner = create_user(email: "mixed-managed-owner@example.test", role: "owner")
+    create_account_membership(user: owner, account: @managed_account, access_level: "editor")
+    create_account_membership(user: owner, account: other_account, access_level: "read_only")
+
+    assert restricted_manageable?(owner, @managed_vessel)
+    assert restricted_readable?(owner, other_vessel)
+    assert_not restricted_manageable?(owner, other_vessel)
+
+    third_account = create_account(name: "Unrelated Managed Authorization Account")
+    third_account.create_managed_service_relationship!(active: true)
+    third_vessel = create_vessel(account: third_account, name: "Unrelated Managed Authorization Vessel")
+    assert_not restricted_readable?(owner, third_vessel)
+  end
+
+  test "inactive accounts users and missing users fail closed" do
+    admin = create_user(email: "inactive-account-admin@example.test", role: "admin")
+    inactive_owner = create_user(email: "inactive-managed-owner@example.test", role: "owner", active: false)
+    create_account_membership(user: inactive_owner, account: @managed_account, access_level: "editor")
+
+    @managed_account.update!(active: false)
+
+    assert_not restricted_readable?(admin, @managed_vessel)
+    assert_not restricted_manageable?(inactive_owner, @managed_vessel)
+    assert_not restricted_readable?(nil, @managed_vessel)
+  end
+
   test "qualified self managed owner can access only their own restricted vessel" do
     owner = create_user(email: "self-managed-restricted-owner@example.test", role: "owner")
     create_account_membership(user: owner, account: @self_managed_account, access_level: "editor")
@@ -57,6 +115,46 @@ class RestrictedVesselAuthorizationTest < ActiveSupport::TestCase
     assert_raises(ActiveRecord::RecordNotFound) do
       restricted_scope(owner).find(@managed_vessel.id)
     end
+  end
+
+  test "invalid self managed entitlement states remain denied" do
+    account = create_account(name: "Invalid Self Managed Authorization Account")
+    vessel = create_vessel(account:, name: "Invalid Self Managed Authorization Vessel")
+    owner = create_user(email: "invalid-self-managed-owner@example.test", role: "owner")
+    create_account_membership(user: owner, account:, access_level: "editor")
+
+    assert_not restricted_readable?(owner, vessel)
+    assert_not restricted_manageable?(owner, vessel)
+
+    qualify_self_managed_subscription(account)
+    account.subscription.update!(last_synced_at: nil)
+
+    assert_not restricted_readable?(owner, vessel)
+    assert_not restricted_manageable?(owner, vessel)
+  end
+
+  test "noncompliant self managed owner count remains denied" do
+    account = create_account(name: "Noncompliant Self Managed Authorization Account")
+    vessel = create_vessel(account:, name: "Noncompliant Self Managed Authorization Vessel")
+    first_owner = create_user(email: "noncompliant-first-owner@example.test", role: "owner")
+    second_owner = create_user(email: "noncompliant-second-owner@example.test", role: "owner")
+    create_account_membership(user: first_owner, account:, access_level: "editor")
+    create_account_membership(user: second_owner, account:, access_level: "editor")
+    now = Time.current
+    account.subscription.update_columns(
+      provider: "stripe",
+      plan: "self_managed",
+      status: "active",
+      external_customer_id: "cus_noncompliant_restricted",
+      external_subscription_id: "sub_noncompliant_restricted",
+      current_period_ends_at: now + 1.month,
+      last_synced_at: now
+    )
+
+    assert Billing::SelfManagedEntitlement.new(account: account.reload, now:).qualifying?
+    assert_not Billing::OwnerUserLimit.compliant?(account)
+    assert_not restricted_readable?(first_owner, vessel)
+    assert_not restricted_manageable?(first_owner, vessel)
   end
 
   test "managed service revocation blocks the next authorization decision without deleting data" do

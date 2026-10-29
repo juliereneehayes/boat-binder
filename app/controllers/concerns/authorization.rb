@@ -121,11 +121,11 @@ module Authorization
   end
 
   def scoped_restricted_vessels
-    Asset.vessels.where(account_id: restricted_readable_account_ids)
+    restricted_vessel_policy.readable_vessels
   end
 
   def manageable_restricted_vessels
-    Asset.vessels.where(account_id: restricted_manageable_account_ids)
+    restricted_vessel_policy.writable_vessels
   end
 
   def scoped_documents
@@ -193,31 +193,7 @@ module Authorization
       .includes(:subscription)
   end
 
-  def restricted_readable_account_ids
-    return [] unless current_user&.active?
-    return ManagedServiceRelationship.effective.select(:account_id) if internal_user?
-    return [] unless owner_user?
-
-    (readable_account_ids + managed_service_owner_account_ids).uniq
-  end
-
-  def restricted_manageable_account_ids
-    return [] unless current_user&.active?
-    return ManagedServiceRelationship.effective.select(:account_id) if internal_user?
-    return [] unless owner_user?
-
-    (manageable_account_ids + managed_service_owner_account_ids(access_level: "editor")).uniq
-  end
-
-  def managed_service_owner_account_ids(access_level: nil)
-    memberships = current_user.account_memberships.active
-    memberships = memberships.where(access_level:) if access_level
-
-    memberships.includes(account: :subscription).filter_map do |membership|
-      account = membership.account
-      next unless Billing::OwnerUserLimit.compliant?(account)
-
-      account.id if ManagedServiceRelationship.effective_for?(account)
-    end
+  def restricted_vessel_policy
+    @restricted_vessel_policy ||= Authorization::RestrictedVesselPolicy.new(user: current_user)
   end
 end

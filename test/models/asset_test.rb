@@ -96,6 +96,23 @@ class AssetTest < ActiveSupport::TestCase
     assert_equal [ first, second ].sort_by(&:id), account.assets.vessels.to_a.sort_by(&:id)
   end
 
+  test "encrypted access information deliberately blocks Vessel deletion" do
+    account = create_account(name: "Protected Asset Account")
+    account.create_managed_service_relationship!(active: true)
+    vessel = create_vessel(account:)
+    actor = create_user(email: "protected-asset-admin@example.test", role: "admin")
+    record = VesselAccessInformation::Persistence.save!(
+      vessel:,
+      restricted_details: "Synthetic protected asset value",
+      actor:
+    )
+
+    assert_raises(ActiveRecord::DeleteRestrictionError) { vessel.destroy! }
+
+    assert Asset.exists?(vessel.id)
+    assert VesselAccessInformation.exists?(record.id)
+  end
+
   test "metadata edits preserve a legacy primary photo with a mismatched extension" do
     vessel = create_vessel
     blob = ActiveStorage::Blob.create_and_upload!(

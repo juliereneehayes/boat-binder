@@ -4,7 +4,7 @@ require Rails.root.join("db/migrate/20261029120000_create_managed_service_and_ve
 class CreateManagedServiceAndVesselAccessFoundationTest < ActiveSupport::TestCase
   test "rollback preserves managed service and encrypted vessel access records" do
     account = create_account(name: "Foundation Rollback Account")
-    account.create_managed_service_relationship!(active: true)
+    relationship = account.create_managed_service_relationship!(active: true)
     vessel = create_vessel(account:, name: "Foundation Rollback Vessel")
     actor = create_user(email: "foundation-rollback@example.test", role: "admin")
     record = VesselAccessInformation::Persistence.save!(
@@ -20,6 +20,7 @@ class CreateManagedServiceAndVesselAccessFoundationTest < ActiveSupport::TestCas
 
     assert_includes error.message, "leave the additive tables in place"
     assert VesselAccessInformation.exists?(record.id)
+    assert ManagedServiceRelationship.exists?(relationship.id)
     assert ActiveRecord::Base.connection.table_exists?(:managed_service_relationships)
   end
 end

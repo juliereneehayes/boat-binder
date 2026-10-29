@@ -15,6 +15,11 @@ class VesselAccessInformationPrivacyTest < ActionDispatch::IntegrationTest
   end
 
   test "ordinary vessel reads forms attributes and search do not expose restricted details" do
+    @vessel.documents.create!(
+      account: @account,
+      title: "Ordinary privacy document",
+      document_type: "other"
+    )
     sign_in_as @admin
 
     get vessel_path(@vessel)
@@ -22,6 +27,10 @@ class VesselAccessInformationPrivacyTest < ActionDispatch::IntegrationTest
     assert_not_includes response.body, @synthetic_secret
 
     get edit_vessel_path(@vessel)
+    assert_response :success
+    assert_not_includes response.body, @synthetic_secret
+
+    get documents_path
     assert_response :success
     assert_not_includes response.body, @synthetic_secret
 

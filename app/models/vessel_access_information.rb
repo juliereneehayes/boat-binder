@@ -1,4 +1,6 @@
 class VesselAccessInformation < ApplicationRecord
+  MAX_RESTRICTED_DETAILS_LENGTH = 10_000
+
   self.table_name = "vessel_access_information"
 
   belongs_to :vessel,
@@ -13,7 +15,7 @@ class VesselAccessInformation < ApplicationRecord
   delegate :account, :account_id, to: :vessel
 
   validates :asset_id, uniqueness: true
-  validates :restricted_details, presence: true
+  validates :restricted_details, presence: true, length: { maximum: MAX_RESTRICTED_DETAILS_LENGTH }
   validate :vessel_asset_type
 
   private

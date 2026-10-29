@@ -3,6 +3,7 @@ require "test_helper"
 class VesselAccessInformationTest < ActiveSupport::TestCase
   setup do
     @account = create_account(name: "Encrypted Vessel Account")
+    @account.create_managed_service_relationship!(active: true)
     @vessel = create_vessel(account: @account, name: "Encrypted Vessel")
     @actor = create_user(email: "restricted-information-actor@example.test", role: "admin")
     @synthetic_secret = "Synthetic dock gate code 4938"

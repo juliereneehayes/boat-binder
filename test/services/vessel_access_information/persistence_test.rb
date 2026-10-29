@@ -1,22 +1,26 @@
 require "test_helper"
 
 class VesselAccessInformation::PersistenceTest < ActiveSupport::TestCase
+  include ActiveJob::TestHelper
+
   setup do
     @account = create_account(name: "Audited Vessel Access Account")
+    @account.create_managed_service_relationship!(active: true)
     @vessel = create_vessel(account: @account, name: "Audited Vessel")
     @actor = create_user(email: "vessel-access-auditor@example.test", role: "admin")
     @synthetic_secret = "Synthetic marina lockbox 7281"
   end
 
   test "create and update are audited with field names but no restricted value" do
-    assert_difference -> { SecurityAuditEvent.count }, 1 do
-      @record = VesselAccessInformation::Persistence.save!(
-        vessel: @vessel,
-        restricted_details: @synthetic_secret,
-        actor: @actor,
-        request_id: "restricted-create-request",
-        source_ip: "192.0.2.24"
-      )
+    assert_no_enqueued_jobs do
+      assert_difference -> { SecurityAuditEvent.count }, 1 do
+        @record = VesselAccessInformation::Persistence.save!(
+          vessel: @vessel,
+          restricted_details: @synthetic_secret,
+          actor: @actor,
+          request_id: "restricted-create-request"
+        )
+      end
     end
 
     create_event = SecurityAuditEvent.order(:id).last
@@ -26,6 +30,7 @@ class VesselAccessInformation::PersistenceTest < ActiveSupport::TestCase
     assert_equal "VesselAccessInformation", create_event.target_type
     assert_equal @record.id, create_event.target_id
     assert_equal %w[restricted_details], create_event.changed_fields
+    assert_nil create_event.source_ip
     assert_not_includes create_event.attributes.to_json, @synthetic_secret
 
     replacement = "Synthetic marina lockbox 9146"
@@ -61,16 +66,42 @@ class VesselAccessInformation::PersistenceTest < ActiveSupport::TestCase
     end
   end
 
-  test "an attributed actor and persisted vessel are required" do
-    assert_raises(ArgumentError) do
+  test "nil and blank new details fail validation instead of returning an unsaved record" do
+    [ nil, "", "   " ].each do |invalid_details|
+      error = assert_raises(ActiveRecord::RecordInvalid) do
+        VesselAccessInformation::Persistence.save!(
+          vessel: @vessel,
+          restricted_details: invalid_details,
+          actor: @actor
+        )
+      end
+
+      assert_includes error.record.errors[:restricted_details], "can't be blank"
+      assert_equal 0, VesselAccessInformation.count
+      assert_equal 0, SecurityAuditEvent.count
+    end
+  end
+
+  test "length boundary succeeds and an oversized update preserves the encrypted record" do
+    maximum = "a" * VesselAccessInformation::MAX_RESTRICTED_DETAILS_LENGTH
+    record = VesselAccessInformation::Persistence.save!(
+      vessel: @vessel,
+      restricted_details: maximum,
+      actor: @actor
+    )
+
+    oversized = "b" * (VesselAccessInformation::MAX_RESTRICTED_DETAILS_LENGTH + 1)
+    error = assert_raises(ActiveRecord::RecordInvalid) do
       VesselAccessInformation::Persistence.save!(
         vessel: @vessel,
-        restricted_details: @synthetic_secret,
-        actor: nil
+        restricted_details: oversized,
+        actor: @actor
       )
     end
 
-    assert_equal 0, VesselAccessInformation.count
-    assert_equal 0, SecurityAuditEvent.count
+    assert_includes error.record.errors[:restricted_details],
+      "is too long (maximum is #{VesselAccessInformation::MAX_RESTRICTED_DETAILS_LENGTH} characters)"
+    assert_equal maximum, record.reload.restricted_details
+    assert_equal 1, SecurityAuditEvent.count
   end
 end

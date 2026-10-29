@@ -2,6 +2,7 @@ class ManagedServiceRelationship < ApplicationRecord
   belongs_to :account
 
   validates :account_id, uniqueness: true
+  validates :active, inclusion: { in: [ true, false ] }
 
   scope :effective, -> { where(active: true).joins(:account).merge(Account.active) }
 

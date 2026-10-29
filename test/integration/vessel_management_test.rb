@@ -59,6 +59,32 @@ class VesselManagementTest < ActionDispatch::IntegrationTest
     assert_redirected_to vessels_path
   end
 
+  test "restricted access information blocks Vessel deletion without an unhandled error" do
+    captain = create_user(email: "protected-vessel-delete@example.test", role: "captain")
+    account = create_account(name: "Protected Vessel Delete Account")
+    account.create_managed_service_relationship!(active: true)
+    vessel = create_vessel(account:, name: "Protected Vessel Delete")
+    record = VesselAccessInformation::Persistence.save!(
+      vessel:,
+      restricted_details: "Synthetic retained deletion value",
+      actor: captain
+    )
+    sign_in_as captain
+
+    assert_no_difference -> { Asset.count } do
+      assert_no_difference -> { VesselAccessInformation.count } do
+        delete vessel_path(vessel)
+      end
+    end
+
+    assert_redirected_to vessel_path(vessel)
+    follow_redirect!
+    assert_response :success
+    assert_includes response.body,
+      "Vessel access information must be retained, so this Vessel cannot be removed."
+    assert_equal record, VesselAccessInformation.find(record.id)
+  end
+
   test "internal user can reassign a vessel account" do
     sign_in_as
     source_account = create_account(name: "Elliott Family")

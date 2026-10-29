@@ -13,7 +13,14 @@ class AdminAccountExportRequestsTest < ActionDispatch::IntegrationTest
   end
 
   test "admin can review the minimized queue without protected Account records" do
+    @account.create_managed_service_relationship!(active: true)
     vessel = create_vessel(account: @account, name: "Private Queue Vessel")
+    synthetic_secret = "Synthetic export-excluded access value"
+    VesselAccessInformation::Persistence.save!(
+      vessel:,
+      restricted_details: synthetic_secret,
+      actor: @admin
+    )
     document = vessel.documents.create!(
       account: @account,
       title: "Private Queue Document",
@@ -28,12 +35,14 @@ class AdminAccountExportRequestsTest < ActionDispatch::IntegrationTest
     assert_includes response.body, @owner.name
     assert_not_includes response.body, vessel.name
     assert_not_includes response.body, document.title
+    assert_not_includes response.body, synthetic_secret
 
     get admin_account_export_request_path(@export_request)
     assert_response :success
     assert_includes response.body, "Verify recipient"
     assert_includes response.body, "Verify scope"
     assert_not_includes response.body, vessel.name
+    assert_not_includes response.body, synthetic_secret
   end
 
   test "approval requires recipient and scope verification and records the reviewers" do
@@ -75,12 +84,26 @@ class AdminAccountExportRequestsTest < ActionDispatch::IntegrationTest
     approved.verify_scope!(reviewer: @admin)
     approved.approve!(reviewer: @admin)
 
+    @account.create_managed_service_relationship!(active: true)
+    vessel = create_vessel(account: @account, name: "Export Exclusion Vessel")
+    synthetic_secret = "Synthetic excluded fulfilled export value"
+    restricted_record = VesselAccessInformation::Persistence.save!(
+      vessel:,
+      restricted_details: synthetic_secret,
+      actor: @admin
+    )
+
     assert_no_difference -> { AccountExportRequest.count } do
       patch admin_account_export_request_path(approved), params: { review_action: "fulfill" }
     end
     assert_redirected_to admin_account_export_request_path(approved)
     assert approved.reload.fulfilled?
     assert_equal @admin, approved.fulfilled_by
+    assert_equal synthetic_secret, restricted_record.reload.restricted_details
+
+    follow_redirect!
+    assert_response :success
+    assert_not_includes response.body, synthetic_secret
   end
 
   test "captain and owner cannot view or mutate the Admin queue" do
