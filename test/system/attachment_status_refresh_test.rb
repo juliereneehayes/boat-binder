@@ -303,10 +303,6 @@ class AttachmentStatusRefreshTest < ApplicationSystemTestCase
   end
 
   def sign_in(user)
-    visit new_session_path
-    fill_in "Email", with: user.email_address
-    fill_in "Password", with: TEST_PASSWORD
-    click_button "Sign in"
-    assert_current_path root_path
+    sign_in_with_browser(user)
   end
 end

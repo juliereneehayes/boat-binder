@@ -89,7 +89,7 @@ class SessionRateLimitingTest < ActionDispatch::IntegrationTest
   end
 
   test "successful authentication remains compatible below both limits" do
-    user = create_user(email: "successful-rate-limit@example.test")
+    user = create_user(email: "successful-rate-limit@example.test", role: "owner")
 
     assert_difference -> { Session.count }, 1 do
       post_login(

@@ -5,6 +5,7 @@ class AdminSecurityAuditTest < ActionDispatch::IntegrationTest
     @admin = create_user(email: "security-audit-admin@example.test", role: "admin")
     @target = create_user(email: "security-audit-target@example.test", role: "captain", name: "Target User")
     sign_in_as(@admin)
+    @baseline_audit_event_count = SecurityAuditEvent.count
   end
 
   test "successful security update writes one minimized event" do
@@ -160,7 +161,7 @@ class AdminSecurityAuditTest < ActionDispatch::IntegrationTest
 
     assert @target.reload.captain?
     assert Session.exists?(target_session.id)
-    assert_equal 0, SecurityAuditEvent.count
+    assert_equal @baseline_audit_event_count, SecurityAuditEvent.count
   end
 
   test "audit persistence failure rolls back the security change and session revocation" do
@@ -192,7 +193,7 @@ class AdminSecurityAuditTest < ActionDispatch::IntegrationTest
 
     assert @target.reload.captain?
     assert Session.exists?(target_session.id)
-    assert_equal 0, SecurityAuditEvent.count
+    assert_equal @baseline_audit_event_count, SecurityAuditEvent.count
   end
 
   private

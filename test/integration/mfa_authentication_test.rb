@@ -98,14 +98,12 @@ class MfaAuthenticationTest < ActionDispatch::IntegrationTest
     User.define_method(:confirm_mfa_enrollment!, original_confirmation) if original_confirmation
   end
 
-  test "enforcement restricts unenrolled admins and captains without creating sessions" do
+  test "unenrolled admins and captains are restricted without creating sessions" do
     %w[admin captain].each do |role|
       user = create_user(email: "unenrolled-#{role}@example.test", role:)
 
-      with_mfa_enforcement do
-        assert_no_difference -> { Session.where(user:).count } do
-          post session_path, params: { email_address: user.email_address, password: TEST_PASSWORD }
-        end
+      assert_no_difference -> { Session.where(user:).count } do
+        post session_path, params: { email_address: user.email_address, password: TEST_PASSWORD }
       end
 
       assert_redirected_to settings_mfa_enrollment_path
@@ -119,46 +117,8 @@ class MfaAuthenticationTest < ActionDispatch::IntegrationTest
     end
   end
 
-  test "enforcement rollback releases first-time pending Admin setup and permits cancellation" do
-    admin = create_user(email: "mfa-rollback-admin@example.test", role: "admin")
-
-    with_mfa_enforcement(true) do
-      assert_no_difference -> { admin.sessions.count } do
-        post session_path, params: { email_address: admin.email_address, password: TEST_PASSWORD }
-      end
-    end
-    assert_redirected_to settings_mfa_enrollment_path
-    assert admin.reload.mfa_enrollment_pending?
-    assert_not admin.mfa_reenrollment_pending?
-
-    with_mfa_enforcement(false) do
-      assert_difference -> { admin.sessions.count }, 1 do
-        post session_path, params: { email_address: admin.email_address, password: TEST_PASSWORD }
-      end
-    end
-    assert_redirected_to root_path
-    assert admin.reload.mfa_enrollment_pending?
-
-    with_mfa_enforcement(false) do
-      delete settings_mfa_enrollment_path
-    end
-    assert_redirected_to settings_path(anchor: "security")
-    assert_not admin.reload.mfa_enrollment_pending?
-    assert_nil admin.mfa_totp_secret
-    assert_equal 1, admin.sessions.count
-
-    delete session_path
-    with_mfa_enforcement(true) do
-      assert_no_difference -> { admin.sessions.count } do
-        post session_path, params: { email_address: admin.email_address, password: TEST_PASSWORD }
-      end
-    end
-    assert_redirected_to settings_mfa_enrollment_path
-    assert admin.reload.mfa_enrollment_pending?
-  end
-
-  test "enforcement rollback cannot bypass or cancel privileged re-enrollment" do
-    admin, = enrolled_user(email: "mfa-rollback-reenrollment@example.test", role: "admin")
+  test "privileged re-enrollment cannot be bypassed or cancelled" do
+    admin, = enrolled_user(email: "mandatory-mfa-reenrollment@example.test", role: "admin")
     complete_mfa_sign_in(admin)
 
     post settings_mfa_reenrollment_path, params: { mfa: { current_password: TEST_PASSWORD } }
@@ -167,17 +127,13 @@ class MfaAuthenticationTest < ActionDispatch::IntegrationTest
     assert admin.mfa_reenrollment_pending?
     assert_empty admin.sessions
 
-    with_mfa_enforcement(false) do
-      assert_no_difference -> { admin.sessions.count } do
-        post session_path, params: { email_address: admin.email_address, password: TEST_PASSWORD }
-      end
+    assert_no_difference -> { admin.sessions.count } do
+      post session_path, params: { email_address: admin.email_address, password: TEST_PASSWORD }
     end
     assert_redirected_to settings_mfa_enrollment_path
 
-    with_mfa_enforcement(false) do
-      assert_no_difference -> { admin.sessions.count } do
-        delete settings_mfa_enrollment_path
-      end
+    assert_no_difference -> { admin.sessions.count } do
+      delete settings_mfa_enrollment_path
     end
     assert_redirected_to settings_mfa_enrollment_path
     assert_equal MfaEnrollmentsController::CANCELLATION_DENIED_MESSAGE, flash[:alert]
@@ -189,10 +145,8 @@ class MfaAuthenticationTest < ActionDispatch::IntegrationTest
     admin = create_user(email: "first-mfa-admin@example.test", role: "admin")
 
     with_challenge_store do
-      with_mfa_enforcement do
-        assert_no_difference -> { admin.sessions.count } do
-          post session_path, params: { email_address: admin.email_address, password: TEST_PASSWORD }
-        end
+      assert_no_difference -> { admin.sessions.count } do
+        post session_path, params: { email_address: admin.email_address, password: TEST_PASSWORD }
       end
       assert_redirected_to settings_mfa_enrollment_path
 
@@ -417,13 +371,9 @@ class MfaAuthenticationTest < ActionDispatch::IntegrationTest
   test "privileged and enrolled Owner credentials cannot use pending enrollment cancellation" do
     admin = create_user(email: "cancel-pending-admin@example.test", role: "admin")
 
-    with_mfa_enforcement do
-      post session_path, params: { email_address: admin.email_address, password: TEST_PASSWORD }
-    end
+    post session_path, params: { email_address: admin.email_address, password: TEST_PASSWORD }
     admin_secret = admin.reload.mfa_enrollment_secret
-    with_mfa_enforcement do
-      delete settings_mfa_enrollment_path
-    end
+    delete settings_mfa_enrollment_path
     assert_redirected_to settings_mfa_enrollment_path
     assert_equal MfaEnrollmentsController::CANCELLATION_DENIED_MESSAGE, flash[:alert]
     assert_equal admin_secret, admin.reload.mfa_enrollment_secret
@@ -464,10 +414,8 @@ class MfaAuthenticationTest < ActionDispatch::IntegrationTest
     assert_not Session.exists?(owner_session.id)
     delete session_path
 
-    with_mfa_enforcement do
-      assert_no_difference -> { owner.sessions.count } do
-        post session_path, params: { email_address: owner.email_address, password: TEST_PASSWORD }
-      end
+    assert_no_difference -> { owner.sessions.count } do
+      post session_path, params: { email_address: owner.email_address, password: TEST_PASSWORD }
     end
     assert_redirected_to settings_mfa_enrollment_path
 
@@ -526,10 +474,6 @@ class MfaAuthenticationTest < ActionDispatch::IntegrationTest
   def formatted_totp(secret)
     code = current_totp(secret)
     " #{code.first(3)}-#{code.last(3)} "
-  end
-
-  def with_mfa_enforcement(value = true, &)
-    Mfa::Policy.with_privileged_enforcement(value, &)
   end
 
   def with_challenge_store(&)

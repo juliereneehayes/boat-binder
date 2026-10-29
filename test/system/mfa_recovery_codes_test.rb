@@ -49,25 +49,23 @@ class MfaRecoveryCodesSystemTest < ApplicationSystemTestCase
   test "restricted privileged enrollment creates a Session only after non-Turbo confirmation" do
     admin = create_user(email: "browser-restricted-mfa@example.test", role: "admin")
 
-    with_privileged_mfa_enforcement do
-      submit_credentials(admin)
-      assert_current_path settings_mfa_enrollment_path
-      assert_empty admin.sessions.reload
-      assert_selector "form[data-turbo='false'][data-controller='non-turbo-submit']"
+    submit_credentials(admin)
+    assert_current_path settings_mfa_enrollment_path
+    assert_empty admin.sessions.reload
+    assert_selector "form[data-turbo='false'][data-controller='non-turbo-submit']"
 
-      secret = admin.reload.mfa_enrollment_secret
-      fill_in "Verification code", with: current_totp(secret)
-      submit_with_guard_assertion(
-        "form[action='#{settings_mfa_enrollment_path}'][data-controller='non-turbo-submit']",
-        button_text: "Confirm and enable MFA",
-        submitting_text: "Verifying..."
-      )
+    secret = admin.reload.mfa_enrollment_secret
+    fill_in "Verification code", with: current_totp(secret)
+    submit_with_guard_assertion(
+      "form[action='#{settings_mfa_enrollment_path}'][data-controller='non-turbo-submit']",
+      button_text: "Confirm and enable MFA",
+      submitting_text: "Verifying..."
+    )
 
-      assert_selector "ol li code", count: 10, wait: 10
-      assert_text "Save your recovery codes"
-      assert_equal 10, all("ol li code").length
-      assert_equal 1, admin.sessions.reload.count
-    end
+    assert_selector "ol li code", count: 10, wait: 10
+    assert_text "Save your recovery codes"
+    assert_equal 10, all("ol li code").length
+    assert_equal 1, admin.sessions.reload.count
   end
 
   private
@@ -105,17 +103,5 @@ class MfaRecoveryCodesSystemTest < ApplicationSystemTestCase
       button_text
     )
     within(form_selector) { click_button button_text }
-  end
-
-  def with_privileged_mfa_enforcement
-    previous_value = ENV[Mfa::Policy::ENFORCEMENT_ENV]
-    ENV[Mfa::Policy::ENFORCEMENT_ENV] = "true"
-    yield
-  ensure
-    if previous_value.nil?
-      ENV.delete(Mfa::Policy::ENFORCEMENT_ENV)
-    else
-      ENV[Mfa::Policy::ENFORCEMENT_ENV] = previous_value
-    end
   end
 end

@@ -95,6 +95,24 @@ module ActiveSupport
         email_address: user.email_address,
         password: TEST_PASSWORD
       }
+
+      case response.location
+      when settings_mfa_enrollment_url
+        secret = user.reload.mfa_enrollment_secret
+        patch settings_mfa_enrollment_path, params: { mfa: { code: mfa_code_for(user, secret:) } }
+      when new_mfa_challenge_url
+        post mfa_challenge_path, params: { mfa: { code: mfa_code_for(user) } }
+      end
+    end
+
+    def mfa_code_for(user, secret: user.mfa_totp_secret)
+      user.reload
+      if user.mfa_last_accepted_timestep.present?
+        next_timestep_at = (user.mfa_last_accepted_timestep + 1) * User::MFA_TOTP_PERIOD
+        travel (next_timestep_at - Time.current.to_i).seconds if Time.current.to_i < next_timestep_at
+      end
+
+      ROTP::TOTP.new(secret, issuer: "Boat Binder", digits: 6, interval: 30).now
     end
 
     def assert_access_denied_redirect

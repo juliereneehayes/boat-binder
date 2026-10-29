@@ -362,7 +362,7 @@ class SettingsTest < ActionDispatch::IntegrationTest
 
     post session_path, params: { email_address: "email-change-confirm@example.test", password: TEST_PASSWORD }
     assert_redirected_to new_session_path
-    post session_path, params: { email_address: user.email_address, password: TEST_PASSWORD }
+    sign_in_as(user)
     assert_redirected_to root_path
   end
 

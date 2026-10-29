@@ -126,10 +126,10 @@ class User < ApplicationRecord
     mfa_enrollment_pending? && mfa_reenrollment_started_at.present?
   end
 
-  def mfa_enrollment_cancellable?(privileged_enforcement: Mfa::Policy.privileged_enforcement?)
+  def mfa_enrollment_cancellable?
     return false unless mfa_enrollment_pending? && !mfa_reenrollment_pending?
 
-    owner? || (internal? && !privileged_enforcement)
+    owner?
   end
 
   def begin_mfa_enrollment!

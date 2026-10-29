@@ -68,7 +68,7 @@ class UserInvitationTest < ActionDispatch::IntegrationTest
     assert_redirected_to root_path
   end
 
-  test "Admin and Captain invitations require enrollment when privileged enforcement is on" do
+  test "Admin and Captain invitations require MFA enrollment" do
     %w[admin captain].each do |role|
       invited_user = create_invited_user(
         email: "enforced-#{role}-invitation@example.test",
@@ -76,13 +76,11 @@ class UserInvitationTest < ActionDispatch::IntegrationTest
       )
       token = invited_user.generate_token_for(:invitation)
 
-      with_mfa_enforcement(true) do
-        assert_no_difference -> { invited_user.sessions.count } do
-          put invitation_path(token), params: {
-            password: NEW_TEST_PASSWORD,
-            password_confirmation: NEW_TEST_PASSWORD
-          }
-        end
+      assert_no_difference -> { invited_user.sessions.count } do
+        put invitation_path(token), params: {
+          password: NEW_TEST_PASSWORD,
+          password_confirmation: NEW_TEST_PASSWORD
+        }
       end
 
       assert_redirected_to settings_mfa_enrollment_path
@@ -97,32 +95,7 @@ class UserInvitationTest < ActionDispatch::IntegrationTest
     end
   end
 
-  test "Admin and Captain invitations preserve direct Session establishment when enforcement is off" do
-    %w[admin captain].each do |role|
-      invited_user = create_invited_user(
-        email: "unenforced-#{role}-invitation@example.test",
-        role:
-      )
-      token = invited_user.generate_token_for(:invitation)
-
-      with_mfa_enforcement(false) do
-        assert_difference -> { invited_user.sessions.count }, 1 do
-          put invitation_path(token), params: {
-            password: NEW_TEST_PASSWORD,
-            password_confirmation: NEW_TEST_PASSWORD
-          }
-        end
-      end
-
-      assert_redirected_to root_path
-      assert invited_user.reload.active?
-      assert invited_user.invitation_accepted?
-      assert_not invited_user.mfa_enrollment_pending?
-      delete session_path
-    end
-  end
-
-  test "an enrolled invited User cannot bypass MFA when enforcement is off" do
+  test "an enrolled invited User must complete MFA" do
     invited_user = create_invited_user(email: "enrolled-invitation@example.test", role: "admin")
     invited_user.begin_mfa_enrollment!
     secret = invited_user.mfa_enrollment_secret
@@ -133,13 +106,11 @@ class UserInvitationTest < ActionDispatch::IntegrationTest
     )
     token = invited_user.generate_token_for(:invitation)
 
-    with_mfa_enforcement(false) do
-      assert_no_difference -> { invited_user.sessions.count } do
-        put invitation_path(token), params: {
-          password: NEW_TEST_PASSWORD,
-          password_confirmation: NEW_TEST_PASSWORD
-        }
-      end
+    assert_no_difference -> { invited_user.sessions.count } do
+      put invitation_path(token), params: {
+        password: NEW_TEST_PASSWORD,
+        password_confirmation: NEW_TEST_PASSWORD
+      }
     end
 
     assert_redirected_to new_mfa_challenge_path
@@ -732,10 +703,6 @@ class UserInvitationTest < ActionDispatch::IntegrationTest
       invitation_sent_at: Time.current,
       password_digest: nil
     )
-  end
-
-  def with_mfa_enforcement(value, &)
-    Mfa::Policy.with_privileged_enforcement(value, &)
   end
 
   def invitation_token_from(mail)
