@@ -1,0 +1,13 @@
+{
+  "num": 106,
+  "from_type": "pg_dump",
+  "to_type": "gof3r",
+  "schedule": {
+    "uuid": "fixture-schedule-id"
+  },
+  "succeeded": true,
+  "started_at": "2026-01-02T10:55:00Z",
+  "finished_at": "2026-01-02T11:05:00Z",
+  "from_url": "postgres://fixture-secret",
+  "to_url": "https://fixture-backup-url.invalid"
+}

@@ -1,0 +1,50 @@
+[
+  {
+    "num": 101,
+    "created_at": "2026-01-02T11:50:00Z",
+    "from_type": "pg_dump",
+    "to_type": "gof3r"
+  },
+  {
+    "num": 102,
+    "created_at": "2026-01-02T11:40:00Z",
+    "from_type": "gof3r",
+    "to_type": "pg_restore"
+  },
+  {
+    "num": 103,
+    "created_at": "2026-01-02T11:30:00Z",
+    "from_type": "pg_dump",
+    "to_type": "pg_restore",
+    "schedule": {
+      "uuid": "fixture-schedule-id"
+    }
+  },
+  {
+    "num": 104,
+    "created_at": "2026-01-02T11:20:00Z",
+    "from_type": "pg_dump",
+    "to_type": "gof3r",
+    "schedule": {
+      "uuid": "fixture-other-schedule-id"
+    }
+  },
+  {
+    "num": 105,
+    "created_at": "2026-01-01T12:00:00Z",
+    "from_type": "pg_dump",
+    "to_type": "gof3r",
+    "schedule": {
+      "uuid": "fixture-schedule-id"
+    }
+  },
+  {
+    "num": 106,
+    "created_at": "2026-01-02T11:00:00Z",
+    "from_type": "pg_dump",
+    "to_type": "gof3r",
+    "schedule": {
+      "uuid": "fixture-schedule-id"
+    }
+  }
+]

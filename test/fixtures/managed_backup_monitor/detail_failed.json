@@ -1,0 +1,11 @@
+{
+  "num": 106,
+  "from_type": "pg_dump",
+  "to_type": "gof3r",
+  "schedule": {
+    "uuid": "fixture-schedule-id"
+  },
+  "succeeded": false,
+  "started_at": "2026-01-02T10:55:00Z",
+  "finished_at": "2026-01-02T11:05:00Z"
+}
