@@ -17,6 +17,7 @@ class Asset < ApplicationRecord
   has_many :documents, dependent: :destroy
   has_many :asset_engines, dependent: :destroy
   has_many :asset_batteries, dependent: :destroy
+  has_one :vessel_access_information, dependent: :restrict_with_exception
   has_one_attached :primary_photo
 
   before_validation :normalize_text_fields

@@ -31,9 +31,9 @@ class SecurityAuditEventTest < ActiveSupport::TestCase
   end
 
   test "changed fields accept only the approved semantic allowlist" do
-    assert_equal %w[active password role], SecurityAuditEvent::CHANGED_FIELDS
+    assert_equal %w[active password restricted_details role], SecurityAuditEvent::CHANGED_FIELDS
     assert SecurityAuditEvent.new(
-      base_attributes.merge(changed_fields: %w[active password role])
+      base_attributes.merge(changed_fields: %w[active password restricted_details role])
     ).valid?
 
     unsafe_fields = [
