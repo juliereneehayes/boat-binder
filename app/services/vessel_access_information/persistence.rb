@@ -14,6 +14,8 @@ class VesselAccessInformation
         authorized_vessel.with_lock do
           record = VesselAccessInformation.find_or_initialize_by(asset_id: authorized_vessel.id)
           creating = record.new_record?
+          # Rails' encrypted attribute type encrypts this value during serialization before the database write.
+          # codeql[rb/clear-text-storage-sensitive-data]
           record.restricted_details = restricted_details
           unless record.persisted? && !record.changed?
             record.save!
