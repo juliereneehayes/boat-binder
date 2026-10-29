@@ -273,7 +273,7 @@ class AccessControlTest < ActionDispatch::IntegrationTest
   end
 
   test "active users can still sign in successfully" do
-    active_user = create_user(email: "active-login@example.test", active: true)
+    active_user = create_user(email: "active-login@example.test", role: "owner", active: true)
 
     assert_difference -> { Session.count }, 1 do
       post session_path, params: {

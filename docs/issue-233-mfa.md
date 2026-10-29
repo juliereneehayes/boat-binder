@@ -6,7 +6,7 @@ MFA is one `User`-scoped credential for Admins, Captains, and voluntarily enroll
 
 The MFA challenge is single-use through a privacy-preserving nonce key in the application cache. Every password, invitation-acceptance, or email-verification entry point uses the same post-primary-authentication gate to either create the existing authoritative `Session` or issue an MFA challenge. A successful TOTP, recovery-code, or enrollment confirmation consumes that challenge before the low-level `Authentication#start_new_session_for` method creates the Session. Role, active-state, password, enrollment state, or encrypted MFA credential changes invalidate an outstanding challenge through its keyed credential-state digest. A copied challenge from before reset therefore cannot reveal or confirm the replacement credential. Self-service email verification remains Owner-only because `SelfServiceRegistration.pending_verification?` authoritatively rejects internal roles before activation.
 
-`PRIVILEGED_MFA_ENFORCEMENT` is the single rollout control. It defaults to false. Enrolled users and users in reset/re-enrollment always use MFA, regardless of role or rollout state. An Owner's first-time pending setup remains required until the Owner completes or explicitly cancels it. Once reset/re-enrollment starts, the old TOTP credential is immediately invalidated and the durable re-enrollment marker prevents cancellation into an MFA-disabled state. An Admin or Captain may cancel first-time pending setup only while enforcement is false. When enforcement is true, every unenrolled Admin or Captain—including one with first-time setup already pending—receives only the restricted enrollment challenge after password authentication.
+MFA is mandatory for every Admin and Captain. After password authentication, an unenrolled privileged user receives only the restricted enrollment challenge and cannot establish a normal Session until enrollment succeeds. An Owner's first-time pending setup remains required until the Owner completes or explicitly cancels it. Once reset/re-enrollment starts, the old TOTP credential is immediately invalidated and the durable re-enrollment marker prevents cancellation into an MFA-disabled state for every role.
 
 ## Schema and secret storage
 
@@ -67,31 +67,15 @@ Keep `ACTIVE_RECORD_ENCRYPTION_KEY_DERIVATION_SALT` stable during primary-key ro
 
 This uses Rails' supported multi-key provider and does not require wiping MFA credentials. Changing the derivation salt requires a separate controlled migration that configures the old scheme explicitly; do not change it as part of an ordinary primary-key rotation.
 
-## Activation sequence
+## Deployment and rollback
 
-1. Generate independent staging/production Active Record Encryption primary keys and derivation salts and configure both required variables before deployment. Leave the previous-key variable empty for first deployment.
-2. Deploy the additive migration while `PRIVILEGED_MFA_ENFORCEMENT` is absent or false.
-3. Deploy the capability code with the same setting. Existing unenrolled Admins and Captains continue their current password-to-Session flow; any enrolled user uses MFA immediately.
-4. Validate dedicated Owner, Admin, and Captain identities in staging using the checklist below.
-5. Validate recovery-code sign-in and re-enrollment for a staging Admin.
-6. Deploy the same capability to production with enforcement still false.
-7. Enroll at least one production Admin and verify that Admin's TOTP and recovery-code paths.
-8. Set `PRIVILEGED_MFA_ENFORCEMENT=true` and wait until every application process has restarted with enforcement enabled. This prevents new password-only privileged Sessions.
-9. Run the one-time scoped activation operation:
+Privileged MFA enforcement is part of the application policy and has no runtime bypass. Deploy through the normal pull-request workflow after focused and full authentication regression coverage passes. This cleanup has no migration and must not modify existing MFA credentials, recovery-code digests, Sessions, or encryption configuration.
 
-   ```sh
-   bin/rails runner 'result = Mfa::EnforcementActivation.revoke_unenrolled_privileged_sessions!; remaining = Mfa::EnforcementActivation.remaining_session_count; raise "unenrolled privileged Sessions remain" unless remaining.zero?; puts({ revoked_users: result.user_count, revoked_sessions: result.session_count, remaining: remaining }.inspect)'
-   ```
+After deployment, verify with dedicated non-customer identities that an unenrolled Admin or Captain receives restricted enrollment without a normal Session, enrolled privileged TOTP and recovery-code sign-in succeed, and an unenrolled Owner still signs in normally. Inspect only privacy-minimized audit metadata and sanitized application health/error results.
 
-   It revokes Sessions only for Admin/Captain Users whose explicit `mfa_enrolled_at` is null. It does not revoke Owner Sessions or enrolled privileged Sessions. The operation is safe to rerun: later runs simply find and revoke any newly discovered matching Sessions.
-10. Treat `Mfa::EnforcementActivation.remaining_session_count == 0` as the authoritative verification, then confirm an unenrolled Admin/Captain receives restricted enrollment with no Session and verify enrolled privileged and Owner Sessions were not unnecessarily disrupted.
-11. After privileged enrollment is complete and the rollout is stable, remove the temporary environment control in a focused cleanup change by making privileged enforcement unconditional. Do not introduce a replacement flag.
+Prefer a forward fix for defects. If rollback is necessary, revert and deploy the prior known-good application release; do not add another runtime bypass. A previous release may still contain the disabled-state compatibility path, so keep its existing `PRIVILEGED_MFA_ENFORCEMENT=true` configuration enabled through rollback and verify that an unenrolled Admin or Captain still cannot establish a normal Session. Keep the additive MFA columns and all encrypted credentials and recovery-code digests intact. Retain the configured Active Record Encryption key and salt through rollback so the prior release can continue reading existing MFA secrets.
 
-## Rollback
-
-Prefer a forward fix. To suspend mandatory privileged enforcement without discarding credentials, set `PRIVILEGED_MFA_ENFORCEMENT=false` and restart all processes. Enrolled users and users in reset/re-enrollment still require MFA. Unenrolled privileged users regain the pre-enforcement password-to-Session flow, including Admins or Captains left in first-time pending enrollment; those users may cancel that first-time setup while enforcement remains false. Owner first-time pending setup remains required until completion or explicit cancellation. This is the intended emergency application rollback.
-
-Do not reverse the migration or clear MFA columns merely to roll back application code. The schema is additive, and the encrypted secret plus recovery hashes must be retained. If older application code must temporarily run, keep the columns in place; it ignores them. Retain the configured Active Record Encryption key and salt through rollback; `SECRET_KEY_BASE` can be rotated independently without losing MFA secrets.
+Do not remove the production `PRIVILEGED_MFA_ENFORCEMENT` config variable as part of this code cleanup. The unconditional policy safely ignores it. Retire the variable only after this release has deployed successfully, privileged MFA has passed post-deployment verification, the rollback stabilization window has closed, and flag-dependent releases are no longer eligible rollback targets.
 
 If any enrolled active user, including an Owner, loses both authenticator and recovery codes, first complete out-of-band identity verification and create a support/ticket record identifying the operator and reason. Then use a production console with a narrowly selected numeric User ID:
 
@@ -113,8 +97,8 @@ This is not a bypass: it immediately invalidates the old TOTP credential and eve
 6. Sign in with one recovery code and save the remaining count.
 7. Confirm the consumed recovery code is rejected.
 8. Regenerate recovery codes and confirm every prior unused code is rejected.
-9. Enroll an Admin while enforcement is false, then verify TOTP and recovery sign-in.
-10. Enroll a Captain through the restricted flow after staging enforcement is true.
+9. Enroll an Admin through the restricted flow, then verify TOTP and recovery sign-in.
+10. Enroll a Captain through the restricted flow.
 11. Confirm an unenrolled privileged identity can reach enrollment/sign-out but no application page and has no Session row.
 12. On iOS and Android, verify the numeric keypad, paste, and one-time-code autofill behavior.
 13. Confirm wrong TOTP and recovery values receive the same generic verification failure.

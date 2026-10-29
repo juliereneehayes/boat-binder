@@ -10,10 +10,7 @@ class ServiceVisitWorkflowTest < ApplicationSystemTestCase
   end
 
   test "captain records a visit and sees the owner report" do
-    visit new_session_path
-    fill_in "Email", with: @user.email
-    fill_in "Password", with: TEST_PASSWORD
-    click_on "Sign in"
+    sign_in_with_browser(@user)
 
     assert_text "Captain Dashboard"
     within("aside.fixed") { click_on "Vessels" }

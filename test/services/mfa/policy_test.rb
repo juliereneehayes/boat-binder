@@ -6,48 +6,37 @@ class Mfa::PolicyTest < ActiveSupport::TestCase
     reenrolling_admin = enrolled_user(email: "policy-reenrolling-admin@example.test", role: "admin")
     reenrolling_admin.reset_mfa_for_reenrollment!
 
-    [ false, true ].each do |enforcement|
-      Mfa::Policy.with_privileged_enforcement(enforcement) do
-        assert Mfa::Policy.required_for_sign_in?(enrolled_owner)
-        assert Mfa::Policy.required_for_sign_in?(reenrolling_admin)
-      end
-    end
+    assert Mfa::Policy.required_for_sign_in?(enrolled_owner)
+    assert Mfa::Policy.required_for_sign_in?(reenrolling_admin)
   end
 
   test "first-time pending Owner setup requires MFA until completion or cancellation" do
     owner = create_user(email: "policy-pending-owner@example.test", role: "owner")
     owner.begin_mfa_enrollment!
 
-    [ false, true ].each do |enforcement|
-      Mfa::Policy.with_privileged_enforcement(enforcement) do
-        assert Mfa::Policy.required_for_sign_in?(owner)
-      end
-    end
+    assert Mfa::Policy.required_for_sign_in?(owner)
   end
 
-  test "first-time pending privileged setup follows the enforcement flag" do
+  test "first-time unenrolled Owner does not require MFA" do
+    owner = create_user(email: "policy-unenrolled-owner@example.test", role: "owner")
+
+    assert_not Mfa::Policy.required_for_sign_in?(owner)
+  end
+
+  test "first-time pending privileged setup requires MFA and cannot be cancelled" do
     admin = create_user(email: "policy-pending-admin@example.test", role: "admin")
     admin.begin_mfa_enrollment!
 
-    Mfa::Policy.with_privileged_enforcement(false) do
-      assert_not Mfa::Policy.required_for_sign_in?(admin)
-      assert admin.mfa_enrollment_cancellable?
-    end
-    Mfa::Policy.with_privileged_enforcement(true) do
-      assert Mfa::Policy.required_for_sign_in?(admin)
-      assert_not admin.mfa_enrollment_cancellable?
-    end
+    assert Mfa::Policy.required_for_sign_in?(admin)
+    assert_not admin.mfa_enrollment_cancellable?
   end
 
-  test "unenrolled privileged sign-in follows the enforcement flag" do
+  test "unenrolled privileged Users require MFA" do
+    admin = create_user(email: "policy-admin@example.test", role: "admin")
     captain = create_user(email: "policy-captain@example.test", role: "captain")
 
-    Mfa::Policy.with_privileged_enforcement(false) do
-      assert_not Mfa::Policy.required_for_sign_in?(captain)
-    end
-    Mfa::Policy.with_privileged_enforcement(true) do
-      assert Mfa::Policy.required_for_sign_in?(captain)
-    end
+    assert Mfa::Policy.required_for_sign_in?(admin)
+    assert Mfa::Policy.required_for_sign_in?(captain)
   end
 
   private
