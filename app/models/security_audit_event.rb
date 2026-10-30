@@ -26,7 +26,7 @@ class SecurityAuditEvent < ApplicationRecord
   end
 
   OUTCOMES = %w[succeeded failed denied].freeze
-  CHANGED_FIELDS = %w[active password role].freeze
+  CHANGED_FIELDS = %w[active password restricted_details role].freeze
   ACTION_FORMAT = /\A[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*)+\z/
   TARGET_TYPE_FORMAT = /\A[A-Z][A-Za-z0-9:]*\z/
 

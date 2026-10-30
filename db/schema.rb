@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_22_150000) do
+ActiveRecord::Schema[8.1].define(version: 2026_10_29_120000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -266,6 +266,14 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_22_150000) do
     t.index ["account_id"], name: "index_documents_on_account_id"
     t.index ["asset_id"], name: "index_documents_on_asset_id"
     t.index ["document_type"], name: "index_documents_on_document_type"
+  end
+
+  create_table "managed_service_relationships", force: :cascade do |t|
+    t.bigint "account_id", null: false
+    t.boolean "active", default: false, null: false
+    t.datetime "created_at", null: false
+    t.datetime "updated_at", null: false
+    t.index ["account_id"], name: "index_managed_service_relationships_on_account_id", unique: true
   end
 
   create_table "reminders", force: :cascade do |t|
@@ -585,6 +593,14 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_22_150000) do
     t.check_constraint "mfa_reenrollment_started_at IS NULL OR mfa_enrolled_at IS NULL AND mfa_totp_secret IS NOT NULL", name: "chk_users_mfa_reenrollment_is_pending"
   end
 
+  create_table "vessel_access_information", force: :cascade do |t|
+    t.bigint "asset_id", null: false
+    t.datetime "created_at", null: false
+    t.text "restricted_details", null: false
+    t.datetime "updated_at", null: false
+    t.index ["asset_id"], name: "index_vessel_access_information_on_asset_id", unique: true
+  end
+
   add_foreign_key "account_export_requests", "accounts"
   add_foreign_key "account_export_requests", "users", column: "decided_by_id"
   add_foreign_key "account_export_requests", "users", column: "fulfilled_by_id"
@@ -607,6 +623,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_22_150000) do
   add_foreign_key "contacts", "accounts"
   add_foreign_key "documents", "accounts"
   add_foreign_key "documents", "assets"
+  add_foreign_key "managed_service_relationships", "accounts"
   add_foreign_key "reminders", "assets"
   add_foreign_key "service_visit_battery_checks", "asset_batteries"
   add_foreign_key "service_visit_battery_checks", "service_visits"
@@ -626,4 +643,5 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_22_150000) do
   add_foreign_key "solid_queue_recurring_executions", "solid_queue_jobs", column: "job_id", on_delete: :cascade
   add_foreign_key "solid_queue_scheduled_executions", "solid_queue_jobs", column: "job_id", on_delete: :cascade
   add_foreign_key "subscriptions", "accounts"
+  add_foreign_key "vessel_access_information", "assets"
 end

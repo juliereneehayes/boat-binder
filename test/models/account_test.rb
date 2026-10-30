@@ -139,6 +139,18 @@ class AccountTest < ActiveSupport::TestCase
     assert_includes account.assets, asset
   end
 
+  test "managed service relationship deliberately blocks Account deletion" do
+    account = create_account(name: "Protected Managed Service Account")
+    relationship = account.create_managed_service_relationship!(active: false)
+    subscription_id = account.subscription.id
+
+    assert_raises(ActiveRecord::DeleteRestrictionError) { account.destroy! }
+
+    assert Account.exists?(account.id)
+    assert ManagedServiceRelationship.exists?(relationship.id)
+    assert Subscription.exists?(subscription_id)
+  end
+
 
   private
 

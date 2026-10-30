@@ -96,6 +96,93 @@ class AssetTest < ActiveSupport::TestCase
     assert_equal [ first, second ].sort_by(&:id), account.assets.vessels.to_a.sort_by(&:id)
   end
 
+  test "restricted access information blocks account reassignment through the model" do
+    source_account = create_account(name: "Protected Reassignment Source")
+    source_account.create_managed_service_relationship!(active: true)
+    target_account = create_account(name: "Protected Reassignment Target")
+    vessel = create_vessel(account: source_account, name: "Protected Reassignment Vessel")
+    actor = create_user(email: "protected-reassignment-admin@example.test", role: "admin")
+    record = VesselAccessInformation::Persistence.save!(
+      vessel:,
+      restricted_details: "Synthetic reassignment credential 4815",
+      actor:
+    )
+
+    assert_not vessel.update(account: target_account)
+    assert_includes vessel.errors[:account],
+      "cannot be changed while restricted access information is retained"
+    assert_equal source_account, vessel.reload.account
+    assert_equal vessel, record.reload.vessel
+  end
+
+  test "changing Vessel type cannot bypass protected account reassignment" do
+    source_account = create_account(name: "Protected Type Source")
+    source_account.create_managed_service_relationship!(active: true)
+    target_account = create_account(name: "Protected Type Target")
+    vessel = create_vessel(account: source_account, name: "Protected Type Vessel")
+    actor = create_user(email: "protected-type-admin@example.test", role: "admin")
+    record = VesselAccessInformation::Persistence.save!(
+      vessel:,
+      restricted_details: "Synthetic protected type credential 7051",
+      actor:
+    )
+
+    assert_not vessel.update(account: target_account, asset_type: "home")
+    assert_includes vessel.errors[:account],
+      "cannot be changed while restricted access information is retained"
+    assert_includes vessel.errors[:asset_type],
+      "cannot be changed while restricted access information is retained"
+    assert_equal source_account, vessel.reload.account
+    assert_equal "vessel", vessel.asset_type
+    assert_equal vessel, record.reload.vessel
+
+    assert_not vessel.update(asset_type: "home")
+    assert_includes vessel.errors[:asset_type],
+      "cannot be changed while restricted access information is retained"
+    assert_equal "vessel", vessel.reload.asset_type
+  end
+
+  test "encrypted access information fails fast before Vessel associations are deleted" do
+    account = create_account(name: "Protected Asset Account")
+    account.create_managed_service_relationship!(active: true)
+    vessel = create_vessel(account:)
+    actor = create_user(email: "protected-asset-admin@example.test", role: "admin")
+    document = vessel.documents.create!(account:, title: "Retained Document", document_type: "other")
+    engine = vessel.asset_engines.create!(name: "Retained Engine")
+    battery = vessel.asset_batteries.create!(name: "Retained Battery")
+    record = VesselAccessInformation::Persistence.save!(
+      vessel:,
+      restricted_details: "Synthetic protected asset value",
+      actor:
+    )
+
+    assert_raises(ActiveRecord::DeleteRestrictionError) { vessel.destroy! }
+
+    assert Asset.exists?(vessel.id)
+    assert Document.exists?(document.id)
+    assert AssetEngine.exists?(engine.id)
+    assert AssetBattery.exists?(battery.id)
+    assert VesselAccessInformation.exists?(record.id)
+  end
+
+  test "Vessel without restricted information still deletes its destructive associations" do
+    vessel = create_vessel(name: "Deletable Associated Vessel")
+    document = vessel.documents.create!(
+      account: vessel.account,
+      title: "Deletable Document",
+      document_type: "other"
+    )
+    engine = vessel.asset_engines.create!(name: "Deletable Engine")
+    battery = vessel.asset_batteries.create!(name: "Deletable Battery")
+
+    vessel.destroy!
+
+    assert_not Asset.exists?(vessel.id)
+    assert_not Document.exists?(document.id)
+    assert_not AssetEngine.exists?(engine.id)
+    assert_not AssetBattery.exists?(battery.id)
+  end
+
   test "metadata edits preserve a legacy primary photo with a mismatched extension" do
     vessel = create_vessel
     blob = ActiveStorage::Blob.create_and_upload!(

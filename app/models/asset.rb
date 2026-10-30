@@ -11,6 +11,7 @@ class Asset < ApplicationRecord
   PRIMARY_PHOTO_EXTENSION_ERROR = "extension does not match the uploaded file type"
 
   belongs_to :account
+  has_one :vessel_access_information, dependent: :restrict_with_exception
   has_many :service_visits, dependent: :destroy
   has_many :reminders, dependent: :destroy
   has_many :binder_notes, dependent: :destroy
@@ -30,6 +31,7 @@ class Asset < ApplicationRecord
   validates :length, numericality: { greater_than: 0 }, allow_blank: true
   validates :registration_number, uniqueness: { scope: :account_id }, allow_blank: true
   validate :primary_photo_is_safe_upload
+  validate :restricted_information_stays_with_vessel_and_account
 
   scope :active, -> { where(active: true) }
   scope :inactive, -> { where(active: false) }
@@ -165,6 +167,20 @@ class Asset < ApplicationRecord
     end
 
     primary_photo.purge if unsafe_upload
+  end
+
+  def restricted_information_stays_with_vessel_and_account
+    return unless persisted? && (will_save_change_to_account_id? || will_save_change_to_asset_type?)
+
+    persisted_asset = self.class.lock.find(id)
+    return unless VesselAccessInformation.exists?(asset_id: id)
+
+    if persisted_asset.account_id != account_id
+      errors.add(:account, "cannot be changed while restricted access information is retained")
+    end
+    if asset_type != "vessel"
+      errors.add(:asset_type, "cannot be changed while restricted access information is retained")
+    end
   end
 
   def normalize_text_fields

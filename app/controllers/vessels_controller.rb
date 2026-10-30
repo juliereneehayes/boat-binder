@@ -105,6 +105,9 @@ class VesselsController < ApplicationController
   def destroy
     @vessel.destroy!
     redirect_to vessels_path, notice: "Vessel removed."
+  rescue ActiveRecord::DeleteRestrictionError
+    redirect_to vessel_path(@vessel),
+      alert: "Vessel access information must be retained, so this Vessel cannot be removed."
   end
 
   def destroy_primary_photo

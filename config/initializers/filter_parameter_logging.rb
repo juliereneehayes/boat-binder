@@ -11,5 +11,5 @@ Rails.application.config.filter_parameters += [
   /\Aprice_id\z/,
   :code, :verification_code, :recovery_code, :mfa_code, :provisioning_uri,
   :payment_intent, :payment_method, :receipt_url, /\Asource\z/, /\Asubscription_id\z/,
-  /\Aaccount_reference\z/
+  /\Aaccount_reference\z/, :restricted_details
 ]

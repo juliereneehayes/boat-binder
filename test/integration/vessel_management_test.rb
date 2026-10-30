@@ -59,6 +59,32 @@ class VesselManagementTest < ActionDispatch::IntegrationTest
     assert_redirected_to vessels_path
   end
 
+  test "restricted access information blocks Vessel deletion without an unhandled error" do
+    captain = create_user(email: "protected-vessel-delete@example.test", role: "captain")
+    account = create_account(name: "Protected Vessel Delete Account")
+    account.create_managed_service_relationship!(active: true)
+    vessel = create_vessel(account:, name: "Protected Vessel Delete")
+    record = VesselAccessInformation::Persistence.save!(
+      vessel:,
+      restricted_details: "Synthetic retained deletion value",
+      actor: captain
+    )
+    sign_in_as captain
+
+    assert_no_difference -> { Asset.count } do
+      assert_no_difference -> { VesselAccessInformation.count } do
+        delete vessel_path(vessel)
+      end
+    end
+
+    assert_redirected_to vessel_path(vessel)
+    follow_redirect!
+    assert_response :success
+    assert_includes response.body,
+      "Vessel access information must be retained, so this Vessel cannot be removed."
+    assert_equal record, VesselAccessInformation.find(record.id)
+  end
+
   test "internal user can reassign a vessel account" do
     sign_in_as
     source_account = create_account(name: "Elliott Family")
@@ -74,6 +100,46 @@ class VesselManagementTest < ActionDispatch::IntegrationTest
 
     assert_redirected_to vessel_path(vessel.reload)
     assert_equal target_account, vessel.account
+  end
+
+  test "crafted internal reassignment preserves a Vessel with restricted information" do
+    captain = create_user(email: "protected-reassignment-captain@example.test", role: "captain")
+    source_account = create_account(name: "Request Reassignment Source")
+    source_account.create_managed_service_relationship!(active: true)
+    target_account = create_account(name: "Request Reassignment Target")
+    vessel = create_vessel(account: source_account, name: "Request Protected Vessel")
+    document = vessel.documents.create!(account: source_account, title: "Retained Request Document", document_type: "other")
+    record = VesselAccessInformation::Persistence.save!(
+      vessel:,
+      restricted_details: "Synthetic crafted request credential 6204",
+      actor: captain
+    )
+    stored_value = VesselAccessInformation.connection.select_value(
+      VesselAccessInformation.sanitize_sql_array(
+        [ "SELECT restricted_details FROM vessel_access_information WHERE id = ?", record.id ]
+      )
+    )
+    sign_in_as captain
+
+    patch vessel_path(vessel), params: {
+      asset: {
+        name: "Crafted Reassignment Name",
+        account_id: target_account.id
+      }
+    }
+
+    assert_response :unprocessable_entity
+    assert_includes response.body,
+      "Account cannot be changed while restricted access information is retained"
+    assert_equal source_account, vessel.reload.account
+    assert_not_equal "Crafted Reassignment Name", vessel.name
+    assert_equal vessel, record.reload.vessel
+    assert Document.exists?(document.id)
+    assert_equal stored_value, VesselAccessInformation.connection.select_value(
+      VesselAccessInformation.sanitize_sql_array(
+        [ "SELECT restricted_details FROM vessel_access_information WHERE id = ?", record.id ]
+      )
+    )
   end
 
   test "internal users create vessels with valid primary photos" do
