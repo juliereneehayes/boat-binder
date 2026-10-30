@@ -43,8 +43,17 @@ ManagedServiceRelationship::Transition.call!(
 
 The operation requires an active persisted Admin, serializes on the Account, and records either
 `managed_service_relationship.activated` or `managed_service_relationship.revoked`. Repeating the
-current state is a no-op. Revocation affects the next authorization decision immediately and does
-not delete the Account, Vessel, or encrypted information.
+current state is a no-op. Requesting revocation when no relationship exists is also a no-op: it does
+not create an inactive relationship or a misleading revocation event. Revocation affects the next
+authorization decision immediately and does not delete the Account, Vessel, or encrypted
+information.
+
+Console operators must pass their own authenticated, active Admin identity as `actor`; shared,
+impersonated, or placeholder identities do not provide acceptable attribution. Unauthorized
+transition attempts are rejected before state changes. They are not recorded by this service
+because it has no trusted request boundary from which to attribute a denied attempt; any future
+public transition endpoint must define denial auditing at that authenticated boundary rather than
+creating a parallel audit system here.
 
 ## Encrypted persistence and concurrency
 
@@ -55,7 +64,7 @@ Record Encryption and is never stored in general `Asset` fields or indexed.
 All application writes use `VesselAccessInformation::Persistence.save!`. The service:
 
 - authorizes the actor through `Authorization::RestrictedVesselPolicy`;
-- serializes writes under Account and Vessel row locks;
+- serializes writes under Vessel and Account row locks;
 - reloads the canonical one-per-Vessel record inside the locks;
 - validates presence and a 10,000-character maximum;
 - treats only an unchanged persisted record as a no-op; and
@@ -65,6 +74,17 @@ This prevents simultaneous first writes from producing multiple records or an av
 error. Updates are serialized and operate on the current database record rather than a stale
 association instance. This MVP does not implement credential version history or collaborative
 field-level conflict resolution.
+
+The Vessel row lock is also the Account-reassignment boundary. Ordinary cross-Account reassignment
+is rejected whenever restricted information exists, including direct model updates and crafted
+internal requests. The record remains encrypted and attached to its original Vessel and Account;
+it is not decrypted, copied, silently transferred, or deleted. Reassignment remains supported for
+Vessels without restricted information, and same-Account edits remain unchanged.
+
+Any future transfer or clearance workflow requires separate product and security approval. It must
+explicitly authorize both Account contexts, define credential-owner consent and audit semantics,
+and preserve encryption throughout. Removing the guard, deleting the record, or copying decrypted
+values to make an ordinary reassignment succeed is not a supported workaround.
 
 ## Encryption keys, backup, restore, and rotation
 

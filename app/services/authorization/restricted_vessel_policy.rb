@@ -32,7 +32,7 @@ module Authorization
       return managed_service_account_ids if user.internal?
       return [] unless user.owner?
 
-      (self_managed_account_ids(write: false) + managed_service_owner_account_ids).uniq
+      (self_managed_owner_policy.readable_account_ids + managed_service_owner_account_ids).uniq
     end
 
     def writable_account_ids
@@ -40,7 +40,7 @@ module Authorization
       return managed_service_account_ids if user.internal?
       return [] unless user.owner?
 
-      (self_managed_account_ids(write: true) + managed_service_owner_account_ids(write: true)).uniq
+      (self_managed_owner_policy.writable_account_ids + managed_service_owner_account_ids(write: true)).uniq
     end
 
     def managed_service_account_ids
@@ -56,24 +56,8 @@ module Authorization
         .pluck(:account_id)
     end
 
-    def self_managed_account_ids(write:)
-      memberships = user.account_memberships.active
-      memberships = memberships.where(access_level: "editor") if write
-
-      Account.active
-        .joins(:account_memberships)
-        .merge(memberships)
-        .includes(:subscription)
-        .filter_map do |account|
-          next unless Billing::OwnerUserLimit.compliant?(account)
-
-          entitlement = Billing::SelfManagedEntitlement.new(account:, now:)
-          account.id if write ? entitlement.qualifying? : readable_self_managed?(entitlement)
-        end
-    end
-
-    def readable_self_managed?(entitlement)
-      Authorization::OWNER_READABLE_LIFECYCLE_PHASES.include?(entitlement.lifecycle_phase)
+    def self_managed_owner_policy
+      @self_managed_owner_policy ||= Authorization::SelfManagedOwnerPolicy.new(user:, now:)
     end
   end
 end

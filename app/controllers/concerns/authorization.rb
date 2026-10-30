@@ -85,23 +85,7 @@ module Authorization
   end
 
   def manageable_account_ids
-    @manageable_account_ids ||= if current_user&.owner? && current_user.active?
-      eligible_memberships = current_user.account_memberships.active.where(access_level: "editor")
-      evaluated_at = Time.current
-
-      Account.active
-        .joins(:account_memberships)
-        .merge(eligible_memberships)
-        .includes(:subscription)
-        .filter_map do |account|
-          next unless Billing::OwnerUserLimit.compliant?(account)
-
-          entitlement = Billing::SelfManagedEntitlement.new(account:, now: evaluated_at)
-          account.id if entitlement.qualifying?
-        end
-    else
-      []
-    end
+    @manageable_account_ids ||= self_managed_owner_policy.writable_account_ids
   end
 
   def scoped_assets
@@ -153,18 +137,7 @@ module Authorization
   end
 
   def readable_account_ids
-    @readable_account_ids ||= if current_user&.owner? && current_user.active?
-      evaluated_at = Time.current
-
-      owner_read_candidate_accounts.filter_map do |account|
-        next unless Billing::OwnerUserLimit.compliant?(account)
-
-        phase = Billing::SelfManagedEntitlement.new(account:, now: evaluated_at).lifecycle_phase
-        account.id if OWNER_READABLE_LIFECYCLE_PHASES.include?(phase)
-      end
-    else
-      []
-    end
+    @readable_account_ids ||= self_managed_owner_policy.readable_account_ids
   end
 
   def owner_lifecycle_restricted?
@@ -187,10 +160,11 @@ module Authorization
   end
 
   def owner_read_candidate_accounts
-    @owner_read_candidate_accounts ||= Account.active
-      .joins(:account_memberships)
-      .merge(current_user.account_memberships.active)
-      .includes(:subscription)
+    @owner_read_candidate_accounts ||= self_managed_owner_policy.candidate_accounts
+  end
+
+  def self_managed_owner_policy
+    @self_managed_owner_policy ||= Authorization::SelfManagedOwnerPolicy.new(user: current_user)
   end
 
   def restricted_vessel_policy

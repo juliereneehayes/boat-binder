@@ -81,4 +81,32 @@ class VesselAccessInformation::PersistenceAuthorizationTest < ActiveSupport::Tes
     assert record.persisted?
     assert_equal @self_managed_vessel, record.vessel
   end
+
+  test "denial audit failure preserves the authorization error without logging restricted details" do
+    synthetic_secret = "Synthetic audit failure credential 9347"
+    output = StringIO.new
+    previous_logger = Rails.logger
+    Rails.logger = ActiveSupport::TaggedLogging.new(ActiveSupport::Logger.new(output))
+    audit_failure = ->(**) { raise ActiveRecord::StatementInvalid, "synthetic audit outage" }
+    original_record = SecurityAudit::Recorder.method(:record!)
+    SecurityAudit::Recorder.define_singleton_method(:record!, audit_failure)
+
+    error = assert_raises(Authorization::RestrictedVesselPolicy::AccessDenied) do
+      VesselAccessInformation::Persistence.save!(
+        vessel: @self_managed_vessel,
+        restricted_details: synthetic_secret,
+        actor: create_user(email: "audit-failure-admin@example.test", role: "admin")
+      )
+    end
+
+    assert_equal Authorization::ACCESS_DENIED_MESSAGE, error.message
+    assert_includes output.string,
+      "Vessel access information denial audit failed: ActiveRecord::StatementInvalid"
+    assert_not_includes output.string, synthetic_secret
+    assert_not_includes output.string, "synthetic audit outage"
+    assert_not VesselAccessInformation.exists?(asset_id: @self_managed_vessel.id)
+  ensure
+    SecurityAudit::Recorder.define_singleton_method(:record!, original_record) if original_record
+    Rails.logger = previous_logger if previous_logger
+  end
 end

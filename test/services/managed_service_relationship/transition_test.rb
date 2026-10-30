@@ -70,6 +70,21 @@ class ManagedServiceRelationship::TransitionTest < ActiveSupport::TestCase
     end
   end
 
+  test "revoking an account that never had a relationship is a no-op" do
+    assert_no_difference -> { ManagedServiceRelationship.count } do
+      assert_no_difference -> { SecurityAuditEvent.count } do
+        result = ManagedServiceRelationship::Transition.call!(
+          account: @account,
+          active: false,
+          actor: @admin,
+          request_id: "managed-service-absent-revoke"
+        )
+
+        assert_nil result
+      end
+    end
+  end
+
   test "non Admin and inactive Admin transitions fail without state or audit" do
     captain = create_user(email: "managed-service-transition-captain@example.test", role: "captain")
     inactive_admin = create_user(

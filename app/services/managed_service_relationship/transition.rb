@@ -6,7 +6,10 @@ class ManagedServiceRelationship
       authorize!(account:, active:, actor:)
 
       account.with_lock do
-        relationship = ManagedServiceRelationship.find_or_initialize_by(account:)
+        relationship = ManagedServiceRelationship.find_by(account:)
+        return if relationship.nil? && !active
+
+        relationship ||= ManagedServiceRelationship.new(account:)
         return relationship if relationship.persisted? && relationship.active? == active
 
         relationship.active = active

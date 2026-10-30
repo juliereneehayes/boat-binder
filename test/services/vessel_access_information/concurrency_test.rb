@@ -67,4 +67,60 @@ class VesselAccessInformation::ConcurrencyTest < ActiveSupport::TestCase
     2.times { start << true }
     threads&.each { |thread| thread.join(1) }
   end
+
+
+  test "credential creation and account reassignment serialize on the Vessel boundary" do
+    target_account = create_account(name: "Concurrent Reassignment Target #{SecureRandom.hex(4)}")
+    lock_acquired = Queue.new
+    release_lock = Queue.new
+    reassignment_started = Queue.new
+    results = Queue.new
+
+    writer = Thread.new do
+      ActiveRecord::Base.connection_pool.with_connection do
+        Asset.find(@vessel.id).with_lock do
+          lock_acquired << true
+          release_lock.pop
+          record = VesselAccessInformation::Persistence.save!(
+            vessel: Asset.find(@vessel.id),
+            restricted_details: "Synthetic concurrent reassignment credential",
+            actor: User.find(@actor.id),
+            request_id: "#{@request_prefix}-reassignment-write"
+          )
+          results << [ :write, record.id ]
+        end
+      rescue StandardError => error
+        results << [ :write_error, error ]
+      end
+    end
+
+    Timeout.timeout(5) { lock_acquired.pop }
+    reassigner = Thread.new do
+      ActiveRecord::Base.connection_pool.with_connection do
+        vessel = Asset.find(@vessel.id)
+        reassignment_started << true
+        results << [ :reassignment, vessel.update(account: target_account), vessel.errors.full_messages ]
+      rescue StandardError => error
+        results << [ :reassignment_error, error ]
+      end
+    end
+
+    Timeout.timeout(5) { reassignment_started.pop }
+    release_lock << true
+    assert writer.join(5), "restricted write deadlocked"
+    assert reassigner.join(5), "account reassignment deadlocked"
+    outcomes = 2.times.map { Timeout.timeout(5) { results.pop } }.index_by(&:first)
+
+    assert_kind_of Integer, outcomes.fetch(:write).second
+    assert_equal false, outcomes.fetch(:reassignment).second
+    assert_includes outcomes.fetch(:reassignment).third,
+      "Account cannot be changed while restricted access information is retained"
+    assert_equal @account, @vessel.reload.account
+    assert_equal @vessel.id, VesselAccessInformation.find(outcomes.fetch(:write).second).asset_id
+  ensure
+    release_lock << true if release_lock
+    writer&.join(1)
+    reassigner&.join(1)
+    target_account&.destroy!
+  end
 end

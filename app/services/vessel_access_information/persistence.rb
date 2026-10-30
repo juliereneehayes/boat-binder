@@ -8,10 +8,11 @@ class VesselAccessInformation
       raise Authorization::RestrictedVesselPolicy::AccessDenied,
         Authorization::ACCESS_DENIED_MESSAGE unless account&.persisted?
 
-      account.with_lock do
-        authorized_vessel = Authorization::RestrictedVesselPolicy.new(user: actor).authorize_write!(canonical_vessel)
+      canonical_vessel.with_lock do
+        account = canonical_vessel.account
 
-        authorized_vessel.with_lock do
+        account.with_lock do
+          authorized_vessel = Authorization::RestrictedVesselPolicy.new(user: actor).authorize_write!(canonical_vessel)
           record = VesselAccessInformation.find_or_initialize_by(asset_id: authorized_vessel.id)
           creating = record.new_record?
           # Rails' encrypted attribute type encrypts this value during serialization before the database write.
@@ -47,6 +48,10 @@ class VesselAccessInformation
         account: audited_vessel.account,
         target: audited_vessel,
         request_id:
+      )
+    rescue StandardError => error
+      Rails.logger.error(
+        "Vessel access information denial audit failed: #{error.class}"
       )
     end
     private_class_method :record_denial
