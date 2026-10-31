@@ -89,11 +89,7 @@ class VesselAccessInformation < ApplicationRecord
       normalized_value = value.to_s
       next if normalized_value.blank?
 
-      maximum = if field == "additional_vessel_access_notes"
-        MAX_RESTRICTED_DETAILS_LENGTH
-      else
-        RESTRICTED_FIELD_DEFINITIONS.dig(field, :maximum) || MAX_RESTRICTED_DETAILS_LENGTH
-      end
+      maximum = serialized_field_maximum(field)
       raise ArgumentError, "#{field} is too long" if normalized_value.length > maximum
 
       result[field] = normalized_value
@@ -127,6 +123,9 @@ class VesselAccessInformation < ApplicationRecord
       unless field.is_a?(String) && PAYLOAD_FIELD_NAME_FORMAT.match?(field) && field_value.is_a?(String)
         raise InvalidPayload, "invalid restricted access payload"
       end
+      if field_value.length > serialized_field_maximum(field)
+        raise InvalidPayload, "invalid restricted access payload"
+      end
       next if field_value.blank?
 
       result[field] = field_value
@@ -141,6 +140,13 @@ class VesselAccessInformation < ApplicationRecord
     { "additional_vessel_access_notes" => raw_value }
   end
   private_class_method :legacy_fields
+
+  def self.serialized_field_maximum(field)
+    return MAX_RESTRICTED_DETAILS_LENGTH if field == "additional_vessel_access_notes"
+
+    RESTRICTED_FIELD_DEFINITIONS.dig(field, :maximum) || MAX_RESTRICTED_DETAILS_LENGTH
+  end
+  private_class_method :serialized_field_maximum
 
   private
 

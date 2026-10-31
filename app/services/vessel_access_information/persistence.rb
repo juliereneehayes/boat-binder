@@ -3,6 +3,7 @@ class VesselAccessInformation
     CHANGED_FIELDS = %w[restricted_details].freeze
     OPERATIONS = %w[keep replace clear].freeze
     InvalidUpdate = Class.new(StandardError)
+    UpdateResult = Data.define(:record, :changed)
 
     def self.save!(vessel:, restricted_details:, actor:, request_id: nil)
       canonical_vessel = canonical_vessel(vessel)
@@ -40,6 +41,10 @@ class VesselAccessInformation
     end
 
     def self.update_fields!(vessel:, updates:, actor:, request_id: nil)
+      update_fields_with_result!(vessel:, updates:, actor:, request_id:).record
+    end
+
+    def self.update_fields_with_result!(vessel:, updates:, actor:, request_id: nil)
       canonical_vessel = canonical_vessel(vessel)
       account = canonical_vessel&.account
       raise Authorization::RestrictedVesselPolicy::AccessDenied,
@@ -74,13 +79,15 @@ class VesselAccessInformation
             end
           end
 
-          return record.persisted? ? record : nil if replaced_fields.empty? && cleared_fields.empty?
+          if replaced_fields.empty? && cleared_fields.empty?
+            return UpdateResult.new(record: record.persisted? ? record : nil, changed: false)
+          end
 
           creating = record.new_record?
           if fields.empty?
             record_clear_audit!(record:, actor:, account:, request_id:, fields: cleared_fields)
             record.destroy!
-            return nil
+            return UpdateResult.new(record: nil, changed: true)
           end
 
           # Rails' encrypted attribute type encrypts this versioned field payload during
@@ -99,7 +106,7 @@ class VesselAccessInformation
             )
           end
           record_clear_audit!(record:, actor:, account:, request_id:, fields: cleared_fields)
-          record
+          UpdateResult.new(record:, changed: true)
         end
       end
     rescue Authorization::RestrictedVesselPolicy::AccessDenied

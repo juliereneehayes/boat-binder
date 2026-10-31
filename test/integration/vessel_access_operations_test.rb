@@ -133,7 +133,7 @@ class VesselAccessOperationsTest < ActionDispatch::IntegrationTest
     assert_equal "Synthetic replacement lockbox 6670", record.restricted_field("lockbox_code")
   end
 
-  test "keep rejects a typed value and all keep accurately reports no changes" do
+  test "keep rejects a typed value and true no-op operations accurately report no changes" do
     VesselAccessInformation::Persistence.update_fields!(
       vessel: @managed_vessel,
       updates: { marina_gate_code: { operation: "replace", value: @gate_code } },
@@ -165,8 +165,22 @@ class VesselAccessOperationsTest < ActionDispatch::IntegrationTest
     }
     follow_redirect!
 
-    assert_includes response.body, "No restricted access changes were selected."
+    assert_includes response.body, "No restricted access information changed."
     assert_not_includes response.body, "Restricted access information updated."
+    assert_equal audit_count, SecurityAuditEvent.count
+
+    patch vessel_access_information_path(@managed_vessel), params: {
+      restricted_fields: {
+        marina_gate_code: { operation: "replace", value: @gate_code },
+        alarm_security_code: { operation: "clear", value: "" }
+      }
+    }
+    follow_redirect!
+
+    assert_includes response.body, "No restricted access information changed."
+    assert_not_includes response.body, "Restricted access information updated."
+    assert_equal @gate_code,
+      @managed_vessel.reload.vessel_access_information.restricted_field("marina_gate_code")
     assert_equal audit_count, SecurityAuditEvent.count
   end
 
@@ -189,27 +203,34 @@ class VesselAccessOperationsTest < ActionDispatch::IntegrationTest
     )
     sign_in_as @admin
     audit_count = SecurityAuditEvent.count
+    log_output = StringIO.new
+    original_logger = Rails.logger
+    Rails.logger = ActiveSupport::TaggedLogging.new(ActiveSupport::Logger.new(log_output))
 
-    get vessel_path(@managed_vessel)
-    assert_response :success
-    assert_includes response.body, "uses a format this version cannot safely read"
-    assert_not_includes response.body, future_value
-    assert_select "form[action=?]", vessel_access_information_path(@managed_vessel), count: 0
+    begin
+      get vessel_path(@managed_vessel)
+      assert_response :success
+      assert_includes response.body, "uses a format this version cannot safely read"
+      assert_not_includes response.body, future_value
+      assert_select "form[action=?]", vessel_access_information_path(@managed_vessel), count: 0
 
-    patch vessel_access_information_path(@managed_vessel), params: {
-      restricted_fields: {
-        lockbox_code: { operation: "replace", value: "Synthetic unsafe overwrite 3387" }
+      patch vessel_access_information_path(@managed_vessel), params: {
+        restricted_fields: {
+          lockbox_code: { operation: "replace", value: "Synthetic unsafe overwrite 3387" }
+        }
       }
-    }
-    follow_redirect!
-    assert_includes response.body, "stored format is not supported"
-    assert_not_includes response.body, future_value
-    assert_not_includes response.body, "3387"
+      follow_redirect!
+      assert_includes response.body, "stored format is not supported"
+      assert_not_includes response.body, future_value
+      assert_not_includes response.body, "3387"
 
-    post reveal_vessel_access_information_path(@managed_vessel), params: { field: "marina_gate_code" }
-    assert_response :unprocessable_entity
-    assert_includes response.body, "No value was revealed or changed."
-    assert_not_includes response.body, future_value
+      post reveal_vessel_access_information_path(@managed_vessel), params: { field: "marina_gate_code" }
+      assert_response :unprocessable_entity
+      assert_includes response.body, "No value was revealed or changed."
+      assert_not_includes response.body, future_value
+    ensure
+      Rails.logger = original_logger
+    end
 
     stored_after = VesselAccessInformation.connection.select_value(
       VesselAccessInformation.sanitize_sql_array(
@@ -219,6 +240,85 @@ class VesselAccessOperationsTest < ActionDispatch::IntegrationTest
     assert_equal stored_before, stored_after
     assert_equal future_payload, record.reload.restricted_details
     assert_equal audit_count, SecurityAuditEvent.count
+    assert_includes log_output.string, "error=VesselAccessInformation::UnsupportedPayloadVersion action=show"
+    assert_includes log_output.string, "error=VesselAccessInformation::UnsupportedPayloadVersion action=update"
+    assert_includes log_output.string, "error=VesselAccessInformation::UnsupportedPayloadVersion action=reveal"
+    assert_includes log_output.string, "vessel_id=#{@managed_vessel.id}"
+    assert_not_includes log_output.string, future_value
+    assert_not_includes log_output.string, "3387"
+  end
+
+  test "malformed current payload and oversized submissions use distinct safe failures" do
+    malformed_value = "Synthetic malformed stored field 7354 " + ("x" * 256)
+    malformed_payload = JSON.generate(
+      "schema" => VesselAccessInformation::PAYLOAD_SCHEMA,
+      "version" => VesselAccessInformation::PAYLOAD_VERSION,
+      "fields" => { "marina_gate_code" => malformed_value }
+    )
+    record = VesselAccessInformation::Persistence.save!(
+      vessel: @managed_vessel,
+      restricted_details: malformed_payload,
+      actor: @admin
+    )
+    stored_before = VesselAccessInformation.connection.select_value(
+      VesselAccessInformation.sanitize_sql_array(
+        [ "SELECT restricted_details FROM vessel_access_information WHERE id = ?", record.id ]
+      )
+    )
+    sign_in_as @admin
+    audit_count = SecurityAuditEvent.count
+    log_output = StringIO.new
+    original_logger = Rails.logger
+    Rails.logger = ActiveSupport::TaggedLogging.new(ActiveSupport::Logger.new(log_output))
+
+    begin
+      get vessel_path(@managed_vessel)
+      assert_response :success
+      assert_includes response.body, "uses a format this version cannot safely read"
+      assert_not_includes response.body, malformed_value
+
+      post reveal_vessel_access_information_path(@managed_vessel), params: { field: "marina_gate_code" }
+      assert_response :unprocessable_entity
+      assert_not_includes response.body, malformed_value
+
+      patch vessel_access_information_path(@managed_vessel), params: {
+        restricted_fields: {
+          marina_gate_code: { operation: "replace", value: "Synthetic rejected replacement 1049" }
+        }
+      }
+      follow_redirect!
+    ensure
+      Rails.logger = original_logger
+    end
+
+    assert_includes response.body, "stored format is not supported"
+    assert_not_includes response.body, malformed_value
+    assert_not_includes response.body, "1049"
+    assert_equal stored_before, VesselAccessInformation.connection.select_value(
+      VesselAccessInformation.sanitize_sql_array(
+        [ "SELECT restricted_details FROM vessel_access_information WHERE id = ?", record.id ]
+      )
+    )
+    assert_equal audit_count, SecurityAuditEvent.count
+    assert_includes log_output.string, "error=VesselAccessInformation::InvalidPayload action=show"
+    assert_includes log_output.string, "error=VesselAccessInformation::InvalidPayload action=reveal"
+    assert_includes log_output.string, "error=VesselAccessInformation::InvalidPayload action=update"
+    assert_not_includes log_output.string, malformed_value
+    assert_not_includes log_output.string, "1049"
+
+    record.update!(restricted_details: VesselAccessInformation.serialize_fields("marina_gate_code" => @gate_code))
+    oversized_submission = "Synthetic oversized " + ("x" * 300)
+    patch vessel_access_information_path(@managed_vessel), params: {
+      restricted_fields: {
+        marina_gate_code: { operation: "replace", value: oversized_submission }
+      }
+    }
+    follow_redirect!
+
+    assert_includes response.body, "is too long (maximum is 255 characters)"
+    assert_not_includes response.body, "stored format is not supported"
+    assert_not_includes response.body, oversized_submission
+    assert_equal @gate_code, record.reload.restricted_field("marina_gate_code")
   end
 
   test "self managed owner can maintain restricted fields while HYC staff cannot read or write them" do
@@ -294,7 +394,7 @@ class VesselAccessOperationsTest < ActionDispatch::IntegrationTest
     assert_nil @managed_vessel.reload.engine_startup_instructions
   end
 
-  test "managed service owner restricted endpoints remain independent of self managed billing" do
+  test "managed service owner restricted endpoints also require ordinary Vessel visibility" do
     owner = create_user(email: "access-operations-managed-editor@example.test", role: "owner")
     create_account_membership(user: owner, account: @managed_account, access_level: "editor")
     VesselAccessInformation::Persistence.update_fields!(
@@ -303,6 +403,21 @@ class VesselAccessOperationsTest < ActionDispatch::IntegrationTest
       actor: @admin
     )
     sign_in_as owner
+
+    post reveal_vessel_access_information_path(@managed_vessel), params: { field: "marina_gate_code" }
+    assert_response :not_found
+    assert_not_includes response.body, @gate_code
+
+    patch vessel_access_information_path(@managed_vessel), params: {
+      restricted_fields: {
+        marina_gate_code: { operation: "replace", value: "Synthetic blocked managed replacement 1051" }
+      }
+    }
+    assert_response :not_found
+    assert_equal @gate_code,
+      @managed_vessel.reload.vessel_access_information.restricted_field("marina_gate_code")
+
+    qualify_self_managed_subscription(@managed_account)
 
     post reveal_vessel_access_information_path(@managed_vessel), params: { field: "marina_gate_code" }
     assert_response :success
@@ -316,6 +431,27 @@ class VesselAccessOperationsTest < ActionDispatch::IntegrationTest
     assert_redirected_to vessel_path(@managed_vessel, anchor: "access-operations")
     assert_equal "Synthetic managed owner replacement 9042",
       @managed_vessel.reload.vessel_access_information.restricted_field("marina_gate_code")
+  end
+
+  test "alternate restricted scope cannot surface inactive deleted or otherwise unavailable Vessels" do
+    owner = create_user(email: "access-operations-unavailable-owner@example.test", role: "owner")
+    create_account_membership(user: owner, account: @managed_account, access_level: "editor")
+    @managed_vessel.update!(active: false)
+    sign_in_as owner
+
+    post reveal_vessel_access_information_path(@managed_vessel), params: { field: "marina_gate_code" }
+    assert_response :not_found
+
+    deleted_vessel = create_vessel(account: @managed_account, name: "Deleted Access Operations Vessel")
+    deleted_slug = deleted_vessel.slug
+    deleted_vessel.destroy!
+
+    post "/vessels/#{deleted_slug}/access_information/reveal", params: { field: "marina_gate_code" }
+    assert_response :not_found
+
+    @managed_account.update!(active: false)
+    post reveal_vessel_access_information_path(@managed_vessel), params: { field: "marina_gate_code" }
+    assert_response :not_found
   end
 
   test "routine instructions follow ordinary Vessel access and render user text safely" do

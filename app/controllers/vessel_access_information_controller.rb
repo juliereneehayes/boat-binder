@@ -4,17 +4,16 @@ class VesselAccessInformationController < ApplicationController
   before_action :set_vessel
 
   def update
-    updates = restricted_field_updates
-    VesselAccessInformation::Persistence.update_fields!(
+    result = VesselAccessInformation::Persistence.update_fields_with_result!(
       vessel: @vessel,
-      updates:,
+      updates: restricted_field_updates,
       actor: current_user,
       request_id: request.request_id
     )
-    notice = if requested_change?(updates)
+    notice = if result.changed
       "Restricted access information updated."
     else
-      "No restricted access changes were selected."
+      "No restricted access information changed."
     end
 
     redirect_to vessel_path(@vessel, anchor: "access-operations"),
@@ -28,7 +27,12 @@ class VesselAccessInformationController < ApplicationController
     redirect_to vessel_path(@vessel, anchor: "access-operations"),
       alert: "Restricted access information was not saved. #{error.message}",
       status: :see_other
-  rescue VesselAccessInformation::PayloadError
+  rescue VesselAccessInformation::PayloadTooLarge
+    redirect_to vessel_path(@vessel, anchor: "access-operations"),
+      alert: "Restricted access information was not saved because the submitted information is too large. No values were changed.",
+      status: :see_other
+  rescue VesselAccessInformation::PayloadError => error
+    report_payload_error(error, action: "update")
     redirect_to vessel_path(@vessel, anchor: "access-operations"),
       alert: "Restricted access information was not saved because its stored format is not supported. No values were changed.",
       status: :see_other
@@ -50,7 +54,8 @@ class VesselAccessInformationController < ApplicationController
     else
       render_restricted_field_state(present: false)
     end
-  rescue VesselAccessInformation::PayloadError
+  rescue VesselAccessInformation::PayloadError => error
+    report_payload_error(error, action: "reveal")
     render partial: "vessels/restricted_field_unavailable",
       locals: { field: restricted_field },
       status: :unprocessable_entity
@@ -68,8 +73,7 @@ class VesselAccessInformationController < ApplicationController
   private
 
   def set_vessel
-    accessible_vessels = scoped_vessels.or(scoped_restricted_vessels)
-    @vessel = accessible_vessels.includes(:account).find_by!(slug: params[:vessel_id])
+    @vessel = scoped_vessels.includes(:account).find_by!(slug: params[:vessel_id])
   end
 
   def restricted_field
@@ -85,10 +89,11 @@ class VesselAccessInformationController < ApplicationController
     params.fetch(:restricted_fields, ActionController::Parameters.new).permit(permitted_fields).to_h
   end
 
-  def requested_change?(updates)
-    updates.values.any? do |update|
-      %w[replace clear].include?(update.fetch("operation", "keep"))
-    end
+  def report_payload_error(error, action:)
+    Rails.logger.error(
+      "Vessel access information payload unavailable " \
+        "error=#{error.class.name} action=#{action} vessel_id=#{@vessel.id} request_id=#{request.request_id}"
+    )
   end
 
   def render_restricted_field_state(present:)

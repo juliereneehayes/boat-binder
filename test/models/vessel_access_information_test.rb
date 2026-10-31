@@ -150,6 +150,18 @@ class VesselAccessInformationTest < ActiveSupport::TestCase
     end
   end
 
+  test "current schema rejects fields above their declared limit" do
+    invalid_payload = JSON.generate(
+      "schema" => VesselAccessInformation::PAYLOAD_SCHEMA,
+      "version" => VesselAccessInformation::PAYLOAD_VERSION,
+      "fields" => { "marina_gate_code" => "x" * 256 }
+    )
+
+    assert_raises(VesselAccessInformation::InvalidPayload) do
+      VesselAccessInformation.deserialize_fields(invalid_payload)
+    end
+  end
+
   test "maximum field lengths allow bounded JSON escaping and Unicode overhead" do
     patterns = [ "\nA", '"B', "\\C", "\u0001D", "⚓E", "Z" ]
     fields = VesselAccessInformation::RESTRICTED_FIELD_DEFINITIONS.each_with_index.to_h do |(field, definition), index|

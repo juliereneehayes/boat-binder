@@ -34,16 +34,17 @@ Ordinary Vessel Operations fields continue to use existing Vessel authorization:
 | Read-only Owner | Yes while the existing readable lifecycle allows | No |
 | Inactive User, Account, or membership; revoked or unrelated Account | No | No |
 
-The Access & Operations section appears only after the ordinary Vessel lookup succeeds. Restricted
-controls then make a separate central-policy decision; ordinary Admin/Captain Vessel visibility never
-implies restricted access to a Self Managed Vessel.
+The Access & Operations section and its update, reveal, and hide endpoints are an embedded Vessel
+profile feature. They first require the ordinary Vessel lookup to succeed, then make a separate
+restricted-policy decision. Ordinary visibility never implies restricted access, and restricted
+authorization does not create an alternate route to an otherwise unavailable Vessel. Inactive Vessels
+continue to follow the existing ordinary Vessel visibility rules; deleted Vessels, inactive Accounts,
+unreadable lifecycle states, and unrelated Accounts cannot be surfaced through a restricted-only scope.
 
-Restricted update, reveal, and hide endpoints accept the union of ordinary Vessel scope and the
-restricted-policy scope, then authorize again through `RestrictedVesselPolicy` inside the locked service.
-This preserves Managed Service entitlement independence for direct restricted operations. The Vessel
-show page still requires ordinary Vessel visibility; broadening that page for a Managed Service Owner
-who lacks ordinary lifecycle access would also expose operating instructions and remains a separate
-product authorization decision.
+Managed Service eligibility remains independent of Stripe and Self Managed billing inside
+`RestrictedVesselPolicy`. Requiring ordinary Vessel visibility at the endpoint is a containing-resource
+boundary for this embedded experience, not a second restricted-entitlement evaluator. A future
+standalone credential workflow would require separate product and security approval.
 
 ## Field classification
 
@@ -111,13 +112,18 @@ version fails closed: it is not reinterpreted as legacy notes, revealed, or rewr
 leaves the encrypted record unchanged so a future application version can still read it. Version `1` also
 rejects malformed field maps and non-string values instead of silently dropping them during a later update.
 
-Raw legacy values retain their 20,000-character limit. Versioned field payloads have a separate 170,000-character
-and byte serialized bound. New values retain their declared per-field limits; the larger aggregate bound also
-allows a maximum legacy note to remain byte-for-byte intact while JSON delimiters, Unicode, and worst-case
-control-character escaping keep the encrypted plaintext predictably bounded.
+Raw legacy values retain their historical 20,000-character compatibility allowance so existing
+encrypted notes are not truncated or made uneditable during their first field-aware update. This is not
+the new-entry limit: the customer interface accepts at most 10,000 characters for Additional vessel
+access notes and applies the smaller declared limit for every other field. Versioned field payloads have
+a separate 170,000-character and byte serialized bound. That larger internal aggregate bound preserves a
+maximum legacy note byte-for-byte while allowing JSON delimiters, Unicode, and worst-case
+control-character escaping to remain predictably bounded; it does not authorize larger new UI input.
 
 All application writes use `VesselAccessInformation::Persistence`. The legacy `save!` entrypoint keeps
-the verified #255 encrypted serialization path. The customer interface uses `update_fields!`, which:
+the verified #255 encrypted serialization path. The customer interface uses
+`update_fields_with_result!`, which shares the `update_fields!` mutation boundary and also reports
+whether anything changed so the response remains accurate. That boundary:
 
 - authorizes through `Authorization::RestrictedVesselPolicy`;
 - serializes changes under the existing Vessel and Account row locks;
@@ -133,7 +139,8 @@ previous value to the browser. Clearing the final populated field removes the em
 result of that explicit authorized clearance request. Lifecycle transitions, ordinary Vessel edits,
 deletion, and reassignment never clear credentials.
 
-An all-Keep submission reports that no changes were selected and records no successful mutation audit.
+An all-Keep submission, same-value replacement, or clearance of an already absent field reports that no
+information changed and records no successful mutation audit.
 
 This MVP does not implement credential version history or collaborative conflict presentation.
 
@@ -142,6 +149,11 @@ authorization inside those locks. Reassignment and protected deletion use the Ve
 Service transitions lock only the Account and never acquire a Vessel afterward, so there is no inverse
 Account-to-Vessel lock path. Relation scopes and per-Vessel predicates share the same Managed Service,
 Self Managed, membership, lifecycle, role, and active-state decisions and are covered by parity tests.
+
+The service currently runs on Rails 8.1, whose transaction implementation commits a `with_lock` block
+when it exits through a non-local return without an exception. Focused regression coverage verifies that
+clearing the final field both removes the empty encrypted record and persists its audit event. No
+transaction refactor is needed while that behavior remains covered.
 
 ## Masking, reveal, and browser handling
 
@@ -166,8 +178,10 @@ membership/entitlement state apply to the next request.
 A reveal-specific rate limit is intentionally deferred. There are only six named fields, each request
 requires an authenticated and currently authorized user, and every successful reveal is audited. A low
 generic request cap would provide little protection from an already authorized session while risking
-legitimate dockside access. Revisit throttling with an authenticated-user key if field count, sharing, or
-abuse evidence changes.
+legitimate dockside access. As an optional future operational enhancement, existing audit volumes may be
+monitored for unusual reveal patterns. Evidence from that monitoring can inform a separately reviewed
+authenticated-user throttle or alert; this PR does not add a new rate-limiting, monitoring, or alerting
+subsystem.
 
 ## Account isolation, reassignment, and deletion
 
@@ -198,6 +212,14 @@ Successful create, update, field-clear, and reveal events record only approved f
 writes and denied reveals are recorded when a safe Account context exists. A failed denial-audit write
 cannot replace the original authorization denial, and operational logging contains only the audit
 exception class.
+
+Recognized unsupported or malformed versioned payloads fail closed and remain encrypted and unchanged.
+The customer response contains no stored or submitted value. Existing operational logging records only
+the error class, action, Vessel identifier, and request identifier so authorized operators can correlate
+the failure without exposing credentials. Recovery is the responsibility of an authorized operator with
+approved key access, backups, and version-aware tooling under a separately reviewed procedure; there is
+no public credential-repair endpoint, and sensitive recovery commands do not belong in this public
+repository.
 
 The entire `restricted_fields` parameter subtree and legacy `restricted_details` name are filtered from
 Rails logs. The four ordinary operating-instruction parameter names are also filtered to reduce accidental

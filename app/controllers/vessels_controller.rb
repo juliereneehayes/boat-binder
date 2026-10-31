@@ -46,7 +46,8 @@ class VesselsController < ApplicationController
     else
       @restricted_field_names = []
     end
-  rescue VesselAccessInformation::PayloadError
+  rescue VesselAccessInformation::PayloadError => error
+    report_restricted_payload_error(error)
     @restricted_access_format_error = true
     @can_write_restricted_access = false
     @restricted_field_names = []
@@ -129,6 +130,13 @@ class VesselsController < ApplicationController
   end
 
   private
+
+  def report_restricted_payload_error(error)
+    Rails.logger.error(
+      "Vessel access information payload unavailable " \
+        "error=#{error.class.name} action=show vessel_id=#{@vessel.id} request_id=#{request.request_id}"
+    )
+  end
 
   def attach_primary_photo!(vessel, upload)
     vessel.primary_photo.attach(upload)

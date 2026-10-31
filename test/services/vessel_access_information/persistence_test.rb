@@ -189,8 +189,9 @@ class VesselAccessInformation::PersistenceTest < ActiveSupport::TestCase
     assert_equal %w[marina_gate_code], clear_event.changed_fields
     assert_not_includes clear_event.attributes.to_json, "Synthetic"
 
+    result = nil
     assert_difference -> { VesselAccessInformation.count }, -1 do
-      VesselAccessInformation::Persistence.update_fields!(
+      result = VesselAccessInformation::Persistence.update_fields_with_result!(
         vessel: @vessel,
         updates: { lockbox_code: { operation: "clear" } },
         actor: @actor,
@@ -201,6 +202,31 @@ class VesselAccessInformation::PersistenceTest < ActiveSupport::TestCase
     final_event = SecurityAuditEvent.find_by!(request_id: "restricted-field-clear-final")
     assert_equal "vessel_access_information.fields_cleared", final_event.action
     assert_equal record.id, final_event.target_id
+    assert result.changed
+    assert_nil result.record
+  end
+
+  test "mutation result distinguishes actual changes from idempotent requests" do
+    record = VesselAccessInformation::Persistence.update_fields!(
+      vessel: @vessel,
+      updates: { marina_gate_code: { operation: "replace", value: "Synthetic gate 5072" } },
+      actor: @actor
+    )
+    audit_count = SecurityAuditEvent.count
+
+    result = VesselAccessInformation::Persistence.update_fields_with_result!(
+      vessel: @vessel,
+      updates: {
+        marina_gate_code: { operation: "replace", value: "Synthetic gate 5072" },
+        lockbox_code: { operation: "clear" }
+      },
+      actor: @actor
+    )
+
+    assert_not result.changed
+    assert_equal record, result.record
+    assert_equal audit_count, SecurityAuditEvent.count
+    assert_equal "Synthetic gate 5072", record.reload.restricted_field("marina_gate_code")
   end
 
   test "blank replacement and invalid operations preserve existing values" do
