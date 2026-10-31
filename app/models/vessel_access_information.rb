@@ -1,5 +1,5 @@
 class VesselAccessInformation < ApplicationRecord
-  MAX_RESTRICTED_DETAILS_LENGTH = 10_000
+  MAX_RESTRICTED_DETAILS_LENGTH = 20_000
   PAYLOAD_SCHEMA = "boat_binder.vessel_access_information"
   PAYLOAD_VERSION = 1
   RESTRICTED_FIELD_DEFINITIONS = {
@@ -37,7 +37,7 @@ class VesselAccessInformation < ApplicationRecord
       label: "Additional vessel access notes",
       group: "Vessel Access",
       multiline: true,
-      maximum: 5_000
+      maximum: 10_000
     }
   }.freeze
   RESTRICTED_FIELD_NAMES = RESTRICTED_FIELD_DEFINITIONS.keys.freeze

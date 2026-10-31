@@ -223,4 +223,23 @@ class VesselAccessInformation::PersistenceTest < ActiveSupport::TestCase
     assert_equal @synthetic_secret, record.reload.restricted_field("additional_vessel_access_notes")
     assert_equal "Synthetic lockbox 7305", record.restricted_field("lockbox_code")
   end
+
+  test "maximum legacy details remain intact when another field is added" do
+    legacy_details = "L" * 10_000
+    record = VesselAccessInformation::Persistence.save!(
+      vessel: @vessel,
+      restricted_details: legacy_details,
+      actor: @actor
+    )
+
+    VesselAccessInformation::Persistence.update_fields!(
+      vessel: @vessel,
+      updates: { marina_gate_code: { operation: "replace", value: "Synthetic gate 4380" } },
+      actor: @actor
+    )
+
+    assert_equal legacy_details, record.reload.restricted_field("additional_vessel_access_notes")
+    assert_equal "Synthetic gate 4380", record.restricted_field("marina_gate_code")
+    assert_operator record.restricted_details.length, :<=, VesselAccessInformation::MAX_RESTRICTED_DETAILS_LENGTH
+  end
 end
