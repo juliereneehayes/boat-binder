@@ -37,6 +37,14 @@ class VesselsController < ApplicationController
     @last_visit = @vessel.last_visit
     @next_reminder = @vessel.next_reminder
     @binder_note = @vessel.binder_notes.new(account: @vessel.account)
+    @can_write_restricted_access = restricted_vessel_policy.writable?(@vessel)
+    @can_read_restricted_access = @can_write_restricted_access || restricted_vessel_policy.readable?(@vessel)
+    if @can_read_restricted_access
+      access_information = VesselAccessInformation.find_by(asset_id: @vessel.id)
+      @restricted_field_names = access_information&.restricted_field_names || []
+    else
+      @restricted_field_names = []
+    end
   end
 
   def new
@@ -144,6 +152,10 @@ class VesselsController < ApplicationController
       :marina,
       :slip,
       :notes,
+      :engine_startup_instructions,
+      :engine_shutdown_instructions,
+      :battery_shore_power_instructions,
+      :operating_notes,
       :active,
       :primary_photo
     )

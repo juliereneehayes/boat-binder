@@ -67,6 +67,7 @@
     <a href="#notes" class="min-h-10 shrink-0 rounded-md bg-white px-4 py-2.5 text-[#0B1F35] shadow-sm ring-1 ring-[#E7DED2] transition hover:bg-[#E8F3F5]">Notes</a>
     <a href="#visits" class="min-h-10 shrink-0 rounded-md bg-white px-4 py-2.5 text-[#0B1F35] shadow-sm ring-1 ring-[#E7DED2] transition hover:bg-[#E8F3F5]">Service Visits</a>
     <a href="#profile" class="min-h-10 shrink-0 rounded-md bg-white px-4 py-2.5 text-[#0B1F35] shadow-sm ring-1 ring-[#E7DED2] transition hover:bg-[#E8F3F5]">Profile</a>
+    <a href="#access-operations" class="min-h-10 shrink-0 rounded-md bg-white px-4 py-2.5 text-[#0B1F35] shadow-sm ring-1 ring-[#E7DED2] transition hover:bg-[#E8F3F5]">Access &amp; Operations</a>
     <a href="#batteries" class="min-h-10 shrink-0 rounded-md bg-white px-4 py-2.5 text-[#0B1F35] shadow-sm ring-1 ring-[#E7DED2] transition hover:bg-[#E8F3F5]">Batteries</a>
   </nav>
 
@@ -205,6 +206,8 @@
       </div>
     </div>
   </section>
+
+  <%= render "access_operations", vessel: @vessel, can_manage_vessel: %>
 
   <section id="batteries" class="space-y-3">
     <div class="flex items-center justify-between gap-3">

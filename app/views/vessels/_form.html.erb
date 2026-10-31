@@ -134,6 +134,32 @@
     </label>
   </section>
 
+  <section id="vessel-operations" class="space-y-4 rounded-md border border-slate-200 bg-white p-4 shadow-sm">
+    <div>
+      <h2 class="text-lg font-black">Vessel Operations</h2>
+      <p class="mt-1 text-sm leading-6 text-slate-600">
+        Routine instructions are visible to everyone authorized to view this Vessel. Store passwords, codes,
+        physical key locations, and other sensitive access details in Restricted Access on the Vessel profile.
+      </p>
+    </div>
+    <div>
+      <%= form.label :engine_startup_instructions, "Engine startup instructions", class: "text-sm font-semibold text-slate-700" %>
+      <%= form.text_area :engine_startup_instructions, rows: 4, class: "mt-2 w-full rounded-md border border-slate-300 px-4 py-3 text-base" %>
+    </div>
+    <div>
+      <%= form.label :engine_shutdown_instructions, "Engine shutdown instructions", class: "text-sm font-semibold text-slate-700" %>
+      <%= form.text_area :engine_shutdown_instructions, rows: 4, class: "mt-2 w-full rounded-md border border-slate-300 px-4 py-3 text-base" %>
+    </div>
+    <div>
+      <%= form.label :battery_shore_power_instructions, "Battery and shore-power instructions", class: "text-sm font-semibold text-slate-700" %>
+      <%= form.text_area :battery_shore_power_instructions, rows: 4, class: "mt-2 w-full rounded-md border border-slate-300 px-4 py-3 text-base" %>
+    </div>
+    <div>
+      <%= form.label :operating_notes, "Additional operating notes", class: "text-sm font-semibold text-slate-700" %>
+      <%= form.text_area :operating_notes, rows: 4, class: "mt-2 w-full rounded-md border border-slate-300 px-4 py-3 text-base" %>
+    </div>
+  </section>
+
   <div class="flex flex-col gap-3 sm:flex-row sm:items-center">
     <%= form.submit vessel.persisted? ? "Save vessel" : "Add vessel", class: "min-h-12 rounded-md bg-cyan-700 px-5 py-3 text-base font-black text-white shadow-sm", data: { turbo_submits_with: "Saving..." } %>
     <%= link_to "Cancel", vessel.persisted? ? vessel_path(vessel) : vessels_path, class: "inline-flex min-h-12 items-center justify-center rounded-md px-5 py-3 text-base font-bold text-slate-700" %>

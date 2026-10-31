@@ -9,6 +9,13 @@ class Asset < ApplicationRecord
   PRIMARY_PHOTO_CONTENT_TYPE_ERROR = "must be a JPEG, PNG, or WEBP image"
   PRIMARY_PHOTO_SIZE_ERROR = "must be 10 MB or smaller"
   PRIMARY_PHOTO_EXTENSION_ERROR = "extension does not match the uploaded file type"
+  OPERATING_INSTRUCTION_FIELDS = %i[
+    engine_startup_instructions
+    engine_shutdown_instructions
+    battery_shore_power_instructions
+    operating_notes
+  ].freeze
+  OPERATING_INSTRUCTION_MAX_LENGTH = 10_000
 
   belongs_to :account
   has_one :vessel_access_information, dependent: :restrict_with_exception
@@ -21,6 +28,7 @@ class Asset < ApplicationRecord
   has_one_attached :primary_photo
 
   before_validation :normalize_text_fields
+  before_validation :normalize_operating_instructions
   before_validation :ensure_slug
 
   validates :asset_type, inclusion: { in: ASSET_TYPES }
@@ -30,6 +38,9 @@ class Asset < ApplicationRecord
   validates :year, numericality: { only_integer: true, greater_than: 1900, less_than_or_equal_to: Date.current.year + 1 }, allow_blank: true
   validates :length, numericality: { greater_than: 0 }, allow_blank: true
   validates :registration_number, uniqueness: { scope: :account_id }, allow_blank: true
+  validates(*OPERATING_INSTRUCTION_FIELDS,
+    length: { maximum: OPERATING_INSTRUCTION_MAX_LENGTH },
+    allow_blank: true)
   validate :primary_photo_is_safe_upload
   validate :restricted_information_stays_with_vessel_and_account
 
@@ -191,6 +202,13 @@ class Asset < ApplicationRecord
       normalized_value = value.squish
       normalized_value = nil if normalized_value.blank? && attribute == :registration_number
       public_send("#{attribute}=", normalized_value)
+    end
+  end
+
+  def normalize_operating_instructions
+    OPERATING_INSTRUCTION_FIELDS.each do |attribute|
+      value = public_send(attribute)
+      public_send("#{attribute}=", value.to_s.strip.presence) unless value.nil?
     end
   end
 

@@ -47,6 +47,10 @@ Rails.application.routes.draw do
 
   resources :vessels do
     delete :primary_photo, on: :member, action: :destroy_primary_photo
+    resource :access_information, only: :update, controller: :vessel_access_information do
+      post :reveal
+      post :hide
+    end
     resources :service_visits, only: %i[index new create show edit update] do
       get :report, on: :member
       patch :complete_follow_up, on: :member

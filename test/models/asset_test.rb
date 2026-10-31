@@ -197,4 +197,26 @@ class AssetTest < ActiveSupport::TestCase
 
     assert_equal blob.id, vessel.reload.primary_photo.blob.id
   end
+
+
+  test "optional operating instructions preserve line breaks normalize blanks and enforce a bounded length" do
+    vessel = create_vessel
+    vessel.update!(
+      engine_startup_instructions: "  Start blower.\nWait five minutes.  ",
+      engine_shutdown_instructions: "   ",
+      battery_shore_power_instructions: "Disconnect synthetic shore power.",
+      operating_notes: nil
+    )
+
+    vessel.reload
+    assert_equal "Start blower.\nWait five minutes.", vessel.engine_startup_instructions
+    assert_nil vessel.engine_shutdown_instructions
+    assert_equal "Disconnect synthetic shore power.", vessel.battery_shore_power_instructions
+    assert_nil vessel.operating_notes
+
+    vessel.operating_notes = "a" * (Asset::OPERATING_INSTRUCTION_MAX_LENGTH + 1)
+    assert_not vessel.valid?
+    assert_includes vessel.errors[:operating_notes],
+      "is too long (maximum is #{Asset::OPERATING_INSTRUCTION_MAX_LENGTH} characters)"
+  end
 end

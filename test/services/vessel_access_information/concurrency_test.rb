@@ -68,6 +68,45 @@ class VesselAccessInformation::ConcurrencyTest < ActiveSupport::TestCase
     threads&.each { |thread| thread.join(1) }
   end
 
+  test "concurrent partial field writes preserve both independently updated values" do
+    start = Queue.new
+    results = Queue.new
+    updates = [
+      [ "marina_gate_code", "Synthetic concurrent gate 2401" ],
+      [ "lockbox_code", "Synthetic concurrent lockbox 8407" ]
+    ]
+
+    threads = updates.each_with_index.map do |(field, value), index|
+      Thread.new do
+        ActiveRecord::Base.connection_pool.with_connection do
+          start.pop
+          record = VesselAccessInformation::Persistence.update_fields!(
+            vessel: Asset.find(@vessel.id),
+            updates: { field => { operation: "replace", value: } },
+            actor: User.find(@actor.id),
+            request_id: "#{@request_prefix}-partial-#{index}"
+          )
+          results << record.id
+        rescue StandardError => error
+          results << error
+        end
+      end
+    end
+
+    2.times { start << true }
+    threads.each { |thread| assert thread.join(5), "concurrent partial write deadlocked" }
+    outcomes = 2.times.map { Timeout.timeout(5) { results.pop } }
+
+    outcomes.each { |outcome| assert_kind_of Integer, outcome }
+    assert_equal 1, outcomes.uniq.length
+    record = VesselAccessInformation.find(outcomes.first)
+    assert_equal "Synthetic concurrent gate 2401", record.restricted_field("marina_gate_code")
+    assert_equal "Synthetic concurrent lockbox 8407", record.restricted_field("lockbox_code")
+  ensure
+    2.times { start << true }
+    threads&.each { |thread| thread.join(1) }
+  end
+
 
   test "credential creation and account reassignment serialize on the Vessel boundary" do
     target_account = create_account(name: "Concurrent Reassignment Target #{SecureRandom.hex(4)}")

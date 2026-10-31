@@ -49,4 +49,19 @@ class VesselAccessInformationPrivacyTest < ActionDispatch::IntegrationTest
     assert_equal "[FILTERED]", filtered.dig(:vessel_access_information, :restricted_details)
     assert_not_includes filtered.to_json, @synthetic_secret
   end
+
+
+  test "field-aware restricted parameters are filtered as one credential-bearing payload" do
+    filter = ActiveSupport::ParameterFilter.new(Rails.application.config.filter_parameters)
+    filtered = filter.filter(
+      restricted_fields: {
+        marina_gate_code: { operation: "replace", value: "Synthetic filtered gate 4208" },
+        physical_key_location: { operation: "replace", value: "Synthetic filtered key location" }
+      }
+    )
+
+    assert_equal "[FILTERED]", filtered.fetch(:restricted_fields)
+    assert_not_includes filtered.to_json, "Synthetic filtered gate 4208"
+    assert_not_includes filtered.to_json, "Synthetic filtered key location"
+  end
 end
