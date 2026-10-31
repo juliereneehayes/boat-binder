@@ -2,8 +2,11 @@
   class: "block rounded-md border border-amber-300 bg-white p-4",
   data: {
     controller: "restricted-reveal",
-    action: "turbo:before-cache@document->restricted-reveal#beforeCache"
+    action: "turbo:before-cache@document->restricted-reveal#beforeCache pagehide@window->restricted-reveal#pageHide pageshow@window->restricted-reveal#pageShow"
   } do %>
+  <template data-restricted-reveal-target="masked">
+    <%= render "vessels/restricted_field_masked_content", vessel:, field:, present: true %>
+  </template>
   <p class="text-sm font-semibold text-slate-600"><%= VesselAccessInformation::RESTRICTED_FIELD_DEFINITIONS.fetch(field).fetch(:label) %></p>
   <p class="mt-2 whitespace-pre-wrap break-words font-black text-slate-950" data-restricted-reveal-target="secret"><%= value %></p>
   <%= button_to "Hide",

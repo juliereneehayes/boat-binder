@@ -4,15 +4,21 @@ class VesselAccessInformationController < ApplicationController
   before_action :set_vessel
 
   def update
+    updates = restricted_field_updates
     VesselAccessInformation::Persistence.update_fields!(
       vessel: @vessel,
-      updates: restricted_field_updates,
+      updates:,
       actor: current_user,
       request_id: request.request_id
     )
+    notice = if requested_change?(updates)
+      "Restricted access information updated."
+    else
+      "No restricted access changes were selected."
+    end
 
     redirect_to vessel_path(@vessel, anchor: "access-operations"),
-      notice: "Restricted access information updated.",
+      notice:,
       status: :see_other
   rescue ActiveRecord::RecordInvalid => error
     redirect_to vessel_path(@vessel, anchor: "access-operations"),
@@ -21,6 +27,10 @@ class VesselAccessInformationController < ApplicationController
   rescue VesselAccessInformation::Persistence::InvalidUpdate => error
     redirect_to vessel_path(@vessel, anchor: "access-operations"),
       alert: "Restricted access information was not saved. #{error.message}",
+      status: :see_other
+  rescue VesselAccessInformation::PayloadError
+    redirect_to vessel_path(@vessel, anchor: "access-operations"),
+      alert: "Restricted access information was not saved because its stored format is not supported. No values were changed.",
       status: :see_other
   rescue Authorization::RestrictedVesselPolicy::AccessDenied
     deny_access!
@@ -40,6 +50,10 @@ class VesselAccessInformationController < ApplicationController
     else
       render_restricted_field_state(present: false)
     end
+  rescue VesselAccessInformation::PayloadError
+    render partial: "vessels/restricted_field_unavailable",
+      locals: { field: restricted_field },
+      status: :unprocessable_entity
   rescue Authorization::RestrictedVesselPolicy::AccessDenied
     deny_access!
   end
@@ -54,7 +68,8 @@ class VesselAccessInformationController < ApplicationController
   private
 
   def set_vessel
-    @vessel = scoped_vessels.includes(:account).find_by!(slug: params[:vessel_id])
+    accessible_vessels = scoped_vessels.or(scoped_restricted_vessels)
+    @vessel = accessible_vessels.includes(:account).find_by!(slug: params[:vessel_id])
   end
 
   def restricted_field
@@ -68,6 +83,12 @@ class VesselAccessInformationController < ApplicationController
       [ :operation, :value ]
     end
     params.fetch(:restricted_fields, ActionController::Parameters.new).permit(permitted_fields).to_h
+  end
+
+  def requested_change?(updates)
+    updates.values.any? do |update|
+      %w[replace clear].include?(update.fetch("operation", "keep"))
+    end
   end
 
   def render_restricted_field_state(present:)

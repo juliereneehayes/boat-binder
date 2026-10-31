@@ -43,7 +43,12 @@
       </p>
     </div>
 
-    <% if @can_read_restricted_access %>
+    <% if @restricted_access_format_error %>
+      <p class="mt-5 rounded-md border border-amber-300 bg-white px-4 py-3 text-sm font-semibold text-amber-950">
+        Stored restricted access information uses a format this version cannot safely read. No values were changed.
+        Contact support before replacing or clearing restricted information.
+      </p>
+    <% elsif @can_read_restricted_access %>
       <% VesselAccessInformation::RESTRICTED_FIELD_DEFINITIONS.group_by { |_field, definition| definition.fetch(:group) }.each do |group, fields| %>
         <div class="mt-5">
           <h4 class="font-black text-amber-950"><%= group %></h4>
@@ -95,7 +100,7 @@
                     <%= password_field_tag "restricted_fields[#{field}][value]", nil,
                       id: value_id,
                       maxlength: definition.fetch(:maximum),
-                      autocomplete: "new-password",
+                      autocomplete: "off",
                       autocapitalize: "none",
                       spellcheck: false,
                       class: "mt-2 min-h-12 w-full rounded-md border border-slate-300 px-4 py-3 text-base" %>

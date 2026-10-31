@@ -18,6 +18,7 @@ class ApplicationSystemTestCase < ActionDispatch::SystemTestCase
         interval: 30
       ).now
       click_button "Confirm and enable MFA"
+      assert_selector "ol li code", count: 10, wait: 10
       click_link "I saved my recovery codes"
     end
 

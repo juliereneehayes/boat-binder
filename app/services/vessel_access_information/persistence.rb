@@ -134,6 +134,9 @@ class VesselAccessInformation
         normalized_update = update.to_h.stringify_keys
         operation = normalized_update.fetch("operation", "keep")
         raise InvalidUpdate, "Choose Keep existing, Replace, or Clear." unless OPERATIONS.include?(operation)
+        if operation == "keep" && normalized_update.fetch("value", "").present?
+          raise InvalidUpdate, "Remove the new value or choose Replace."
+        end
 
         result[field] = normalized_update.slice("operation", "value")
       end

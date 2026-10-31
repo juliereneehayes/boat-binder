@@ -190,7 +190,61 @@ class RestrictedVesselAuthorizationTest < ActiveSupport::TestCase
     assert_not restricted_readable?(admin, @managed_vessel)
   end
 
+  test "relation scopes and predicates stay in parity across roles memberships and lifecycle states" do
+    admin = create_user(email: "parity-admin@example.test", role: "admin")
+    captain = create_user(email: "parity-captain@example.test", role: "captain")
+    managed_reader = create_user(email: "parity-managed-reader@example.test", role: "owner")
+    managed_editor = create_user(email: "parity-managed-editor@example.test", role: "owner")
+    inactive_member = create_user(email: "parity-inactive-member@example.test", role: "owner")
+    self_managed_owner = create_user(email: "parity-self-owner@example.test", role: "owner")
+    create_account_membership(user: managed_reader, account: @managed_account, access_level: "read_only")
+    create_account_membership(user: managed_editor, account: @managed_account, access_level: "editor")
+    create_account_membership(
+      user: inactive_member,
+      account: @managed_account,
+      access_level: "editor",
+      active: false
+    )
+    self_managed_membership = create_account_membership(
+      user: self_managed_owner,
+      account: @self_managed_account,
+      access_level: "read_only"
+    )
+
+    [ admin, captain ].each do |internal_user|
+      assert_policy_parity(internal_user, @managed_vessel, readable: true, writable: true)
+      assert_policy_parity(internal_user, @self_managed_vessel, readable: false, writable: false)
+    end
+    assert_policy_parity(managed_reader, @managed_vessel, readable: true, writable: false)
+    assert_policy_parity(managed_editor, @managed_vessel, readable: true, writable: true)
+    assert_policy_parity(inactive_member, @managed_vessel, readable: false, writable: false)
+    assert_policy_parity(self_managed_owner, @self_managed_vessel, readable: true, writable: false)
+    self_managed_membership.update!(access_level: "editor")
+    assert_policy_parity(self_managed_owner, @self_managed_vessel, readable: true, writable: true)
+    assert_policy_parity(self_managed_owner, @managed_vessel, readable: false, writable: false)
+
+    @self_managed_account.subscription.update!(
+      status: "canceled",
+      entitlement_ended_at: 1.day.ago,
+      current_period_ends_at: nil
+    )
+    assert_policy_parity(self_managed_owner, @self_managed_vessel, readable: true, writable: false)
+
+    @managed_relationship.update!(active: false)
+    assert_policy_parity(admin, @managed_vessel, readable: false, writable: false)
+    assert_policy_parity(managed_editor, @managed_vessel, readable: false, writable: false)
+  end
+
   private
+
+  def assert_policy_parity(user, vessel, readable:, writable:)
+    policy = Authorization::RestrictedVesselPolicy.new(user: user.reload)
+
+    assert_equal readable, !!policy.readable?(vessel.reload)
+    assert_equal readable, policy.readable_vessels.exists?(id: vessel.id)
+    assert_equal writable, !!policy.writable?(vessel)
+    assert_equal writable, policy.writable_vessels.exists?(id: vessel.id)
+  end
 
   def restricted_readable?(user, vessel)
     restricted_scope(user).exists?(id: vessel.id)

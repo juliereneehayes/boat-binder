@@ -38,6 +38,13 @@ The Access & Operations section appears only after the ordinary Vessel lookup su
 controls then make a separate central-policy decision; ordinary Admin/Captain Vessel visibility never
 implies restricted access to a Self Managed Vessel.
 
+Restricted update, reveal, and hide endpoints accept the union of ordinary Vessel scope and the
+restricted-policy scope, then authorize again through `RestrictedVesselPolicy` inside the locked service.
+This preserves Managed Service entitlement independence for direct restricted operations. The Vessel
+show page still requires ordinary Vessel visibility; broadening that page for a Managed Service Owner
+who lacks ordinary lifecycle access would also expose operating instructions and remains a separate
+product authorization decision.
+
 ## Field classification
 
 Restricted values are stored only in the encrypted record:
@@ -92,10 +99,22 @@ through the Vessel; the record does not copy an Account identifier. `restricted_
 Active Record Encryption and is never stored in general `Asset` fields or indexed.
 
 Issue #256 stores a schema-identified, deterministic versioned JSON document inside the existing encrypted attribute. It
-does not add plaintext credential columns, a second table, or custom cryptography. Each supported field
+does not add plaintext credential columns, a second table, or custom cryptography. The current schema version is `1`,
+and every field value in that version is a string. Each supported field
 is independently replaceable or clearable. Existing pre-#256 raw encrypted values remain readable and
 are treated as `additional_vessel_access_notes` when first used through the field-aware interface; no
 destructive backfill is required.
+
+Legacy compatibility applies only when the decrypted value is not an envelope carrying the known
+`boat_binder.vessel_access_information` schema identifier. A known-schema envelope with any unsupported
+version fails closed: it is not reinterpreted as legacy notes, revealed, or rewritten. A controlled response
+leaves the encrypted record unchanged so a future application version can still read it. Version `1` also
+rejects malformed field maps and non-string values instead of silently dropping them during a later update.
+
+Raw legacy values retain their 20,000-character limit. Versioned field payloads have a separate 170,000-character
+and byte serialized bound. New values retain their declared per-field limits; the larger aggregate bound also
+allows a maximum legacy note to remain byte-for-byte intact while JSON delimiters, Unicode, and worst-case
+control-character escaping keep the encrypted plaintext predictably bounded.
 
 All application writes use `VesselAccessInformation::Persistence`. The legacy `save!` entrypoint keeps
 the verified #255 encrypted serialization path. The customer interface uses `update_fields!`, which:
@@ -104,6 +123,7 @@ the verified #255 encrypted serialization path. The customer interface uses `upd
 - serializes changes under the existing Vessel and Account row locks;
 - reloads the canonical one-per-Vessel record inside those locks;
 - supports explicit Keep Existing, Replace, and Clear operations;
+- rejects a nonblank submitted value when Keep Existing remains selected, without echoing the value;
 - preserves untouched fields during partial and concurrent updates;
 - validates bounded optional values before persistence; and
 - records create, update, field-clear, or denied-write events without values.
@@ -113,7 +133,15 @@ previous value to the browser. Clearing the final populated field removes the em
 result of that explicit authorized clearance request. Lifecycle transitions, ordinary Vessel edits,
 deletion, and reassignment never clear credentials.
 
+An all-Keep submission reports that no changes were selected and records no successful mutation audit.
+
 This MVP does not implement credential version history or collaborative conflict presentation.
+
+Restricted writes and reveals consistently acquire the Vessel row before the Account row, then repeat
+authorization inside those locks. Reassignment and protected deletion use the Vessel boundary; Managed
+Service transitions lock only the Account and never acquire a Vessel afterward, so there is no inverse
+Account-to-Vessel lock path. Relation scopes and per-Vessel predicates share the same Managed Service,
+Self Managed, membership, lifecycle, role, and active-state decisions and are covered by parity tests.
 
 ## Masking, reveal, and browser handling
 
@@ -126,13 +154,20 @@ canonical Vessel, acquires the Vessel/Account locks, reevaluates central read au
 the requested field, and records the reveal before returning it. The response is a narrow Turbo Frame
 fragment with `Cache-Control: no-store`; it never returns the complete credential set.
 
-Hide replaces the fragment with its masked state. A small Stimulus controller removes revealed text
-before Turbo snapshots a page. Leaving the page removes the live DOM. Secrets are not written to URLs,
-browser storage, analytics, logs, jobs, or audit metadata. Rails CSRF protection remains enabled for
-reveal, hide, and write requests.
+Hide replaces the fragment with its masked state. A small Stimulus controller replaces revealed content
+with the complete masked-and-Reveal state before Turbo snapshots a page, on native `pagehide`, and again
+on `pageshow` (including back/forward cache restoration). It does not leave an empty secret element paired
+with a Hide button. Secrets are not written to URLs, persistent browser storage, analytics, logs, jobs, or
+audit metadata. Rails CSRF protection remains enabled for reveal, hide, and write requests.
 
 Authorization is reevaluated on every reveal and write, so Managed Service revocation and current
 membership/entitlement state apply to the next request.
+
+A reveal-specific rate limit is intentionally deferred. There are only six named fields, each request
+requires an authenticated and currently authorized user, and every successful reveal is audited. A low
+generic request cap would provide little protection from an already authorized session while risking
+legitimate dockside access. Revisit throttling with an authenticated-user key if field count, sharing, or
+abuse evidence changes.
 
 ## Account isolation, reassignment, and deletion
 
@@ -165,7 +200,8 @@ cannot replace the original authorization denial, and operational logging contai
 exception class.
 
 The entire `restricted_fields` parameter subtree and legacy `restricted_details` name are filtered from
-Rails logs. Services do not pass values to background jobs or telemetry. Ordinary Vessel pages, forms,
+Rails logs. The four ordinary operating-instruction parameter names are also filtered to reduce accidental
+disclosure when a user pastes a code into the wrong field. Services do not pass values to background jobs or telemetry. Ordinary Vessel pages, forms,
 model attributes, search, Documents, Service Visits, notifications, and export-review pages do not
 expose restricted values. Any future export needs a separately authorized credential-export policy.
 
@@ -207,8 +243,11 @@ Before accepting restricted data:
 2. Verify Managed Service and Self Managed Admin, Captain, Owner, read-only, inactive, revoked,
    lifecycle, and mixed-Account decisions with synthetic values.
 3. Verify initial HTML and hidden inputs contain no plaintext; reveal returns only one selected value
-   with no-store headers; hide and Turbo navigation/back remove revealed text.
-4. Verify Keep Existing, Replace, Clear, validation failure, partial update, and concurrent update
+   with no-store headers; hide and Turbo navigation restore the masked state. In Safari, reveal a synthetic
+   value, navigate away and use Back/Forward, and confirm bfcache restoration never displays the value or
+   an empty secret paired with a Hide button.
+4. Verify Keep Existing rejects a nonblank typed value, an all-Keep submission reports no changes, and
+   Replace, Clear, validation failure, partial update, and concurrent update
    behavior without exposing old values.
 5. Verify ordinary instructions follow normal Vessel authorization, render untrusted input as escaped
    text, and remain absent from search and unrelated previews.
@@ -217,7 +256,9 @@ Before accepting restricted data:
 7. Verify audit and Rails logs contain field names and safe identifiers only.
 8. At a mobile viewport, verify masked state, deliberate one-field reveal, explicit hide, blank
    replacement inputs, touch-sized controls, multiline text, and usable wrapping.
-9. Verify backup/restore and key-custody procedures retain required encryption material.
+9. Verify maximum-length synthetic fields containing newlines, quotation marks, backslashes, control
+   characters, and Unicode persist and round-trip without exceeding the documented structured bound.
+10. Verify backup/restore and key-custody procedures retain required encryption material.
 
 ## MVP limitations and collection gate
 

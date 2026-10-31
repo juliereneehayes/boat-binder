@@ -1,7 +1,12 @@
 class VesselAccessInformation < ApplicationRecord
   MAX_RESTRICTED_DETAILS_LENGTH = 20_000
+  MAX_SERIALIZED_PAYLOAD_LENGTH = 170_000
   PAYLOAD_SCHEMA = "boat_binder.vessel_access_information"
   PAYLOAD_VERSION = 1
+  PayloadError = Class.new(StandardError)
+  UnsupportedPayloadVersion = Class.new(PayloadError)
+  InvalidPayload = Class.new(PayloadError)
+  PayloadTooLarge = Class.new(PayloadError)
   RESTRICTED_FIELD_DEFINITIONS = {
     "marina_gate_code" => {
       label: "Marina gate / access code",
@@ -57,7 +62,8 @@ class VesselAccessInformation < ApplicationRecord
   delegate :account, :account_id, to: :vessel
 
   validates :asset_id, uniqueness: true
-  validates :restricted_details, presence: true, length: { maximum: MAX_RESTRICTED_DETAILS_LENGTH }
+  validates :restricted_details, presence: true
+  validate :restricted_details_size
   validate :vessel_asset_type
 
   def restricted_fields
@@ -80,32 +86,47 @@ class VesselAccessInformation < ApplicationRecord
       field = field.to_s
       raise ArgumentError, "invalid restricted field name" unless PAYLOAD_FIELD_NAME_FORMAT.match?(field)
 
-      normalized_value = value.to_s.strip
+      normalized_value = value.to_s
       next if normalized_value.blank?
 
-      maximum = RESTRICTED_FIELD_DEFINITIONS.dig(field, :maximum) || MAX_RESTRICTED_DETAILS_LENGTH
+      maximum = if field == "additional_vessel_access_notes"
+        MAX_RESTRICTED_DETAILS_LENGTH
+      else
+        RESTRICTED_FIELD_DEFINITIONS.dig(field, :maximum) || MAX_RESTRICTED_DETAILS_LENGTH
+      end
       raise ArgumentError, "#{field} is too long" if normalized_value.length > maximum
 
       result[field] = normalized_value
     end
 
-    JSON.generate(
+    payload = JSON.generate(
       "schema" => PAYLOAD_SCHEMA,
       "version" => PAYLOAD_VERSION,
       "fields" => normalized.sort.to_h
     )
+    if payload.length > MAX_SERIALIZED_PAYLOAD_LENGTH || payload.bytesize > MAX_SERIALIZED_PAYLOAD_LENGTH
+      raise PayloadTooLarge, "restricted access payload is too large"
+    end
+
+    payload
   end
 
   def self.deserialize_fields(value)
     raw_value = value.to_s
     parsed = JSON.parse(raw_value)
-    fields = parsed["fields"] if parsed.is_a?(Hash) &&
-      parsed["schema"] == PAYLOAD_SCHEMA &&
-      parsed["version"] == PAYLOAD_VERSION
-    return legacy_fields(raw_value) unless fields.is_a?(Hash)
+    return legacy_fields(raw_value) unless parsed.is_a?(Hash) && parsed["schema"] == PAYLOAD_SCHEMA
+
+    unless parsed["version"] == PAYLOAD_VERSION
+      raise UnsupportedPayloadVersion, "unsupported restricted access payload version"
+    end
+
+    fields = parsed["fields"]
+    raise InvalidPayload, "invalid restricted access payload" unless fields.is_a?(Hash)
 
     fields.each_with_object({}) do |(field, field_value), result|
-      next unless PAYLOAD_FIELD_NAME_FORMAT.match?(field) && field_value.is_a?(String)
+      unless field.is_a?(String) && PAYLOAD_FIELD_NAME_FORMAT.match?(field) && field_value.is_a?(String)
+        raise InvalidPayload, "invalid restricted access payload"
+      end
       next if field_value.blank?
 
       result[field] = field_value
@@ -122,6 +143,25 @@ class VesselAccessInformation < ApplicationRecord
   private_class_method :legacy_fields
 
   private
+
+  def restricted_details_size
+    value = restricted_details.to_s
+    if supported_payload?(value)
+      return if value.length <= MAX_SERIALIZED_PAYLOAD_LENGTH && value.bytesize <= MAX_SERIALIZED_PAYLOAD_LENGTH
+
+      errors.add(:restricted_details, "serialized payload is too large")
+    elsif value.length > MAX_RESTRICTED_DETAILS_LENGTH
+      errors.add(:restricted_details, "is too long (maximum is #{MAX_RESTRICTED_DETAILS_LENGTH} characters)")
+    end
+  end
+
+  def supported_payload?(value)
+    parsed = JSON.parse(value)
+    parsed.is_a?(Hash) && parsed["schema"] == PAYLOAD_SCHEMA &&
+      parsed["version"] == PAYLOAD_VERSION && parsed["fields"].is_a?(Hash)
+  rescue JSON::ParserError
+    false
+  end
 
   def vessel_asset_type
     errors.add(:vessel, "must be a Vessel") if vessel.present? && vessel.asset_type != "vessel"

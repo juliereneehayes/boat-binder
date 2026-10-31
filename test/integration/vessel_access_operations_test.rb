@@ -97,7 +97,7 @@ class VesselAccessOperationsTest < ActionDispatch::IntegrationTest
       restricted_fields: {
         marina_gate_code: { operation: "replace", value: @gate_code },
         lockbox_code: { operation: "replace", value: @lockbox_code },
-        alarm_security_code: { operation: "keep", value: "Synthetic ignored alarm" }
+        alarm_security_code: { operation: "keep", value: "" }
       }
     }
 
@@ -109,7 +109,7 @@ class VesselAccessOperationsTest < ActionDispatch::IntegrationTest
 
     patch vessel_access_information_path(@managed_vessel), params: {
       restricted_fields: {
-        marina_gate_code: { operation: "keep", value: "Synthetic ignored gate" },
+        marina_gate_code: { operation: "keep", value: "" },
         lockbox_code: { operation: "replace", value: "Synthetic replacement lockbox 6670" },
         alarm_security_code: { operation: "replace", value: "" }
       }
@@ -131,6 +131,94 @@ class VesselAccessOperationsTest < ActionDispatch::IntegrationTest
     record.reload
     assert_nil record.restricted_field("marina_gate_code")
     assert_equal "Synthetic replacement lockbox 6670", record.restricted_field("lockbox_code")
+  end
+
+  test "keep rejects a typed value and all keep accurately reports no changes" do
+    VesselAccessInformation::Persistence.update_fields!(
+      vessel: @managed_vessel,
+      updates: { marina_gate_code: { operation: "replace", value: @gate_code } },
+      actor: @admin
+    )
+    sign_in_as @admin
+    audit_count = SecurityAuditEvent.count
+    submitted_value = "Synthetic unselected replacement 6921"
+
+    patch vessel_access_information_path(@managed_vessel), params: {
+      restricted_fields: {
+        marina_gate_code: { operation: "keep", value: submitted_value }
+      }
+    }
+    follow_redirect!
+
+    assert_response :success
+    assert_includes response.body, "Remove the new value or choose Replace."
+    assert_not_includes response.body, submitted_value
+    assert_equal @gate_code,
+      @managed_vessel.reload.vessel_access_information.restricted_field("marina_gate_code")
+    assert_equal audit_count, SecurityAuditEvent.count
+
+    patch vessel_access_information_path(@managed_vessel), params: {
+      restricted_fields: {
+        marina_gate_code: { operation: "keep", value: "" },
+        lockbox_code: { operation: "keep", value: "" }
+      }
+    }
+    follow_redirect!
+
+    assert_includes response.body, "No restricted access changes were selected."
+    assert_not_includes response.body, "Restricted access information updated."
+    assert_equal audit_count, SecurityAuditEvent.count
+  end
+
+  test "unsupported payload versions fail safely in pages updates and reveals" do
+    future_value = "Synthetic future payload gate 4730"
+    future_payload = JSON.generate(
+      "schema" => VesselAccessInformation::PAYLOAD_SCHEMA,
+      "version" => VesselAccessInformation::PAYLOAD_VERSION + 1,
+      "fields" => { "marina_gate_code" => future_value }
+    )
+    record = VesselAccessInformation::Persistence.save!(
+      vessel: @managed_vessel,
+      restricted_details: future_payload,
+      actor: @admin
+    )
+    stored_before = VesselAccessInformation.connection.select_value(
+      VesselAccessInformation.sanitize_sql_array(
+        [ "SELECT restricted_details FROM vessel_access_information WHERE id = ?", record.id ]
+      )
+    )
+    sign_in_as @admin
+    audit_count = SecurityAuditEvent.count
+
+    get vessel_path(@managed_vessel)
+    assert_response :success
+    assert_includes response.body, "uses a format this version cannot safely read"
+    assert_not_includes response.body, future_value
+    assert_select "form[action=?]", vessel_access_information_path(@managed_vessel), count: 0
+
+    patch vessel_access_information_path(@managed_vessel), params: {
+      restricted_fields: {
+        lockbox_code: { operation: "replace", value: "Synthetic unsafe overwrite 3387" }
+      }
+    }
+    follow_redirect!
+    assert_includes response.body, "stored format is not supported"
+    assert_not_includes response.body, future_value
+    assert_not_includes response.body, "3387"
+
+    post reveal_vessel_access_information_path(@managed_vessel), params: { field: "marina_gate_code" }
+    assert_response :unprocessable_entity
+    assert_includes response.body, "No value was revealed or changed."
+    assert_not_includes response.body, future_value
+
+    stored_after = VesselAccessInformation.connection.select_value(
+      VesselAccessInformation.sanitize_sql_array(
+        [ "SELECT restricted_details FROM vessel_access_information WHERE id = ?", record.id ]
+      )
+    )
+    assert_equal stored_before, stored_after
+    assert_equal future_payload, record.reload.restricted_details
+    assert_equal audit_count, SecurityAuditEvent.count
   end
 
   test "self managed owner can maintain restricted fields while HYC staff cannot read or write them" do
@@ -204,6 +292,30 @@ class VesselAccessOperationsTest < ActionDispatch::IntegrationTest
     }
     assert_access_denied_redirect
     assert_nil @managed_vessel.reload.engine_startup_instructions
+  end
+
+  test "managed service owner restricted endpoints remain independent of self managed billing" do
+    owner = create_user(email: "access-operations-managed-editor@example.test", role: "owner")
+    create_account_membership(user: owner, account: @managed_account, access_level: "editor")
+    VesselAccessInformation::Persistence.update_fields!(
+      vessel: @managed_vessel,
+      updates: { marina_gate_code: { operation: "replace", value: @gate_code } },
+      actor: @admin
+    )
+    sign_in_as owner
+
+    post reveal_vessel_access_information_path(@managed_vessel), params: { field: "marina_gate_code" }
+    assert_response :success
+    assert_includes response.body, @gate_code
+
+    patch vessel_access_information_path(@managed_vessel), params: {
+      restricted_fields: {
+        marina_gate_code: { operation: "replace", value: "Synthetic managed owner replacement 9042" }
+      }
+    }
+    assert_redirected_to vessel_path(@managed_vessel, anchor: "access-operations")
+    assert_equal "Synthetic managed owner replacement 9042",
+      @managed_vessel.reload.vessel_access_information.restricted_field("marina_gate_code")
   end
 
   test "routine instructions follow ordinary Vessel access and render user text safely" do

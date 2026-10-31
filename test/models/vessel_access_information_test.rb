@@ -122,4 +122,62 @@ class VesselAccessInformationTest < ActiveSupport::TestCase
       "additional_vessel_access_notes" => legacy_json
     }, VesselAccessInformation.deserialize_fields(legacy_json))
   end
+
+  test "known schema with an unsupported version fails closed instead of becoming legacy notes" do
+    future_payload = JSON.generate(
+      "schema" => VesselAccessInformation::PAYLOAD_SCHEMA,
+      "version" => VesselAccessInformation::PAYLOAD_VERSION + 1,
+      "fields" => { "marina_gate_code" => "Synthetic future gate 1049" }
+    )
+
+    error = assert_raises(VesselAccessInformation::UnsupportedPayloadVersion) do
+      VesselAccessInformation.deserialize_fields(future_payload)
+    end
+
+    assert_equal "unsupported restricted access payload version", error.message
+    assert_not_includes error.message, "1049"
+  end
+
+  test "current schema accepts only string-valued restricted fields" do
+    invalid_payload = JSON.generate(
+      "schema" => VesselAccessInformation::PAYLOAD_SCHEMA,
+      "version" => VesselAccessInformation::PAYLOAD_VERSION,
+      "fields" => { "marina_gate_code" => 1049 }
+    )
+
+    assert_raises(VesselAccessInformation::InvalidPayload) do
+      VesselAccessInformation.deserialize_fields(invalid_payload)
+    end
+  end
+
+  test "maximum field lengths allow bounded JSON escaping and Unicode overhead" do
+    patterns = [ "\nA", '"B', "\\C", "\u0001D", "⚓E", "Z" ]
+    fields = VesselAccessInformation::RESTRICTED_FIELD_DEFINITIONS.each_with_index.to_h do |(field, definition), index|
+      maximum = definition.fetch(:maximum)
+      pattern = patterns.fetch(index)
+      value = (pattern * ((maximum / pattern.length) + 1))[0, maximum]
+      [ field, value ]
+    end
+
+    payload = VesselAccessInformation.serialize_fields(fields)
+    record = VesselAccessInformation.new(vessel: @vessel, restricted_details: payload)
+
+    assert_operator payload.length, :>, VesselAccessInformation::MAX_RESTRICTED_DETAILS_LENGTH
+    assert_operator payload.length, :<=, VesselAccessInformation::MAX_SERIALIZED_PAYLOAD_LENGTH
+    assert_operator payload.bytesize, :<=, VesselAccessInformation::MAX_SERIALIZED_PAYLOAD_LENGTH
+    assert record.valid?
+    assert_equal fields, VesselAccessInformation.deserialize_fields(payload)
+  end
+
+  test "worst case control-character escaping remains inside the structured payload bound" do
+    fields = VesselAccessInformation::RESTRICTED_FIELD_DEFINITIONS.to_h do |field, definition|
+      [ field, "\u0001" * definition.fetch(:maximum) ]
+    end
+
+    payload = VesselAccessInformation.serialize_fields(fields)
+
+    assert_operator payload.length, :>, 100_000
+    assert_operator payload.length, :<=, VesselAccessInformation::MAX_SERIALIZED_PAYLOAD_LENGTH
+    assert_operator payload.bytesize, :<=, VesselAccessInformation::MAX_SERIALIZED_PAYLOAD_LENGTH
+  end
 end

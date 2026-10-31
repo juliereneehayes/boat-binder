@@ -1,0 +1,7 @@
+<%= turbo_frame_tag "restricted_access_#{field}",
+  class: "block rounded-md border border-amber-300 bg-white p-4" do %>
+  <p class="text-sm font-semibold text-slate-600"><%= VesselAccessInformation::RESTRICTED_FIELD_DEFINITIONS.fetch(field).fetch(:label) %></p>
+  <p class="mt-2 text-sm font-semibold text-amber-950">
+    This saved value uses a format this version cannot safely read. No value was revealed or changed.
+  </p>
+<% end %>

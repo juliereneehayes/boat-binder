@@ -42,6 +42,33 @@ class VesselAccessOperationsTest < ApplicationSystemTestCase
       click_button "Reveal"
       assert_text replacement_code
       assert_no_text original_code
+
+      page.execute_script(<<~JAVASCRIPT)
+        window.dispatchEvent(new PageTransitionEvent("pagehide", { persisted: true }))
+      JAVASCRIPT
+      assert_no_text replacement_code
+      assert_text "••••••••"
+      assert_button "Reveal"
+      assert_no_button "Hide"
+
+      page.execute_script(<<~JAVASCRIPT)
+        window.dispatchEvent(new PageTransitionEvent("pageshow", { persisted: true }))
+      JAVASCRIPT
+      assert_no_text replacement_code
+      assert_text "••••••••"
+
+      click_button "Reveal"
+      assert_text replacement_code
+      page.execute_script(<<~JAVASCRIPT)
+        document.dispatchEvent(new CustomEvent("turbo:before-cache"))
+      JAVASCRIPT
+      assert_no_text replacement_code
+      assert_text "••••••••"
     end
+
+    stored_browser_values = page.evaluate_script(<<~JAVASCRIPT)
+      [...Object.values(localStorage), ...Object.values(sessionStorage)]
+    JAVASCRIPT
+    assert stored_browser_values.none? { |stored_value| stored_value.include?(replacement_code) }
   end
 end
