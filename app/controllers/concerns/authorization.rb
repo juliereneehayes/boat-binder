@@ -168,6 +168,9 @@ module Authorization
   end
 
   def restricted_vessel_policy
-    @restricted_vessel_policy ||= Authorization::RestrictedVesselPolicy.new(user: current_user)
+    @restricted_vessel_policy ||= Authorization::RestrictedVesselPolicy.new(
+      user: current_user,
+      self_managed_owner_policy:
+    )
   end
 end

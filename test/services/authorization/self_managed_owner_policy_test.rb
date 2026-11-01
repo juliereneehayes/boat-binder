@@ -68,6 +68,20 @@ class Authorization::SelfManagedOwnerPolicyTest < ActiveSupport::TestCase
     assert_empty policy.writable_account_ids
   end
 
+  test "one request-scoped policy memoizes authoritative read and write decisions" do
+    qualify_self_managed_subscription(@account, now: @now)
+    request_policy = policy
+
+    assert_equal [ @account.id ], request_policy.readable_account_ids
+    assert_equal [ @account.id ], request_policy.writable_account_ids
+
+    @membership.update!(access_level: "read_only")
+
+    assert_equal [ @account.id ], request_policy.readable_account_ids
+    assert_equal [ @account.id ], request_policy.writable_account_ids
+    assert_empty policy.writable_account_ids
+  end
+
   private
 
   def policy

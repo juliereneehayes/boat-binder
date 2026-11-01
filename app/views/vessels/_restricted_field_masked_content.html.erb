@@ -1,0 +1,13 @@
+<p class="text-sm font-semibold text-slate-600"><%= VesselAccessInformation::RESTRICTED_FIELD_DEFINITIONS.fetch(field).fetch(:label) %></p>
+<% if present %>
+  <div class="mt-2 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <p class="font-black tracking-widest text-slate-900" aria-label="Saved value is masked">••••••••</p>
+    <%= button_to "Reveal",
+      reveal_vessel_access_information_path(vessel),
+      params: { field: },
+      class: "min-h-10 rounded-md border border-amber-300 px-4 py-2 text-sm font-black text-amber-900",
+      data: { turbo_submits_with: "Revealing…" } %>
+  </div>
+<% else %>
+  <p class="mt-2 text-sm font-semibold text-slate-500">Not set</p>
+<% end %>

@@ -6,11 +6,11 @@ module Authorization
     end
 
     def readable_account_ids
-      eligible_account_ids(write: false)
+      @readable_account_ids ||= eligible_account_ids(write: false)
     end
 
     def writable_account_ids
-      eligible_account_ids(write: true)
+      @writable_account_ids ||= eligible_account_ids(write: true)
     end
 
     def candidate_accounts

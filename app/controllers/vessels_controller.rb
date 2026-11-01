@@ -37,6 +37,20 @@ class VesselsController < ApplicationController
     @last_visit = @vessel.last_visit
     @next_reminder = @vessel.next_reminder
     @binder_note = @vessel.binder_notes.new(account: @vessel.account)
+    @can_write_restricted_access = restricted_vessel_policy.writable?(@vessel)
+    @can_read_restricted_access = @can_write_restricted_access || restricted_vessel_policy.readable?(@vessel)
+    @restricted_access_format_error = false
+    if @can_read_restricted_access
+      access_information = VesselAccessInformation.find_by(asset_id: @vessel.id)
+      @restricted_field_names = access_information&.restricted_field_names || []
+    else
+      @restricted_field_names = []
+    end
+  rescue VesselAccessInformation::PayloadError => error
+    report_restricted_payload_error(error)
+    @restricted_access_format_error = true
+    @can_write_restricted_access = false
+    @restricted_field_names = []
   end
 
   def new
@@ -117,6 +131,13 @@ class VesselsController < ApplicationController
 
   private
 
+  def report_restricted_payload_error(error)
+    Rails.logger.error(
+      "Vessel access information payload unavailable " \
+        "error=#{error.class.name} action=show vessel_id=#{@vessel.id} request_id=#{request.request_id}"
+    )
+  end
+
   def attach_primary_photo!(vessel, upload)
     vessel.primary_photo.attach(upload)
     raise PrimaryPhotoAttachmentError, "primary photo was not attached" unless vessel.primary_photo.attached?
@@ -144,6 +165,10 @@ class VesselsController < ApplicationController
       :marina,
       :slip,
       :notes,
+      :engine_startup_instructions,
+      :engine_shutdown_instructions,
+      :battery_shore_power_instructions,
+      :operating_notes,
       :active,
       :primary_photo
     )

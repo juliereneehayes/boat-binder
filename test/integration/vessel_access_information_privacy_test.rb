@@ -49,4 +49,40 @@ class VesselAccessInformationPrivacyTest < ActionDispatch::IntegrationTest
     assert_equal "[FILTERED]", filtered.dig(:vessel_access_information, :restricted_details)
     assert_not_includes filtered.to_json, @synthetic_secret
   end
+
+
+  test "field-aware restricted parameters are filtered as one credential-bearing payload" do
+    filter = ActiveSupport::ParameterFilter.new(Rails.application.config.filter_parameters)
+    filtered = filter.filter(
+      restricted_fields: {
+        marina_gate_code: { operation: "replace", value: "Synthetic filtered gate 4208" },
+        physical_key_location: { operation: "replace", value: "Synthetic filtered key location" }
+      }
+    )
+
+    assert_equal "[FILTERED]", filtered.fetch(:restricted_fields)
+    assert_not_includes filtered.to_json, "Synthetic filtered gate 4208"
+    assert_not_includes filtered.to_json, "Synthetic filtered key location"
+  end
+
+  test "ordinary operating instruction parameters are filtered to reduce accidental code disclosure" do
+    accidental_code = "Synthetic code pasted into operating notes 7714"
+    filter = ActiveSupport::ParameterFilter.new(Rails.application.config.filter_parameters)
+    filtered = filter.filter(
+      asset: {
+        engine_startup_instructions: accidental_code,
+        engine_shutdown_instructions: accidental_code,
+        battery_shore_power_instructions: accidental_code,
+        operating_notes: accidental_code,
+        name: "Visible vessel name"
+      }
+    )
+
+    assert_equal "[FILTERED]", filtered.dig(:asset, :engine_startup_instructions)
+    assert_equal "[FILTERED]", filtered.dig(:asset, :engine_shutdown_instructions)
+    assert_equal "[FILTERED]", filtered.dig(:asset, :battery_shore_power_instructions)
+    assert_equal "[FILTERED]", filtered.dig(:asset, :operating_notes)
+    assert_equal "Visible vessel name", filtered.dig(:asset, :name)
+    assert_not_includes filtered.to_json, accidental_code
+  end
 end

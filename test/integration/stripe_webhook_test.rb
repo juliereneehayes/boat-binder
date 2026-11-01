@@ -86,6 +86,9 @@ class StripeWebhookTest < ActionDispatch::IntegrationTest
     assert_equal [ "create" ], csrf_skip_actions(Webhooks::StripeController)
     assert_not csrf_skipped_for_action?(SessionsController, :create)
     assert_not csrf_skipped_for_action?(VesselsController, :create)
+    assert_not csrf_skipped_for_action?(VesselAccessInformationController, :update)
+    assert_not csrf_skipped_for_action?(VesselAccessInformationController, :reveal)
+    assert_not csrf_skipped_for_action?(VesselAccessInformationController, :hide)
     assert_not csrf_skipped_for_action?(Billing::CheckoutsController, :create)
   end
 
