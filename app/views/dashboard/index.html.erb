@@ -71,7 +71,7 @@
         </div>
         <div class="flex flex-wrap items-center justify-end gap-2">
           <% if vessel_primary_photo_card_status_check_needed? %>
-            <%= attachment_status_check_link(root_path, accessible_name: "Check Vessel photo status") %>
+            <%= attachment_status_check_link(root_path(photo_status_check: "1"), accessible_name: "Check Vessel photo status") %>
           <% end %>
           <%= link_to "All vessels", vessels_path, class: subtle_link_class %>
         </div>

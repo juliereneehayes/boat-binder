@@ -135,8 +135,17 @@ module ApplicationHelper
     if vessel.primary_photo.attached? && attachment_available?(vessel.primary_photo)
       card_state = vessel_primary_photo_card_state(vessel) if presentation == :card
       if presentation == :card && card_state != :ready
-        message = if card_state == :permanent_failure
-          "This photo cannot be optimized. Replace it to retry."
+        message = case card_state
+        when :permanent_failure
+          if can_manage_account?(vessel.account)
+            "This photo cannot be optimized. Replace it to retry."
+          else
+            "This photo cannot be optimized. Contact someone with edit access."
+          end
+        when :transient_failure
+          "Photo optimization paused after repeated attempts. Check status to retry."
+        when :interrupted
+          "Photo optimization was interrupted. Check status to restart."
         else
           "Optimized photo is not ready. Check status again shortly."
         end
@@ -231,7 +240,7 @@ module ApplicationHelper
   def attachment_status_check_link(path = request.fullpath, accessible_name: nil)
     options = {
       class: "inline-flex min-h-10 items-center rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50",
-      data: { turbo_action: "replace" }
+      data: { turbo_action: "replace", turbo_prefetch: false }
     }
     options[:aria] = { label: accessible_name } if accessible_name
 
@@ -239,7 +248,9 @@ module ApplicationHelper
   end
 
   def vessel_primary_photo_card_status_check_needed?
-    @vessel_primary_photo_card_states&.value?(:pending) || false
+    @vessel_primary_photo_card_states&.values&.intersect?(
+      [ :pending, :transient_failure, :interrupted ]
+    ) || false
   end
 
   def attachment_group_scan_state(attachments)

@@ -231,6 +231,53 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
     assert_select "p", text: "This photo cannot be optimized. Replace it to retry.", count: 1
   end
 
+  test "Check status replaces interrupted work without duplicating an active job" do
+    attachment = @vessel.primary_photo.attachment
+    assert_equal :pending, Storage::VesselPrimaryPhotoVariantJob.enqueue_for(attachment)
+    original_job_id = variant_processing_job_id(attachment.blob.reload)
+    clear_enqueued_jobs
+    sign_in_as(@owner)
+
+    with_variant_queue_state(:missing) do
+      get root_path
+
+      assert_response :success
+      assert_select "p", text: "Photo optimization was interrupted. Check status to restart.", count: 1
+      assert_select "a[href=?][data-turbo-prefetch='false']",
+        root_path(photo_status_check: "1"),
+        text: "Check status",
+        count: 1
+      assert_no_enqueued_jobs only: Storage::VesselPrimaryPhotoVariantJob
+
+      assert_enqueued_jobs 1, only: Storage::VesselPrimaryPhotoVariantJob do
+        get root_path(photo_status_check: "1")
+      end
+    end
+
+    assert_response :success
+    assert_not_equal original_job_id, variant_processing_job_id(attachment.blob.reload)
+    assert_select "p", text: "Optimized photo is not ready. Check status again shortly.", count: 1
+  end
+
+  test "read only users receive actionable permanent failure guidance without edit instructions" do
+    attachment = @vessel.primary_photo.attachment
+    assert_equal :pending, Storage::VesselPrimaryPhotoVariantJob.enqueue_for(attachment)
+    active_job_id = variant_processing_job_id(attachment.blob.reload)
+    Storage::VesselPrimaryPhotoVariantJob.mark_permanent_failure(
+      attachment.blob,
+      job_id: active_job_id
+    )
+    clear_enqueued_jobs
+    @membership.update!(access_level: "read_only")
+    sign_in_as(@owner)
+
+    get root_path
+
+    assert_response :success
+    assert_select "p", text: "This photo cannot be optimized. Contact someone with edit access.", count: 1
+    assert_select "p", text: "This photo cannot be optimized. Replace it to retry.", count: 0
+  end
+
   test "authorized Document range requests return only the requested bytes and partial length" do
     blob = @document.file.blob
     expected_body = blob.download.byteslice(0, 10)
@@ -685,6 +732,23 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
 
     ActiveSupport::Notifications.subscribed(callback, "sql.active_record") { yield }
     count
+  end
+
+  def variant_processing_job_id(blob)
+    blob.metadata
+      .fetch(Storage::VesselPrimaryPhotoVariantJob::PROCESSING_STATE_METADATA_KEY)
+      .fetch("job_id")
+  end
+
+  def with_variant_queue_state(state)
+    receiver = Storage::VesselPrimaryPhotoVariantJob.singleton_class
+    original = receiver.instance_method(:queue_job_states_for)
+    receiver.define_method(:queue_job_states_for) do |attachments|
+      attachments.to_h { |attachment| [ attachment.id, state ] }
+    end
+    yield
+  ensure
+    receiver.define_method(:queue_job_states_for, original)
   end
 
   def assert_private_no_store

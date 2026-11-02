@@ -85,6 +85,83 @@ module Storage
       state = @blob.reload.metadata.fetch(VesselPrimaryPhotoVariantJob::PROCESSING_STATE_METADATA_KEY)
       assert_equal VesselPrimaryPhotoVariantJob::PROCESSING_STATE_VERSION, state.fetch("version")
       assert_equal VesselPrimaryPhotoVariantJob::PENDING_STATE, state.fetch("state")
+      assert_predicate state.fetch("job_id"), :present?
+    end
+
+    test "a missing queue job is replaced once without disturbing active work" do
+      trust_attachment(@vessel.primary_photo)
+      assert_equal :pending, VesselPrimaryPhotoVariantJob.enqueue_for(@attachment)
+      original_job_id = processing_job_id(@blob.reload)
+      clear_enqueued_jobs
+
+      assert_enqueued_jobs 1, only: VesselPrimaryPhotoVariantJob do
+        assert_equal :pending,
+          VesselPrimaryPhotoVariantJob.recover_for(@attachment.reload, queue_state: :missing)
+      end
+
+      replacement_job_id = processing_job_id(@blob.reload)
+      assert_not_equal original_job_id, replacement_job_id
+
+      clear_enqueued_jobs
+      assert_no_enqueued_jobs only: VesselPrimaryPhotoVariantJob do
+        assert_equal :pending,
+          VesselPrimaryPhotoVariantJob.recover_for(@attachment.reload, queue_state: :active)
+      end
+      assert_equal replacement_job_id, processing_job_id(@blob.reload)
+    end
+
+    test "an exhausted transient job is retried in place without creating a new job" do
+      trust_attachment(@vessel.primary_photo)
+      assert_equal :pending, VesselPrimaryPhotoVariantJob.enqueue_for(@attachment)
+      active_job_id = processing_job_id(@blob.reload)
+      clear_enqueued_jobs
+      retried_job_ids = []
+
+      with_replaced_singleton_method(
+        VesselPrimaryPhotoVariantJob,
+        :retry_solid_queue_job,
+        ->(job_id) { retried_job_ids << job_id; true }
+      ) do
+        assert_no_enqueued_jobs only: VesselPrimaryPhotoVariantJob do
+          assert_equal :pending,
+            VesselPrimaryPhotoVariantJob.recover_for(@attachment.reload, queue_state: :failed)
+        end
+      end
+
+      assert_equal [ active_job_id ], retried_job_ids
+      assert_equal active_job_id, processing_job_id(@blob.reload)
+    end
+
+    test "queue state lookup distinguishes active and exhausted Solid Queue work" do
+      trust_attachment(@vessel.primary_photo)
+      assert_equal :pending, VesselPrimaryPhotoVariantJob.enqueue_for(@attachment)
+      active_job_id = processing_job_id(@blob.reload)
+      clear_enqueued_jobs
+      solid_job = SolidQueue::Job.create!(
+        active_job_id:,
+        class_name: VesselPrimaryPhotoVariantJob.name,
+        queue_name: "background",
+        arguments: {},
+        scheduled_at: Time.current
+      )
+
+      with_replaced_singleton_method(VesselPrimaryPhotoVariantJob, :solid_queue_adapter?, -> { true }) do
+        states = VesselPrimaryPhotoVariantJob.queue_job_states_for([ @attachment.reload ])
+        assert_equal :active, states.fetch(@attachment.id)
+
+        solid_job.ready_execution.destroy!
+        SolidQueue::FailedExecution.create!(
+          job: solid_job,
+          error: {
+            "exception_class" => VesselPrimaryPhotoVariantJob::TransientVariantProcessingError.name,
+            "message" => "sanitized test failure",
+            "backtrace" => []
+          }
+        )
+
+        states = VesselPrimaryPhotoVariantJob.queue_job_states_for([ @attachment.reload ])
+        assert_equal :failed, states.fetch(@attachment.id)
+      end
     end
 
     test "non Vessel primary photos do not create variant jobs" do
@@ -126,7 +203,7 @@ module Storage
 
       logs = capture_logs do
         assert_no_enqueued_jobs only: VesselPrimaryPhotoVariantJob do
-          VesselPrimaryPhotoVariantJob.perform_now(@attachment.id, @blob.id)
+          claimed_job(@attachment, @blob).perform_now
         end
       end
 
@@ -153,17 +230,31 @@ module Storage
           job: VesselPrimaryPhotoVariantJob,
           args: [ @attachment.id, @blob.id ]
         ) do
-          VesselPrimaryPhotoVariantJob.perform_now(@attachment.id, @blob.id)
+          claimed_job(@attachment, @blob).perform_now
         end
       end
 
       assert_equal :pending, VesselPrimaryPhotoVariantJob.status_for(@attachment)
       clear_enqueued_jobs
 
-      VesselPrimaryPhotoVariantJob.perform_now(@attachment.id, @blob.id)
+      claimed_job(@attachment, @blob).perform_now
 
       assert_equal :ready, VesselPrimaryPhotoVariantJob.status_for(@attachment.reload)
       assert_not @blob.reload.metadata.key?(VesselPrimaryPhotoVariantJob::PROCESSING_STATE_METADATA_KEY)
+    end
+
+    test "broad image processor errors stay recoverable when the source is valid" do
+      job = VesselPrimaryPhotoVariantJob.new(@attachment.id, @blob.id)
+
+      [ Vips::Error.new("synthetic vips environment error"), ImageProcessing::Error.new("synthetic pipeline error") ].each do |error|
+        assert_not job.send(
+          :permanent_processing_error?,
+          error,
+          blob: @blob,
+          attachment_id: @attachment.id,
+          blob_id: @blob.id
+        )
+      end
     end
 
     private
@@ -184,6 +275,16 @@ module Storage
       Rails.logger = original_logger
     end
 
+    def claimed_job(attachment, blob)
+      VesselPrimaryPhotoVariantJob.new(attachment.id, blob.id).tap do |job|
+        job.job_id = processing_job_id(blob.reload)
+      end
+    end
+
+    def processing_job_id(blob)
+      blob.metadata.fetch(VesselPrimaryPhotoVariantJob::PROCESSING_STATE_METADATA_KEY).fetch("job_id")
+    end
+
     def with_replaced_instance_method(receiver, method_name, replacement)
       original = receiver.instance_method(method_name)
       receiver.define_method(method_name, replacement)
@@ -192,6 +293,16 @@ module Storage
     ensure
       receiver.define_method(method_name, original)
       receiver.send(:private, method_name)
+    end
+
+    def with_replaced_singleton_method(receiver, method_name, replacement)
+      singleton_class = receiver.singleton_class
+      original = singleton_class.instance_method(method_name)
+      singleton_class.define_method(method_name, replacement)
+      yield
+    ensure
+      singleton_class.define_method(method_name, original)
+      singleton_class.send(:private, method_name)
     end
   end
 end
