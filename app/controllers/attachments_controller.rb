@@ -14,7 +14,14 @@ class AttachmentsController < ApplicationController
     vessel = scoped_vessels.with_attached_primary_photo.find_by!(slug: params[:vessel_id])
     deny_inactive_account!(vessel.account)
 
-    deliver(vessel.primary_photo)
+    case params[:presentation]
+    when nil, ""
+      deliver(vessel.primary_photo)
+    when "card"
+      deliver(vessel.primary_photo, variant: :card)
+    else
+      raise ActiveRecord::RecordNotFound
+    end
   end
 
   def service_visit_photo
@@ -28,12 +35,14 @@ class AttachmentsController < ApplicationController
 
   private
 
-  def deliver(attachment, disposition: "inline")
+  def deliver(attachment, disposition: "inline", variant: nil)
     attachment = attachment.attachment if attachment.respond_to?(:attachment)
     raise ActiveRecord::RecordNotFound unless attachment
 
-    blob = attachment.blob
-    raise ActiveRecord::RecordNotFound unless AttachmentScan.available_blob?(blob)
+    source_blob = attachment.blob
+    raise ActiveRecord::RecordNotFound unless AttachmentScan.available_blob?(source_blob)
+
+    blob = variant ? processed_variant_blob(attachment, variant) : source_blob
 
     response.headers["Accept-Ranges"] = "bytes"
 
@@ -43,6 +52,13 @@ class AttachmentsController < ApplicationController
       response.headers["Content-Length"] = blob.byte_size.to_s
       send_blob_stream(blob, disposition:)
     end
+  end
+
+  def processed_variant_blob(attachment, variant_name)
+    image = attachment.variant(variant_name).image
+    raise ActiveRecord::RecordNotFound unless image&.attached?
+
+    image.blob
   end
 
   def requested_document_disposition

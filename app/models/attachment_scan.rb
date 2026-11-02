@@ -25,6 +25,7 @@ class AttachmentScan < ApplicationRecord
   validates :status_code, inclusion: { in: STATUS_CODES }, allow_nil: true
 
   after_create_commit :enqueue_pending_scan
+  after_update_commit :enqueue_primary_photo_variant, if: :primary_photo_became_available?
 
   scope :available, -> { where(status: AVAILABLE_STATUSES) }
 
@@ -83,6 +84,15 @@ class AttachmentScan < ApplicationRecord
   end
 
   private
+
+  def primary_photo_became_available?
+    saved_change_to_status? && status == "clean"
+  end
+
+  def enqueue_primary_photo_variant
+    attachment = active_storage_blob.attachments.find_by(record_type: "Asset", name: "primary_photo")
+    Storage::VesselPrimaryPhotoVariantJob.enqueue_for(attachment) if attachment
+  end
 
   def transition_pending!(status:, status_code:, completed_at:)
     with_lock do

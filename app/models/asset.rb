@@ -6,6 +6,8 @@ class Asset < ApplicationRecord
     image/webp
   ].freeze
   PRIMARY_PHOTO_MAX_SIZE = 10.megabytes
+  PRIMARY_PHOTO_CARD_WIDTH = 800
+  PRIMARY_PHOTO_CARD_HEIGHT = 450
   PRIMARY_PHOTO_CONTENT_TYPE_ERROR = "must be a JPEG, PNG, or WEBP image"
   PRIMARY_PHOTO_SIZE_ERROR = "must be 10 MB or smaller"
   PRIMARY_PHOTO_EXTENSION_ERROR = "extension does not match the uploaded file type"
@@ -25,7 +27,12 @@ class Asset < ApplicationRecord
   has_many :documents, dependent: :destroy
   has_many :asset_engines, dependent: :destroy
   has_many :asset_batteries, dependent: :destroy
-  has_one_attached :primary_photo
+  has_one_attached :primary_photo do |attachable|
+    attachable.variant :card,
+      resize_to_fill: [ PRIMARY_PHOTO_CARD_WIDTH, PRIMARY_PHOTO_CARD_HEIGHT ],
+      format: :webp,
+      saver: { quality: 80, strip: true }
+  end
 
   before_validation :normalize_text_fields
   before_validation :normalize_operating_instructions

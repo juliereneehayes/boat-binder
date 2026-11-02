@@ -27,4 +27,15 @@ class ApplicationController < ActionController::Base
       @attachment_scan_cache[scan.active_storage_blob_id] = scan
     end
   end
+
+  def enqueue_missing_vessel_primary_photo_variants(vessels)
+    Array(vessels).each do |vessel|
+      attachment = vessel.primary_photo.attachment
+      next unless attachment
+      next unless @attachment_scan_cache&.fetch(attachment.blob_id, nil)&.available?
+      next if attachment.variant(:card).image&.attached?
+
+      Storage::VesselPrimaryPhotoVariantJob.enqueue_for(attachment)
+    end
+  end
 end

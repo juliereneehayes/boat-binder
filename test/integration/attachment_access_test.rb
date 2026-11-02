@@ -52,6 +52,81 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
     assert_private_no_store
   end
 
+  test "authorized members stream a preprocessed card variant through the existing private route" do
+    @vessel.primary_photo.variant(:card).processed
+    sign_in_as(@owner)
+
+    get vessel_primary_photo_path(@vessel, presentation: "card", v: @vessel.primary_photo.blob.id)
+
+    assert_response :success
+    assert_equal "image/webp", response.media_type
+    assert_equal @vessel.primary_photo.variant(:card).image.blob.byte_size.to_s,
+      response.headers.fetch("Content-Length")
+    assert_private_no_store
+
+    get vessel_primary_photo_path(@vessel)
+    assert_response :success
+    assert_equal "image/jpeg", response.media_type
+  end
+
+  test "card variant route never processes synchronously and rejects unknown presentations" do
+    sign_in_as(@owner)
+
+    assert_no_difference -> { ActiveStorage::VariantRecord.count } do
+      get vessel_primary_photo_path(@vessel, presentation: "card")
+    end
+    assert_response :not_found
+
+    get vessel_primary_photo_path(@vessel, presentation: "future-size")
+    assert_response :not_found
+  end
+
+  test "card variants remain gated by source scan state and current authorization" do
+    @vessel.primary_photo.variant(:card).processed
+    scan = AttachmentScan.find_by!(active_storage_blob: @vessel.primary_photo.blob)
+    sign_in_as(@owner)
+
+    scan.delete
+    get vessel_primary_photo_path(@vessel, presentation: "card")
+    assert_response :not_found
+
+    scan = trust_attachment(@vessel.primary_photo)
+    %w[pending failed rejected].each do |status|
+      scan.update!(
+        status:,
+        status_code: { "failed" => "FAILED", "rejected" => "THREATS_FOUND" }[status],
+        completed_at: status == "pending" ? nil : Time.current
+      )
+      get vessel_primary_photo_path(@vessel, presentation: "card")
+      assert_response :not_found
+    end
+
+    scan.update!(status: "trusted_existing", status_code: "ROLLOUT_BACKFILL", completed_at: Time.current)
+    @membership.update!(active: false)
+    get vessel_primary_photo_path(@vessel, presentation: "card")
+    assert_response :not_found
+  end
+
+  test "dashboard batches Vessel photo scan state and queues missing historical variants" do
+    3.times do |index|
+      vessel = create_vessel(account: @account, name: "Dashboard Vessel #{index}")
+      vessel.primary_photo.attach(fixture_file_upload("sample.jpg", "image/jpeg"))
+      trust_attachment(vessel.primary_photo)
+    end
+    sign_in_as(@owner)
+    clear_enqueued_jobs
+
+    scan_queries = count_sql_queries(->(sql) { sql.include?(%q("attachment_scans")) }) do
+      get root_path
+    end
+
+    assert_response :success
+    assert_equal 1, scan_queries
+    assert_enqueued_jobs 4, only: Storage::VesselPrimaryPhotoVariantJob
+    assert_select "img[src*='presentation=card']", count: 0
+    assert_select "p", text: "Preparing optimized photo…", count: 4
+  end
+
   test "authorized Document range requests return only the requested bytes and partial length" do
     blob = @document.file.blob
     expected_body = blob.download.byteslice(0, 10)
@@ -121,9 +196,11 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
   end
 
   test "logged out requests cannot retrieve protected attachments" do
+    @vessel.primary_photo.variant(:card).processed
     [
       document_file_path(@document),
       vessel_primary_photo_path(@vessel),
+      vessel_primary_photo_path(@vessel, presentation: "card"),
       service_visit_photo_path(@vessel, @visit, @photo)
     ].each do |path|
       get path
@@ -132,6 +209,7 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
   end
 
   test "users cannot retrieve another Account's attachments" do
+    @vessel.primary_photo.variant(:card).processed
     other_account = create_account(name: "Other Attachment Account")
     qualify_self_managed_subscription(other_account)
     other_owner = create_user(email: "other-attachment-owner@example.test", role: "owner")
@@ -151,6 +229,8 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
       assert_select "[data-controller='attachment-status-refresh']", count: 0
     end
     get vessel_primary_photo_path(@vessel)
+    assert_response :not_found
+    get vessel_primary_photo_path(@vessel, presentation: "card")
     assert_response :not_found
     get service_visit_photo_path(@vessel, @visit, @photo)
     assert_response :not_found
@@ -345,7 +425,8 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
   end
 
   test "inactive users and Accounts cannot use a previously authorized URL" do
-    path = vessel_primary_photo_path(@vessel)
+    @vessel.primary_photo.variant(:card).processed
+    path = vessel_primary_photo_path(@vessel, presentation: "card")
     sign_in_as(@owner)
     get path
     assert_response :success

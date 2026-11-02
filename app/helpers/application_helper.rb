@@ -131,21 +131,30 @@ module ApplicationHelper
       .first(limit)
   end
 
-  def vessel_primary_photo(vessel, image_class:, placeholder_class:)
+  def vessel_primary_photo(vessel, image_class:, placeholder_class:, presentation: :original)
     if vessel.primary_photo.attached? && attachment_available?(vessel.primary_photo)
-      image_tag vessel_primary_photo_path(vessel, v: vessel.primary_photo.blob.id),
-        alt: "#{vessel.name} primary photo", class: image_class
-    else
-      tag.div class: placeholder_class, role: "img", aria: { label: "Primary photo placeholder for #{vessel.name}" } do
-        content = [
-          tag.div(vessel.name.to_s.first.to_s.upcase, class: "text-4xl font-black text-white/90"),
-          tag.div(vessel.location_label, class: "mt-2 text-xs font-black uppercase tracking-normal text-[#B9D5DA]")
-        ]
-        if vessel.primary_photo.attached?
-          content << tag.p(attachment_scan_message(vessel.primary_photo), class: "mt-3 max-w-lg text-xs font-semibold text-white")
+      if presentation == :card && !vessel.primary_photo.variant(:card).image&.attached?
+        vessel_primary_photo_placeholder(vessel, placeholder_class:, message: "Preparing optimized photo…")
+      else
+        image_options = { alt: "#{vessel.name} primary photo", class: image_class }
+        if presentation == :card
+          image_options.merge!(
+            width: Asset::PRIMARY_PHOTO_CARD_WIDTH,
+            height: Asset::PRIMARY_PHOTO_CARD_HEIGHT,
+            loading: "lazy",
+            decoding: "async"
+          )
         end
-        safe_join(content)
+
+        image_tag vessel_primary_photo_path(
+          vessel,
+          v: vessel.primary_photo.blob.id,
+          presentation: presentation == :card ? "card" : nil
+        ), **image_options
       end
+    else
+      message = attachment_scan_message(vessel.primary_photo) if vessel.primary_photo.attached?
+      vessel_primary_photo_placeholder(vessel, placeholder_class:, message:)
     end
   end
 
@@ -236,6 +245,17 @@ module ApplicationHelper
   end
 
   private
+
+  def vessel_primary_photo_placeholder(vessel, placeholder_class:, message: nil)
+    tag.div class: placeholder_class, role: "img", aria: { label: "Primary photo placeholder for #{vessel.name}" } do
+      content = [
+        tag.div(vessel.name.to_s.first.to_s.upcase, class: "text-4xl font-black text-white/90"),
+        tag.div(vessel.location_label, class: "mt-2 text-xs font-black uppercase tracking-normal text-[#B9D5DA]")
+      ]
+      content << tag.p(message, class: "mt-3 max-w-lg text-xs font-semibold text-white") if message
+      safe_join(content)
+    end
+  end
 
   def attachment_scan_for(attachment)
     attachment = attachment.attachment if attachment.respond_to?(:attachment)
