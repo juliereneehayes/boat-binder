@@ -104,8 +104,7 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
     assert_select "p", text: /Optimized photo|Photo optimization/, count: 0
     assert_select "a", text: "Check status", count: 0
 
-    clear_enqueued_jobs
-    assert_no_enqueued_jobs only: Storage::VesselPrimaryPhotoVariantJob do
+    assert_no_difference -> { enqueued_jobs.count { |job| job[:job] == Storage::VesselPrimaryPhotoVariantJob } } do
       get vessel_path(@vessel)
     end
     assert_response :success
