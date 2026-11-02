@@ -159,12 +159,18 @@ module ApplicationHelper
             loading: "lazy",
             decoding: "async"
           )
+        elsif presentation == :profile
+          image_options.merge!(
+            width: Asset::PRIMARY_PHOTO_PROFILE_WIDTH,
+            height: Asset::PRIMARY_PHOTO_PROFILE_HEIGHT,
+            decoding: "async"
+          )
         end
 
         image_tag vessel_primary_photo_path(
           vessel,
           v: vessel.primary_photo.blob.id,
-          presentation: presentation == :card ? "card" : nil
+          presentation: presentation.in?([ :card, :profile ]) ? presentation : nil
         ), **image_options
       end
     else
@@ -173,9 +179,9 @@ module ApplicationHelper
     end
   end
 
-  def vessel_primary_photo_upload_surface(vessel, surface_class:, image_class:, placeholder_class:)
+  def vessel_primary_photo_upload_surface(vessel, surface_class:, image_class:, placeholder_class:, presentation: :original)
     tag.div(
-      vessel_primary_photo(vessel, image_class:, placeholder_class:),
+      vessel_primary_photo(vessel, image_class:, placeholder_class:, presentation:),
       id: "vessel-primary-photo-upload-preview",
       class: surface_class,
       data: {

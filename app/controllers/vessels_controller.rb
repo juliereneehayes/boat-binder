@@ -27,6 +27,7 @@ class VesselsController < ApplicationController
     @documents = @vessel.documents.with_attached_file.order(created_at: :desc).limit(6)
     @documents.load
     preload_attachment_scans(@vessel.primary_photo, @documents.map(&:file))
+    prepare_vessel_primary_photo_profile_variant(@vessel)
     @binder_notes = @vessel.binder_notes.order(created_at: :desc).limit(6)
     @overdue_reminders = @vessel.overdue_reminders.limit(4)
     @upcoming_reminders = @vessel.reminders.upcoming.limit(5)

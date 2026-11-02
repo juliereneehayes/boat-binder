@@ -6,6 +6,7 @@ module Storage
     PROCESSING_STATE_VERSION = 1
     PENDING_STATE = "pending"
     PERMANENT_FAILURE_STATE = "permanent_failure"
+    VARIANT_NAMES = %i[card profile].freeze
     NO_REPLACEMENT = Object.new.freeze
 
     PermanentVariantProcessingError = Class.new(StandardError)
@@ -19,10 +20,10 @@ module Storage
       on_conflict: :discard
 
     class << self
-      def enqueue_for(attachment, replace_job_id: NO_REPLACEMENT)
+      def enqueue_for(attachment, required_variant: :card, replace_job_id: NO_REPLACEMENT)
         return unless vessel_primary_photo_attachment?(attachment)
 
-        state = status_for(attachment)
+        state = status_for(attachment, variant: required_variant)
         return state unless state == :missing || replace_job_id != NO_REPLACEMENT
 
         blob = attachment.blob
@@ -31,7 +32,7 @@ module Storage
         return claim_result unless claim_result == :claimed
 
         enqueued_job = active_job.enqueue
-        raise ActiveJob::EnqueueError, "card variant could not be enqueued" unless enqueued_job&.successfully_enqueued?
+        raise ActiveJob::EnqueueError, "photo variants could not be enqueued" unless enqueued_job&.successfully_enqueued?
 
         :pending
       rescue StandardError => error
@@ -54,10 +55,10 @@ module Storage
         :missing
       end
 
-      def status_for(attachment, queue_state: :unknown)
+      def status_for(attachment, variant: :card, queue_state: :unknown)
         return :missing unless vessel_primary_photo_attachment?(attachment)
 
-        image = attachment.variant(:card).image
+        image = attachment.variant(variant_name(variant)).image
         return :ready if image&.attached?
 
         state = processing_state(attachment.blob)
@@ -108,14 +109,15 @@ module Storage
         attachments.to_h { |attachment| [ attachment.id, :unknown ] }
       end
 
-      def recover_for(attachment, queue_state:)
-        state = status_for(attachment, queue_state:)
+      def recover_for(attachment, variant: :card, queue_state:)
+        state = status_for(attachment, variant:, queue_state:)
         case state
         when :transient_failure
           retry_solid_queue_job(processing_job_id(attachment.blob)) ? :pending : :transient_failure
         when :interrupted
           enqueue_for(
             attachment,
+            required_variant: variant,
             replace_job_id: processing_job_id(attachment.blob)
           )
         else
@@ -164,6 +166,13 @@ module Storage
       end
 
       private
+
+      def variant_name(name)
+        name = name.to_sym
+        raise ArgumentError, "unknown Vessel primary photo variant" unless name.in?(VARIANT_NAMES)
+
+        name
+      end
 
       def vessel_primary_photo_attachment?(attachment)
         return false unless attachment&.record_type == "Asset" && attachment.name == "primary_photo"
@@ -280,8 +289,7 @@ module Storage
         return
       end
 
-      variant = attachment.variant(:card)
-      if variant.image&.attached?
+      if VARIANT_NAMES.all? { |name| attachment.variant(name).image&.attached? }
         self.class.clear_processing_state(blob, expected: PENDING_STATE, expected_job_id: job_id)
         return
       end
@@ -290,7 +298,9 @@ module Storage
         return
       end
 
-      process_variant(attachment)
+      VARIANT_NAMES.each do |name|
+        process_variant(attachment, name) unless attachment.variant(name).image&.attached?
+      end
       self.class.clear_processing_state(blob, expected: PENDING_STATE, expected_job_id: job_id)
     rescue StandardError => error
       handle_processing_error(error, attachment_id:, blob_id:, blob:)
@@ -298,8 +308,8 @@ module Storage
 
     private
 
-    def process_variant(attachment)
-      attachment.variant(:card).processed
+    def process_variant(attachment, name)
+      attachment.variant(name).processed
     end
 
     def handle_processing_error(error, attachment_id:, blob_id:, blob: nil)

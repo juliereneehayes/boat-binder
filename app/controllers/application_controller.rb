@@ -52,4 +52,28 @@ class ApplicationController < ActionController::Base
       @vessel_primary_photo_card_states[attachment.id] = state
     end
   end
+
+  def prepare_vessel_primary_photo_profile_variant(vessel)
+    attachment = vessel.primary_photo.attachment
+    return unless attachment
+    return unless @attachment_scan_cache&.fetch(attachment.blob_id, nil)&.available?
+
+    queue_state = Storage::VesselPrimaryPhotoVariantJob.queue_job_states_for([ attachment ])
+      .fetch(attachment.id, :unknown)
+    state = Storage::VesselPrimaryPhotoVariantJob.status_for(
+      attachment,
+      variant: :profile,
+      queue_state:
+    )
+
+    if state == :missing
+      Storage::VesselPrimaryPhotoVariantJob.enqueue_for(attachment, required_variant: :profile)
+    elsif state == :interrupted
+      Storage::VesselPrimaryPhotoVariantJob.recover_for(
+        attachment,
+        variant: :profile,
+        queue_state:
+      )
+    end
+  end
 end
