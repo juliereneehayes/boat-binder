@@ -52,6 +52,232 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
     assert_private_no_store
   end
 
+  test "authorized members stream a preprocessed card variant through the existing private route" do
+    @vessel.primary_photo.variant(:card).processed
+    sign_in_as(@owner)
+
+    get vessel_primary_photo_path(@vessel, presentation: "card", v: @vessel.primary_photo.blob.id)
+
+    assert_response :success
+    assert_equal "image/webp", response.media_type
+    assert_equal @vessel.primary_photo.variant(:card).image.blob.byte_size.to_s,
+      response.headers.fetch("Content-Length")
+    assert_private_no_store
+
+    get vessel_primary_photo_path(@vessel)
+    assert_response :success
+    assert_equal "image/jpeg", response.media_type
+  end
+
+  test "a stale card URL never serves a superseded photo after replacement" do
+    @vessel.primary_photo.variant(:card).processed
+    old_blob = @vessel.primary_photo.blob
+    old_variant_body = @vessel.primary_photo.variant(:card).image.blob.download
+    stale_path = vessel_primary_photo_path(@vessel, presentation: "card", v: old_blob.id)
+
+    @vessel.primary_photo.attach(fixture_file_upload("sample.png", "image/png"))
+    trust_attachment(@vessel.primary_photo)
+    @vessel.primary_photo.variant(:card).processed
+    current_variant_body = @vessel.primary_photo.variant(:card).image.blob.download
+    sign_in_as(@owner)
+
+    get stale_path
+
+    assert_response :success
+    assert_equal current_variant_body, response.body
+    assert_not_equal old_variant_body, response.body
+    assert_not_equal old_blob.id, @vessel.primary_photo.blob.id
+  end
+
+  test "a queued job for a replaced attachment cannot expose obsolete content" do
+    old_attachment = @vessel.primary_photo.attachment
+    old_blob = old_attachment.blob
+    stale_path = vessel_primary_photo_path(@vessel, presentation: "card", v: old_blob.id)
+    assert_equal :pending, Storage::VesselPrimaryPhotoVariantJob.enqueue_for(old_attachment)
+    clear_enqueued_jobs
+
+    @vessel.primary_photo.attach(fixture_file_upload("sample.png", "image/png"))
+    trust_attachment(@vessel.primary_photo)
+
+    assert_no_difference -> { ActiveStorage::VariantRecord.where(blob_id: old_blob.id).count } do
+      Storage::VesselPrimaryPhotoVariantJob.perform_now(old_attachment.id, old_blob.id)
+    end
+
+    sign_in_as(@owner)
+    get stale_path
+    assert_response :not_found
+  end
+
+  test "card variant route never processes synchronously and rejects unknown presentations" do
+    sign_in_as(@owner)
+
+    assert_no_difference -> { ActiveStorage::VariantRecord.count } do
+      get vessel_primary_photo_path(@vessel, presentation: "card")
+    end
+    assert_response :not_found
+
+    get vessel_primary_photo_path(@vessel, presentation: "future-size")
+    assert_response :not_found
+  end
+
+  test "card variants remain gated by source scan state and current authorization" do
+    @vessel.primary_photo.variant(:card).processed
+    scan = AttachmentScan.find_by!(active_storage_blob: @vessel.primary_photo.blob)
+    sign_in_as(@owner)
+
+    scan.delete
+    get vessel_primary_photo_path(@vessel, presentation: "card")
+    assert_response :not_found
+
+    scan = trust_attachment(@vessel.primary_photo)
+    %w[pending failed rejected].each do |status|
+      scan.update!(
+        status:,
+        status_code: { "failed" => "FAILED", "rejected" => "THREATS_FOUND" }[status],
+        completed_at: status == "pending" ? nil : Time.current
+      )
+      get vessel_primary_photo_path(@vessel, presentation: "card")
+      assert_response :not_found
+    end
+
+    scan.update!(status: "trusted_existing", status_code: "ROLLOUT_BACKFILL", completed_at: Time.current)
+    @membership.update!(active: false)
+    get vessel_primary_photo_path(@vessel, presentation: "card")
+    assert_response :not_found
+  end
+
+  test "dashboard batches Vessel photo scan state and queues missing historical variants" do
+    3.times do |index|
+      vessel = create_vessel(account: @account, name: "Dashboard Vessel #{index}")
+      vessel.primary_photo.attach(fixture_file_upload("sample.jpg", "image/jpeg"))
+      trust_attachment(vessel.primary_photo)
+    end
+    sign_in_as(@owner)
+    clear_enqueued_jobs
+
+    variant_record_queries = nil
+    scan_queries = count_sql_queries(->(sql) { sql.include?(%q("attachment_scans")) }) do
+      variant_record_queries = count_sql_queries(->(sql) { sql.include?(%q("active_storage_variant_records")) }) do
+        get root_path
+      end
+    end
+
+    assert_response :success
+    assert_equal 1, scan_queries
+    assert_equal 1, variant_record_queries
+    assert_enqueued_jobs 4, only: Storage::VesselPrimaryPhotoVariantJob
+    assert_select "img[src*='presentation=card']", count: 0
+    assert_select "p", text: "Optimized photo is not ready. Check status again shortly.", count: 4
+    assert_select "a", text: "Check status", count: 1
+  end
+
+  test "fleet variant readiness queries and duplicate jobs stay bounded as photos increase" do
+    3.times do |index|
+      vessel = create_vessel(account: @account, name: "Fleet Variant Vessel #{index}")
+      vessel.primary_photo.attach(fixture_file_upload("sample.jpg", "image/jpeg"))
+      trust_attachment(vessel.primary_photo)
+    end
+    sign_in_as(@owner)
+    clear_enqueued_jobs
+
+    first_visit_queries = count_sql_queries(->(sql) { sql.include?(%q("active_storage_variant_records")) }) do
+      get vessels_path
+    end
+
+    assert_response :success
+    assert_equal 1, first_visit_queries
+    assert_enqueued_jobs 4, only: Storage::VesselPrimaryPhotoVariantJob
+
+    clear_enqueued_jobs
+    second_visit_queries = nil
+    assert_no_enqueued_jobs only: Storage::VesselPrimaryPhotoVariantJob do
+      second_visit_queries = count_sql_queries(->(sql) { sql.include?(%q("active_storage_variant_records")) }) do
+        get vessels_path
+      end
+    end
+
+    assert_response :success
+    assert_equal 1, second_visit_queries
+  end
+
+  test "permanent card processing failure is not requeued on repeated page visits" do
+    @vessel.primary_photo.purge
+    @vessel.primary_photo.attach(
+      io: StringIO.new("not an image"),
+      filename: "invalid.jpg",
+      content_type: "image/jpeg"
+    )
+    trust_attachment(@vessel.primary_photo)
+    attachment = @vessel.primary_photo.attachment
+    sign_in_as(@owner)
+    clear_enqueued_jobs
+
+    perform_enqueued_jobs only: Storage::VesselPrimaryPhotoVariantJob do
+      get root_path
+    end
+
+    assert_response :success
+    assert_equal :permanent_failure, Storage::VesselPrimaryPhotoVariantJob.status_for(attachment.reload)
+    clear_enqueued_jobs
+
+    assert_no_enqueued_jobs only: Storage::VesselPrimaryPhotoVariantJob do
+      2.times do
+        get root_path
+        assert_response :success
+        get vessels_path
+        assert_response :success
+      end
+    end
+    assert_select "p", text: "This photo cannot be optimized. Replace it to retry.", count: 1
+  end
+
+  test "Check status replaces interrupted work without duplicating an active job" do
+    attachment = @vessel.primary_photo.attachment
+    assert_equal :pending, Storage::VesselPrimaryPhotoVariantJob.enqueue_for(attachment)
+    original_job_id = variant_processing_job_id(attachment.blob.reload)
+    clear_enqueued_jobs
+    sign_in_as(@owner)
+
+    with_variant_queue_state(:missing) do
+      get root_path
+
+      assert_response :success
+      assert_select "p", text: "Photo optimization was interrupted. Check status to restart.", count: 1
+      assert_select "a[href=?][data-turbo-prefetch='false']",
+        root_path(photo_status_check: "1"),
+        text: "Check status",
+        count: 1
+      assert_no_enqueued_jobs only: Storage::VesselPrimaryPhotoVariantJob
+
+      assert_enqueued_jobs 1, only: Storage::VesselPrimaryPhotoVariantJob do
+        get root_path(photo_status_check: "1")
+      end
+    end
+
+    assert_response :success
+    assert_not_equal original_job_id, variant_processing_job_id(attachment.blob.reload)
+    assert_select "p", text: "Optimized photo is not ready. Check status again shortly.", count: 1
+  end
+
+  test "read only users receive actionable permanent failure guidance without edit instructions" do
+    attachment = @vessel.primary_photo.attachment
+    assert_equal :pending, Storage::VesselPrimaryPhotoVariantJob.enqueue_for(attachment)
+    active_job_id = variant_processing_job_id(attachment.blob.reload)
+    Storage::VesselPrimaryPhotoVariantJob.mark_permanent_failure(
+      attachment.blob,
+      job_id: active_job_id
+    )
+    clear_enqueued_jobs
+    @membership.update!(access_level: "read_only")
+    sign_in_as(@owner)
+
+    get root_path
+
+    assert_response :success
+    assert_select "p", text: "This photo cannot be optimized. Contact someone with edit access.", count: 1
+    assert_select "p", text: "This photo cannot be optimized. Replace it to retry.", count: 0
+  end
+
   test "authorized Document range requests return only the requested bytes and partial length" do
     blob = @document.file.blob
     expected_body = blob.download.byteslice(0, 10)
@@ -121,9 +347,11 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
   end
 
   test "logged out requests cannot retrieve protected attachments" do
+    @vessel.primary_photo.variant(:card).processed
     [
       document_file_path(@document),
       vessel_primary_photo_path(@vessel),
+      vessel_primary_photo_path(@vessel, presentation: "card"),
       service_visit_photo_path(@vessel, @visit, @photo)
     ].each do |path|
       get path
@@ -132,6 +360,7 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
   end
 
   test "users cannot retrieve another Account's attachments" do
+    @vessel.primary_photo.variant(:card).processed
     other_account = create_account(name: "Other Attachment Account")
     qualify_self_managed_subscription(other_account)
     other_owner = create_user(email: "other-attachment-owner@example.test", role: "owner")
@@ -151,6 +380,8 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
       assert_select "[data-controller='attachment-status-refresh']", count: 0
     end
     get vessel_primary_photo_path(@vessel)
+    assert_response :not_found
+    get vessel_primary_photo_path(@vessel, presentation: "card")
     assert_response :not_found
     get service_visit_photo_path(@vessel, @visit, @photo)
     assert_response :not_found
@@ -345,7 +576,8 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
   end
 
   test "inactive users and Accounts cannot use a previously authorized URL" do
-    path = vessel_primary_photo_path(@vessel)
+    @vessel.primary_photo.variant(:card).processed
+    path = vessel_primary_photo_path(@vessel, presentation: "card")
     sign_in_as(@owner)
     get path
     assert_response :success
@@ -500,6 +732,23 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
 
     ActiveSupport::Notifications.subscribed(callback, "sql.active_record") { yield }
     count
+  end
+
+  def variant_processing_job_id(blob)
+    blob.metadata
+      .fetch(Storage::VesselPrimaryPhotoVariantJob::PROCESSING_STATE_METADATA_KEY)
+      .fetch("job_id")
+  end
+
+  def with_variant_queue_state(state)
+    receiver = Storage::VesselPrimaryPhotoVariantJob.singleton_class
+    original = receiver.instance_method(:queue_job_states_for)
+    receiver.define_method(:queue_job_states_for) do |attachments|
+      attachments.to_h { |attachment| [ attachment.id, state ] }
+    end
+    yield
+  ensure
+    receiver.define_method(:queue_job_states_for, original)
   end
 
   def assert_private_no_store

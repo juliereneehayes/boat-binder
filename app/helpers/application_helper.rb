@@ -131,21 +131,45 @@ module ApplicationHelper
       .first(limit)
   end
 
-  def vessel_primary_photo(vessel, image_class:, placeholder_class:)
+  def vessel_primary_photo(vessel, image_class:, placeholder_class:, presentation: :original)
     if vessel.primary_photo.attached? && attachment_available?(vessel.primary_photo)
-      image_tag vessel_primary_photo_path(vessel, v: vessel.primary_photo.blob.id),
-        alt: "#{vessel.name} primary photo", class: image_class
-    else
-      tag.div class: placeholder_class, role: "img", aria: { label: "Primary photo placeholder for #{vessel.name}" } do
-        content = [
-          tag.div(vessel.name.to_s.first.to_s.upcase, class: "text-4xl font-black text-white/90"),
-          tag.div(vessel.location_label, class: "mt-2 text-xs font-black uppercase tracking-normal text-[#B9D5DA]")
-        ]
-        if vessel.primary_photo.attached?
-          content << tag.p(attachment_scan_message(vessel.primary_photo), class: "mt-3 max-w-lg text-xs font-semibold text-white")
+      card_state = vessel_primary_photo_card_state(vessel) if presentation == :card
+      if presentation == :card && card_state != :ready
+        message = case card_state
+        when :permanent_failure
+          if can_manage_account?(vessel.account)
+            "This photo cannot be optimized. Replace it to retry."
+          else
+            "This photo cannot be optimized. Contact someone with edit access."
+          end
+        when :transient_failure
+          "Photo optimization paused after repeated attempts. Check status to retry."
+        when :interrupted
+          "Photo optimization was interrupted. Check status to restart."
+        else
+          "Optimized photo is not ready. Check status again shortly."
         end
-        safe_join(content)
+        vessel_primary_photo_placeholder(vessel, placeholder_class:, message:)
+      else
+        image_options = { alt: "#{vessel.name} primary photo", class: image_class }
+        if presentation == :card
+          image_options.merge!(
+            width: Asset::PRIMARY_PHOTO_CARD_WIDTH,
+            height: Asset::PRIMARY_PHOTO_CARD_HEIGHT,
+            loading: "lazy",
+            decoding: "async"
+          )
+        end
+
+        image_tag vessel_primary_photo_path(
+          vessel,
+          v: vessel.primary_photo.blob.id,
+          presentation: presentation == :card ? "card" : nil
+        ), **image_options
       end
+    else
+      message = attachment_scan_message(vessel.primary_photo) if vessel.primary_photo.attached?
+      vessel_primary_photo_placeholder(vessel, placeholder_class:, message:)
     end
   end
 
@@ -216,11 +240,17 @@ module ApplicationHelper
   def attachment_status_check_link(path = request.fullpath, accessible_name: nil)
     options = {
       class: "inline-flex min-h-10 items-center rounded-md border border-slate-300 bg-white px-3 py-2 text-sm font-bold text-slate-700 transition hover:bg-slate-50",
-      data: { turbo_action: "replace" }
+      data: { turbo_action: "replace", turbo_prefetch: false }
     }
     options[:aria] = { label: accessible_name } if accessible_name
 
     link_to "Check status", path, **options
+  end
+
+  def vessel_primary_photo_card_status_check_needed?
+    @vessel_primary_photo_card_states&.values&.intersect?(
+      [ :pending, :transient_failure, :interrupted ]
+    ) || false
   end
 
   def attachment_group_scan_state(attachments)
@@ -236,6 +266,25 @@ module ApplicationHelper
   end
 
   private
+
+  def vessel_primary_photo_card_state(vessel)
+    attachment = vessel.primary_photo.attachment
+    return :missing unless attachment
+    return @vessel_primary_photo_card_states[attachment.id] if @vessel_primary_photo_card_states&.key?(attachment.id)
+
+    Storage::VesselPrimaryPhotoVariantJob.status_for(attachment)
+  end
+
+  def vessel_primary_photo_placeholder(vessel, placeholder_class:, message: nil)
+    tag.div class: placeholder_class, role: "img", aria: { label: "Primary photo placeholder for #{vessel.name}" } do
+      content = [
+        tag.div(vessel.name.to_s.first.to_s.upcase, class: "text-4xl font-black text-white/90"),
+        tag.div(vessel.location_label, class: "mt-2 text-xs font-black uppercase tracking-normal text-[#B9D5DA]")
+      ]
+      content << tag.p(message, class: "mt-3 max-w-lg text-xs font-semibold text-white") if message
+      safe_join(content)
+    end
+  end
 
   def attachment_scan_for(attachment)
     attachment = attachment.attachment if attachment.respond_to?(:attachment)

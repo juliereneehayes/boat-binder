@@ -538,6 +538,7 @@ class VesselManagementTest < ActionDispatch::IntegrationTest
     vessel = create_vessel
     vessel.primary_photo.attach(fixture_file_upload("sample.jpg", "image/jpeg"))
     trust_attachment(vessel.primary_photo)
+    vessel.primary_photo.variant(:card).processed
 
     get vessel_path(vessel)
 
@@ -547,7 +548,17 @@ class VesselManagementTest < ActionDispatch::IntegrationTest
     get root_path
 
     assert_response :success
-    assert_select "img[alt=?]", "#{vessel.name} primary photo"
+    assert_select "img[alt=?][width=?][height=?][loading=?][decoding=?]",
+      "#{vessel.name} primary photo",
+      Asset::PRIMARY_PHOTO_CARD_WIDTH.to_s,
+      Asset::PRIMARY_PHOTO_CARD_HEIGHT.to_s,
+      "lazy",
+      "async"
+    assert_select "img[src=?]", vessel_primary_photo_path(
+      vessel,
+      v: vessel.primary_photo.blob.id,
+      presentation: "card"
+    )
   end
 
   test "vessel primary photo URL changes only when the attachment is replaced" do
@@ -668,6 +679,8 @@ class VesselManagementTest < ActionDispatch::IntegrationTest
     other_vessel.primary_photo.attach(fixture_file_upload("sample.png", "image/png"))
     trust_attachment(owner_vessel.primary_photo)
     trust_attachment(other_vessel.primary_photo)
+    owner_vessel.primary_photo.variant(:card).processed
+    other_vessel.primary_photo.variant(:card).processed
     owner = create_user(email: "owner-photo-scope@example.test", role: "owner")
     qualify_self_managed_subscription(owner_account)
     create_account_membership(user: owner, account: owner_account)

@@ -27,4 +27,29 @@ class ApplicationController < ActionController::Base
       @attachment_scan_cache[scan.active_storage_blob_id] = scan
     end
   end
+
+  def prepare_vessel_primary_photo_card_variants(vessels)
+    @vessel_primary_photo_card_states = {}
+    attachments = Array(vessels).filter_map { |vessel| vessel.primary_photo.attachment }
+    queue_states = Storage::VesselPrimaryPhotoVariantJob.queue_job_states_for(attachments)
+    recover_processing = params[:photo_status_check] == "1"
+
+    attachments.each do |attachment|
+      queue_state = queue_states.fetch(attachment.id, :unknown)
+      state = if @attachment_scan_cache&.fetch(attachment.blob_id, nil)&.available?
+        Storage::VesselPrimaryPhotoVariantJob.status_for(attachment, queue_state:).then do |current_state|
+          if current_state == :missing
+            Storage::VesselPrimaryPhotoVariantJob.enqueue_for(attachment)
+          elsif recover_processing
+            Storage::VesselPrimaryPhotoVariantJob.recover_for(attachment, queue_state:)
+          else
+            current_state
+          end
+        end
+      else
+        Storage::VesselPrimaryPhotoVariantJob.status_for(attachment, queue_state:)
+      end
+      @vessel_primary_photo_card_states[attachment.id] = state
+    end
+  end
 end
