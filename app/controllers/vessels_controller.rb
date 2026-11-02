@@ -14,7 +14,7 @@ class VesselsController < ApplicationController
     @vessels = @vessels.active unless @include_inactive
     @vessels.load
     preload_attachment_scans(@vessels.map(&:primary_photo))
-    enqueue_missing_vessel_primary_photo_variants(@vessels)
+    prepare_vessel_primary_photo_card_variants(@vessels)
   end
 
   def show

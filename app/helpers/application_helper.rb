@@ -133,8 +133,14 @@ module ApplicationHelper
 
   def vessel_primary_photo(vessel, image_class:, placeholder_class:, presentation: :original)
     if vessel.primary_photo.attached? && attachment_available?(vessel.primary_photo)
-      if presentation == :card && !vessel.primary_photo.variant(:card).image&.attached?
-        vessel_primary_photo_placeholder(vessel, placeholder_class:, message: "Preparing optimized photo…")
+      card_state = vessel_primary_photo_card_state(vessel) if presentation == :card
+      if presentation == :card && card_state != :ready
+        message = if card_state == :permanent_failure
+          "This photo cannot be optimized. Replace it to retry."
+        else
+          "Optimized photo is not ready. Check status again shortly."
+        end
+        vessel_primary_photo_placeholder(vessel, placeholder_class:, message:)
       else
         image_options = { alt: "#{vessel.name} primary photo", class: image_class }
         if presentation == :card
@@ -232,6 +238,10 @@ module ApplicationHelper
     link_to "Check status", path, **options
   end
 
+  def vessel_primary_photo_card_status_check_needed?
+    @vessel_primary_photo_card_states&.value?(:pending) || false
+  end
+
   def attachment_group_scan_state(attachments)
     attachments = attachments.to_a
     return "empty" if attachments.empty?
@@ -245,6 +255,14 @@ module ApplicationHelper
   end
 
   private
+
+  def vessel_primary_photo_card_state(vessel)
+    attachment = vessel.primary_photo.attachment
+    return :missing unless attachment
+    return @vessel_primary_photo_card_states[attachment.id] if @vessel_primary_photo_card_states&.key?(attachment.id)
+
+    Storage::VesselPrimaryPhotoVariantJob.status_for(attachment)
+  end
 
   def vessel_primary_photo_placeholder(vessel, placeholder_class:, message: nil)
     tag.div class: placeholder_class, role: "img", aria: { label: "Primary photo placeholder for #{vessel.name}" } do

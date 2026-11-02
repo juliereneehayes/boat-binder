@@ -28,14 +28,19 @@ class ApplicationController < ActionController::Base
     end
   end
 
-  def enqueue_missing_vessel_primary_photo_variants(vessels)
+  def prepare_vessel_primary_photo_card_variants(vessels)
+    @vessel_primary_photo_card_states = {}
+
     Array(vessels).each do |vessel|
       attachment = vessel.primary_photo.attachment
       next unless attachment
-      next unless @attachment_scan_cache&.fetch(attachment.blob_id, nil)&.available?
-      next if attachment.variant(:card).image&.attached?
 
-      Storage::VesselPrimaryPhotoVariantJob.enqueue_for(attachment)
+      state = if @attachment_scan_cache&.fetch(attachment.blob_id, nil)&.available?
+        Storage::VesselPrimaryPhotoVariantJob.enqueue_for(attachment)
+      else
+        Storage::VesselPrimaryPhotoVariantJob.status_for(attachment)
+      end
+      @vessel_primary_photo_card_states[attachment.id] = state
     end
   end
 end

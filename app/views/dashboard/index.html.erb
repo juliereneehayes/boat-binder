@@ -69,7 +69,12 @@
           <h2 class="text-2xl font-black tracking-normal">Today's vessel list</h2>
           <p class="mt-1 text-sm text-slate-600">Fast scan of active vessels and their next item.</p>
         </div>
-        <%= link_to "All vessels", vessels_path, class: subtle_link_class %>
+        <div class="flex flex-wrap items-center justify-end gap-2">
+          <% if vessel_primary_photo_card_status_check_needed? %>
+            <%= attachment_status_check_link(root_path, accessible_name: "Check Vessel photo status") %>
+          <% end %>
+          <%= link_to "All vessels", vessels_path, class: subtle_link_class %>
+        </div>
       </div>
 
       <% if @vessels.any? %>

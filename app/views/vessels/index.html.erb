@@ -5,9 +5,14 @@
       <h1 class="mt-1 text-3xl font-black tracking-normal md:text-5xl">Vessels</h1>
       <p class="mt-2 max-w-2xl text-sm leading-6 text-slate-600">A premium fleet view for owners, captains, locations, documents, and next service priorities.</p>
     </div>
-    <% if can_create_vessels? %>
-      <%= link_to "Add Vessel", new_vessel_path, class: primary_button_class %>
-    <% end %>
+    <div class="flex flex-wrap items-center justify-end gap-2">
+      <% if vessel_primary_photo_card_status_check_needed? %>
+        <%= attachment_status_check_link(vessels_path(q: @query, include_inactive: @include_inactive ? "1" : nil), accessible_name: "Check Vessel photo status") %>
+      <% end %>
+      <% if can_create_vessels? %>
+        <%= link_to "Add Vessel", new_vessel_path, class: primary_button_class %>
+      <% end %>
+    </div>
   </div>
 
   <%= form_with url: vessels_path, method: :get, class: app_card_class("p-4") do |form| %>

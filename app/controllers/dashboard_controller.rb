@@ -19,7 +19,7 @@ class DashboardController < ApplicationController
     @vessels = scoped_vessels.active.includes(:account, :reminders, :service_visits).with_attached_primary_photo.ordered
     @vessels.load
     preload_attachment_scans(@vessels.map(&:primary_photo))
-    enqueue_missing_vessel_primary_photo_variants(@vessels)
+    prepare_vessel_primary_photo_card_variants(@vessels)
     @upcoming_reminders = scoped_reminders.includes(asset: :account).upcoming.limit(6)
     @recent_service_visits = scoped_service_visits.includes(:asset, :performed_by_user).recent.limit(5)
     @follow_up_items = scoped_service_visits.includes(:asset).with_open_follow_up.recent.limit(5)

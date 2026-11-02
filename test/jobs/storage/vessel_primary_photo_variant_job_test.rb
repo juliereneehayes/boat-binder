@@ -66,10 +66,37 @@ module Storage
       ) do
         scan.mark_clean!
       end
+      assert_equal :pending, VesselPrimaryPhotoVariantJob.status_for(@attachment.reload)
 
       assert_no_enqueued_jobs only: VesselPrimaryPhotoVariantJob do
         scan.mark_clean!
       end
+    end
+
+    test "duplicate submissions create one job and one persistent processing claim" do
+      trust_attachment(@vessel.primary_photo)
+
+      assert_enqueued_jobs 1, only: VesselPrimaryPhotoVariantJob do
+        assert_equal :pending, VesselPrimaryPhotoVariantJob.enqueue_for(@attachment)
+        assert_equal :pending, VesselPrimaryPhotoVariantJob.enqueue_for(@attachment)
+      end
+
+      assert_equal :pending, VesselPrimaryPhotoVariantJob.status_for(@attachment)
+      state = @blob.reload.metadata.fetch(VesselPrimaryPhotoVariantJob::PROCESSING_STATE_METADATA_KEY)
+      assert_equal VesselPrimaryPhotoVariantJob::PROCESSING_STATE_VERSION, state.fetch("version")
+      assert_equal VesselPrimaryPhotoVariantJob::PENDING_STATE, state.fetch("state")
+    end
+
+    test "non Vessel primary photos do not create variant jobs" do
+      non_vessel = create_vessel(name: "Non Vessel Photo Asset")
+      non_vessel.update!(asset_type: "home")
+      attach_fixture(non_vessel, "sample.jpg", "image/jpeg")
+      attachment = non_vessel.primary_photo.attachment
+
+      assert_no_enqueued_jobs only: VesselPrimaryPhotoVariantJob do
+        assert_nil VesselPrimaryPhotoVariantJob.enqueue_for(attachment)
+      end
+      assert_not attachment.blob.reload.metadata.key?(VesselPrimaryPhotoVariantJob::PROCESSING_STATE_METADATA_KEY)
     end
 
     test "superseded attachment jobs exit without processing the old blob" do
@@ -84,7 +111,7 @@ module Storage
       end
     end
 
-    test "processing failures expose only safe identifiers and exception class" do
+    test "permanent processing failures are discarded and expose only sanitized details" do
       @vessel.primary_photo.purge
       @vessel.primary_photo.attach(
         io: StringIO.new("not an image"),
@@ -94,18 +121,49 @@ module Storage
       @attachment = @vessel.primary_photo.attachment
       @blob = @attachment.blob
       trust_attachment(@vessel.primary_photo)
+      assert_equal :pending, VesselPrimaryPhotoVariantJob.enqueue_for(@attachment)
+      clear_enqueued_jobs
 
       logs = capture_logs do
-        assert_raises(VesselPrimaryPhotoVariantJob::VariantProcessingError) do
+        assert_no_enqueued_jobs only: VesselPrimaryPhotoVariantJob do
           VesselPrimaryPhotoVariantJob.perform_now(@attachment.id, @blob.id)
         end
       end
 
+      assert_equal :permanent_failure, VesselPrimaryPhotoVariantJob.status_for(@attachment.reload)
       assert_includes logs, "attachment_id=#{@attachment.id}"
       assert_includes logs, "blob_id=#{@blob.id}"
+      assert_includes logs, "outcome=discarded_permanent"
       assert_includes logs, "exception_class="
       assert_not_includes logs, @blob.filename.to_s
       assert_not_includes logs, @blob.key
+    end
+
+    test "transient processing failures retry and later recovery clears the claim" do
+      trust_attachment(@vessel.primary_photo)
+      assert_equal :pending, VesselPrimaryPhotoVariantJob.enqueue_for(@attachment)
+      clear_enqueued_jobs
+
+      with_replaced_instance_method(
+        VesselPrimaryPhotoVariantJob,
+        :process_variant,
+        ->(_attachment) { raise IOError, "synthetic storage outage" }
+      ) do
+        assert_enqueued_with(
+          job: VesselPrimaryPhotoVariantJob,
+          args: [ @attachment.id, @blob.id ]
+        ) do
+          VesselPrimaryPhotoVariantJob.perform_now(@attachment.id, @blob.id)
+        end
+      end
+
+      assert_equal :pending, VesselPrimaryPhotoVariantJob.status_for(@attachment)
+      clear_enqueued_jobs
+
+      VesselPrimaryPhotoVariantJob.perform_now(@attachment.id, @blob.id)
+
+      assert_equal :ready, VesselPrimaryPhotoVariantJob.status_for(@attachment.reload)
+      assert_not @blob.reload.metadata.key?(VesselPrimaryPhotoVariantJob::PROCESSING_STATE_METADATA_KEY)
     end
 
     private
@@ -124,6 +182,16 @@ module Storage
       output.string
     ensure
       Rails.logger = original_logger
+    end
+
+    def with_replaced_instance_method(receiver, method_name, replacement)
+      original = receiver.instance_method(method_name)
+      receiver.define_method(method_name, replacement)
+      receiver.send(:private, method_name)
+      yield
+    ensure
+      receiver.define_method(method_name, original)
+      receiver.send(:private, method_name)
     end
   end
 end
