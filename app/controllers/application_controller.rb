@@ -57,6 +57,7 @@ class ApplicationController < ActionController::Base
     attachment = vessel.primary_photo.attachment
     return unless attachment
     return unless @attachment_scan_cache&.fetch(attachment.blob_id, nil)&.available?
+    return if attachment.variant(:profile).image&.attached?
 
     queue_state = Storage::VesselPrimaryPhotoVariantJob.queue_job_states_for([ attachment ])
       .fetch(attachment.id, :unknown)

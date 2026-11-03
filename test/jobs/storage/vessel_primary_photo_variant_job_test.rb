@@ -40,6 +40,11 @@ module Storage
     test "an existing card variant queues the shared job once when the profile variant is missing" do
       trust_attachment(@vessel.primary_photo)
       @attachment.variant(:card).processed
+      source_blob_id = @blob.id
+      source_checksum = @blob.checksum
+      card_blob = @attachment.variant(:card).image.blob
+      card_blob_id = card_blob.id
+      card_checksum = card_blob.checksum
 
       assert_enqueued_jobs 1, only: VesselPrimaryPhotoVariantJob do
         assert_equal :pending,
@@ -50,6 +55,25 @@ module Storage
 
       assert_equal :ready, VesselPrimaryPhotoVariantJob.status_for(@attachment, variant: :card)
       assert_equal :pending, VesselPrimaryPhotoVariantJob.status_for(@attachment, variant: :profile)
+
+      processed_variants = []
+      with_replaced_instance_method(
+        VesselPrimaryPhotoVariantJob,
+        :process_variant,
+        lambda do |attachment, name|
+          processed_variants << name
+          attachment.variant(name).processed
+        end
+      ) do
+        claimed_job(@attachment, @blob).perform_now
+      end
+
+      assert_equal [ :profile ], processed_variants
+      assert_equal :ready, VesselPrimaryPhotoVariantJob.status_for(@attachment.reload, variant: :profile)
+      assert_equal source_blob_id, @attachment.reload.blob.id
+      assert_equal source_checksum, @attachment.blob.checksum
+      assert_equal card_blob_id, @attachment.variant(:card).image.blob.id
+      assert_equal card_checksum, @attachment.variant(:card).image.blob.checksum
     end
 
     test "does not process unavailable scan states" do

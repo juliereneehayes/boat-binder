@@ -122,6 +122,20 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
     assert_equal "image/webp", response.media_type
   end
 
+  test "a ready profile variant skips Solid Queue state lookup" do
+    @vessel.primary_photo.variant(:profile).processed
+    sign_in_as(@owner)
+
+    Storage::VesselPrimaryPhotoVariantJob.stub(
+      :queue_job_states_for,
+      ->(_attachments) { flunk "ready profile variants must not query Solid Queue" }
+    ) do
+      get vessel_path(@vessel)
+    end
+
+    assert_response :success
+  end
+
   test "a stale card URL never serves a superseded photo after replacement" do
     @vessel.primary_photo.variant(:card).processed
     old_blob = @vessel.primary_photo.blob
@@ -185,9 +199,15 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
     scan = AttachmentScan.find_by!(active_storage_blob: @vessel.primary_photo.blob)
     sign_in_as(@owner)
 
-    scan.update!(status: "rejected", status_code: "THREATS_FOUND", completed_at: Time.current)
-    get vessel_primary_photo_path(@vessel, presentation: "profile")
-    assert_response :not_found
+    %w[pending failed rejected].each do |status|
+      scan.update!(
+        status:,
+        status_code: { "failed" => "FAILED", "rejected" => "THREATS_FOUND" }[status],
+        completed_at: status == "pending" ? nil : Time.current
+      )
+      get vessel_primary_photo_path(@vessel, presentation: "profile")
+      assert_response :not_found
+    end
 
     scan.update!(status: "trusted_existing", status_code: "ROLLOUT_BACKFILL", completed_at: Time.current)
     @membership.update!(active: false)
@@ -212,6 +232,21 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
     assert_response :success
     assert_equal current_variant_body, response.body
     assert_not_equal old_variant_body, response.body
+  end
+
+  test "a stale profile URL cannot serve a deleted photo" do
+    @vessel.primary_photo.variant(:profile).processed
+    stale_path = vessel_primary_photo_path(
+      @vessel,
+      presentation: "profile",
+      v: @vessel.primary_photo.blob.id
+    )
+    @vessel.primary_photo.purge
+    sign_in_as(@owner)
+
+    get stale_path
+
+    assert_response :not_found
   end
 
   test "card variants remain gated by source scan state and current authorization" do
