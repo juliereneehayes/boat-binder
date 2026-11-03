@@ -14,23 +14,66 @@ module Storage
       clear_enqueued_jobs
     end
 
-    test "processes the card variant only for an approved current Vessel photo" do
+    test "processes card and profile variants only for an approved current Vessel photo" do
       trust_attachment(@vessel.primary_photo)
 
-      assert_difference -> { ActiveStorage::VariantRecord.count }, 1 do
+      assert_difference -> { ActiveStorage::VariantRecord.count }, 2 do
         VesselPrimaryPhotoVariantJob.perform_now(@attachment.id, @blob.id)
       end
 
-      image = @attachment.variant(:card).image
-      assert image.attached?
-      assert_equal "image/webp", image.blob.content_type
-      processed_image = Vips::Image.new_from_buffer(image.blob.download, "")
-      assert_equal Asset::PRIMARY_PHOTO_CARD_WIDTH, processed_image.width
-      assert_equal Asset::PRIMARY_PHOTO_CARD_HEIGHT, processed_image.height
+      {
+        card: [ Asset::PRIMARY_PHOTO_CARD_WIDTH, Asset::PRIMARY_PHOTO_CARD_HEIGHT ],
+        profile: [ Asset::PRIMARY_PHOTO_PROFILE_WIDTH, Asset::PRIMARY_PHOTO_PROFILE_HEIGHT ]
+      }.each do |name, dimensions|
+        image = @attachment.variant(name).image
+        assert image.attached?
+        assert_equal "image/webp", image.blob.content_type
+        processed_image = Vips::Image.new_from_buffer(image.blob.download, "")
+        assert_equal dimensions, [ processed_image.width, processed_image.height ]
+      end
 
       assert_no_difference -> { ActiveStorage::VariantRecord.count } do
         VesselPrimaryPhotoVariantJob.perform_now(@attachment.id, @blob.id)
       end
+    end
+
+    test "an existing card variant queues the shared job once when the profile variant is missing" do
+      trust_attachment(@vessel.primary_photo)
+      @attachment.variant(:card).processed
+      source_blob_id = @blob.id
+      source_checksum = @blob.checksum
+      card_blob = @attachment.variant(:card).image.blob
+      card_blob_id = card_blob.id
+      card_checksum = card_blob.checksum
+
+      assert_enqueued_jobs 1, only: VesselPrimaryPhotoVariantJob do
+        assert_equal :pending,
+          VesselPrimaryPhotoVariantJob.enqueue_for(@attachment, required_variant: :profile)
+        assert_equal :pending,
+          VesselPrimaryPhotoVariantJob.enqueue_for(@attachment, required_variant: :profile)
+      end
+
+      assert_equal :ready, VesselPrimaryPhotoVariantJob.status_for(@attachment, variant: :card)
+      assert_equal :pending, VesselPrimaryPhotoVariantJob.status_for(@attachment, variant: :profile)
+
+      processed_variants = []
+      with_replaced_instance_method(
+        VesselPrimaryPhotoVariantJob,
+        :process_variant,
+        lambda do |attachment, name|
+          processed_variants << name
+          attachment.variant(name).processed
+        end
+      ) do
+        claimed_job(@attachment, @blob).perform_now
+      end
+
+      assert_equal [ :profile ], processed_variants
+      assert_equal :ready, VesselPrimaryPhotoVariantJob.status_for(@attachment.reload, variant: :profile)
+      assert_equal source_blob_id, @attachment.reload.blob.id
+      assert_equal source_checksum, @attachment.blob.checksum
+      assert_equal card_blob_id, @attachment.variant(:card).image.blob.id
+      assert_equal card_checksum, @attachment.variant(:card).image.blob.checksum
     end
 
     test "does not process unavailable scan states" do
@@ -224,7 +267,7 @@ module Storage
       with_replaced_instance_method(
         VesselPrimaryPhotoVariantJob,
         :process_variant,
-        ->(_attachment) { raise IOError, "synthetic storage outage" }
+        ->(_attachment, _name) { raise IOError, "synthetic storage outage" }
       ) do
         assert_enqueued_with(
           job: VesselPrimaryPhotoVariantJob,

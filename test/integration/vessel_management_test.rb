@@ -539,11 +539,19 @@ class VesselManagementTest < ActionDispatch::IntegrationTest
     vessel.primary_photo.attach(fixture_file_upload("sample.jpg", "image/jpeg"))
     trust_attachment(vessel.primary_photo)
     vessel.primary_photo.variant(:card).processed
+    vessel.primary_photo.variant(:profile).processed
 
     get vessel_path(vessel)
 
     assert_response :success
-    assert_select "img[alt=?]", "#{vessel.name} primary photo"
+    assert_select "img[alt=?][width=?][height=?][decoding=?][src=?]",
+      "#{vessel.name} primary photo",
+      Asset::PRIMARY_PHOTO_PROFILE_WIDTH.to_s,
+      Asset::PRIMARY_PHOTO_PROFILE_HEIGHT.to_s,
+      "async",
+      vessel_primary_photo_path(vessel, v: vessel.primary_photo.blob.id, presentation: "profile")
+    assert_select "p", text: /Optimized photo|Photo optimization/, count: 0
+    assert_select "a", text: "Check status", count: 0
 
     get root_path
 
@@ -571,7 +579,7 @@ class VesselManagementTest < ActionDispatch::IntegrationTest
     get vessel_path(vessel)
     assert_response :success
     initial_src = css_select("img[alt='#{vessel.name} primary photo']").sole["src"]
-    assert_equal vessel_primary_photo_path(vessel, v: initial_blob_id), initial_src
+    assert_equal vessel_primary_photo_path(vessel, v: initial_blob_id, presentation: "profile"), initial_src
     assert_not_includes initial_src, "/rails/active_storage"
 
     get vessel_path(vessel)
@@ -589,7 +597,7 @@ class VesselManagementTest < ActionDispatch::IntegrationTest
 
     replacement_blob_id = vessel.reload.primary_photo.blob.id
     replacement_src = css_select("img[alt='#{vessel.name} primary photo']").sole["src"]
-    assert_equal vessel_primary_photo_path(vessel, v: replacement_blob_id), replacement_src
+    assert_equal vessel_primary_photo_path(vessel, v: replacement_blob_id, presentation: "profile"), replacement_src
     assert_not_equal initial_src, replacement_src
     assert_not_includes replacement_src, "/rails/active_storage"
     refute_match(%r{\Ahttps?://}, replacement_src)

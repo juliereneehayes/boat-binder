@@ -69,6 +69,78 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
     assert_equal "image/jpeg", response.media_type
   end
 
+  test "authorized members stream a preprocessed profile variant while the original URL remains compatible" do
+    @vessel.primary_photo.variant(:profile).processed
+    sign_in_as(@owner)
+
+    get vessel_primary_photo_path(@vessel, presentation: "profile", v: @vessel.primary_photo.blob.id)
+
+    assert_response :success
+    assert_equal "image/webp", response.media_type
+    assert_equal @vessel.primary_photo.variant(:profile).image.blob.byte_size.to_s,
+      response.headers.fetch("Content-Length")
+    assert_private_no_store
+
+    get vessel_primary_photo_path(@vessel)
+    assert_response :success
+    assert_equal "image/jpeg", response.media_type
+  end
+
+  test "a historical photo queues one shared job and uses the protected original until its profile variant is ready" do
+    @vessel.primary_photo.variant(:card).processed
+    sign_in_as(@owner)
+    clear_enqueued_jobs
+
+    assert_enqueued_jobs 1, only: Storage::VesselPrimaryPhotoVariantJob do
+      get vessel_path(@vessel)
+    end
+
+    assert_response :success
+    assert_select "img[src=?]", vessel_primary_photo_path(
+      @vessel,
+      presentation: "profile",
+      v: @vessel.primary_photo.blob.id
+    )
+    assert_select "p", text: /Optimized photo|Photo optimization/, count: 0
+    assert_select "a", text: "Check status", count: 0
+
+    assert_no_difference -> { enqueued_jobs.count { |job| job[:job] == Storage::VesselPrimaryPhotoVariantJob } } do
+      get vessel_path(@vessel)
+    end
+    assert_response :success
+
+    assert_no_difference -> { ActiveStorage::VariantRecord.count } do
+      get vessel_primary_photo_path(@vessel, presentation: "profile")
+    end
+    assert_response :success
+    assert_equal "image/jpeg", response.media_type
+
+    perform_enqueued_jobs only: Storage::VesselPrimaryPhotoVariantJob
+    get vessel_primary_photo_path(@vessel, presentation: "profile")
+
+    assert_response :success
+    assert_equal "image/webp", response.media_type
+  end
+
+  test "a ready profile variant skips Solid Queue state lookup" do
+    @vessel.primary_photo.variant(:profile).processed
+    sign_in_as(@owner)
+    queue_lookup_called = false
+    receiver = Storage::VesselPrimaryPhotoVariantJob.singleton_class
+    original = receiver.instance_method(:queue_job_states_for)
+    receiver.define_method(:queue_job_states_for) do |_attachments|
+      queue_lookup_called = true
+      {}
+    end
+
+    get vessel_path(@vessel)
+
+    assert_response :success
+    assert_not queue_lookup_called
+  ensure
+    receiver&.define_method(:queue_job_states_for, original) if original
+  end
+
   test "a stale card URL never serves a superseded photo after replacement" do
     @vessel.primary_photo.variant(:card).processed
     old_blob = @vessel.primary_photo.blob
@@ -108,7 +180,7 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
     assert_response :not_found
   end
 
-  test "card variant route never processes synchronously and rejects unknown presentations" do
+  test "variant routes never process synchronously and reject unknown presentations" do
     sign_in_as(@owner)
 
     assert_no_difference -> { ActiveStorage::VariantRecord.count } do
@@ -116,7 +188,69 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
     end
     assert_response :not_found
 
+    assert_no_difference -> { ActiveStorage::VariantRecord.count } do
+      get vessel_primary_photo_path(@vessel, presentation: "profile")
+    end
+    assert_response :success
+    assert_equal "image/jpeg", response.media_type
+    assert_private_no_store
+
     get vessel_primary_photo_path(@vessel, presentation: "future-size")
+    assert_response :not_found
+  end
+
+  test "profile variants remain gated by source scan state and current authorization" do
+    @vessel.primary_photo.variant(:profile).processed
+    scan = AttachmentScan.find_by!(active_storage_blob: @vessel.primary_photo.blob)
+    sign_in_as(@owner)
+
+    %w[pending failed rejected].each do |status|
+      scan.update!(
+        status:,
+        status_code: { "failed" => "FAILED", "rejected" => "THREATS_FOUND" }[status],
+        completed_at: status == "pending" ? nil : Time.current
+      )
+      get vessel_primary_photo_path(@vessel, presentation: "profile")
+      assert_response :not_found
+    end
+
+    scan.update!(status: "trusted_existing", status_code: "ROLLOUT_BACKFILL", completed_at: Time.current)
+    @membership.update!(active: false)
+    get vessel_primary_photo_path(@vessel, presentation: "profile")
+    assert_response :not_found
+  end
+
+  test "a stale profile URL never serves a superseded photo after replacement" do
+    @vessel.primary_photo.variant(:profile).processed
+    old_blob = @vessel.primary_photo.blob
+    old_variant_body = @vessel.primary_photo.variant(:profile).image.blob.download
+    stale_path = vessel_primary_photo_path(@vessel, presentation: "profile", v: old_blob.id)
+
+    @vessel.primary_photo.attach(fixture_file_upload("sample.png", "image/png"))
+    trust_attachment(@vessel.primary_photo)
+    @vessel.primary_photo.variant(:profile).processed
+    current_variant_body = @vessel.primary_photo.variant(:profile).image.blob.download
+    sign_in_as(@owner)
+
+    get stale_path
+
+    assert_response :success
+    assert_equal current_variant_body, response.body
+    assert_not_equal old_variant_body, response.body
+  end
+
+  test "a stale profile URL cannot serve a deleted photo" do
+    @vessel.primary_photo.variant(:profile).processed
+    stale_path = vessel_primary_photo_path(
+      @vessel,
+      presentation: "profile",
+      v: @vessel.primary_photo.blob.id
+    )
+    @vessel.primary_photo.purge
+    sign_in_as(@owner)
+
+    get stale_path
+
     assert_response :not_found
   end
 
@@ -314,7 +448,11 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
 
     get vessel_path(@vessel)
     assert_response :success
-    assert_select "img[src=?]", vessel_primary_photo_path(@vessel, v: @vessel.primary_photo.blob.id)
+    assert_select "img[src=?]", vessel_primary_photo_path(
+      @vessel,
+      v: @vessel.primary_photo.blob.id,
+      presentation: "profile"
+    )
     assert_select "a[href^=?]", document_file_path(@document), minimum: 1
     assert_select "[src^='/rails/active_storage'], [href^='/rails/active_storage']", count: 0
 
@@ -348,10 +486,12 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
 
   test "logged out requests cannot retrieve protected attachments" do
     @vessel.primary_photo.variant(:card).processed
+    @vessel.primary_photo.variant(:profile).processed
     [
       document_file_path(@document),
       vessel_primary_photo_path(@vessel),
       vessel_primary_photo_path(@vessel, presentation: "card"),
+      vessel_primary_photo_path(@vessel, presentation: "profile"),
       service_visit_photo_path(@vessel, @visit, @photo)
     ].each do |path|
       get path
@@ -382,6 +522,8 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
     get vessel_primary_photo_path(@vessel)
     assert_response :not_found
     get vessel_primary_photo_path(@vessel, presentation: "card")
+    assert_response :not_found
+    get vessel_primary_photo_path(@vessel, presentation: "profile")
     assert_response :not_found
     get service_visit_photo_path(@vessel, @visit, @photo)
     assert_response :not_found

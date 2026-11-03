@@ -35,7 +35,8 @@ class AttachmentStatusRefreshTest < ApplicationSystemTestCase
     add_navigation_link(vessel_path(vessel), "Reload vessel")
     click_link "Reload vessel"
 
-    assert_selector "img[src='#{vessel_primary_photo_path(vessel, v: vessel.primary_photo.blob.id)}']"
+    profile_path = vessel_primary_photo_path(vessel, v: vessel.primary_photo.blob.id, presentation: "profile")
+    assert_selector "img[src='#{profile_path}']"
     assert_no_selector "img[src^='blob:']"
     assert_equal [ preview_url ], revoked_object_urls
   end
