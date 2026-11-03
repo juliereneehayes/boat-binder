@@ -47,6 +47,36 @@ class MarketingControllerTest < ActionDispatch::IntegrationTest
     assert_redirected_to new_session_path
   end
 
+  test "staging domain exposes the marketing preview" do
+    host! "staging.boat-binder.com"
+
+    get marketing_preview_path
+
+    assert_response :success
+    assert_select "h1"
+    assert_select "a[href='#{signup_path}']", text: "Start Free Trial", count: 1
+  end
+
+  test "marketing preview is unavailable on production hosts" do
+    [ "boat-binder.com", "www.boat-binder.com", "app.boat-binder.com" ].each do |host|
+      host! host
+
+      get "/marketing-preview"
+
+      assert_response :not_found, "expected marketing preview to be unavailable on #{host}"
+    end
+  end
+
+  test "staging signup and registration routes remain available" do
+    host! "staging.boat-binder.com"
+
+    get signup_path
+    assert_response :success
+
+    get new_registration_path
+    assert_response :success
+  end
+
   test "application domain root still requires authentication" do
     host! "app.boat-binder.com"
 
