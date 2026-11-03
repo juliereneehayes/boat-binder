@@ -26,6 +26,8 @@ class PublicAnalytics::ConfigurationTest < ActiveSupport::TestCase
     assert_nil measurement_id(configured_measurement_id: nil)
     assert_nil measurement_id(configured_measurement_id: "")
     assert_nil measurement_id(configured_measurement_id: "not-a-measurement-id")
+    assert_nil measurement_id(configured_measurement_id: "g-test123")
+    assert_nil measurement_id(configured_measurement_id: "G-Test123")
     assert_nil measurement_id(configured_measurement_id: "G-TEST123\" onload=\"alert(1)")
   end
 

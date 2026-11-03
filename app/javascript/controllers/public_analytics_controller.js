@@ -7,7 +7,8 @@ const ALLOWED_UTM_PARAMETERS = [
   "utm_content",
   "utm_term"
 ]
-const SAFE_UTM_VALUE = /^[a-zA-Z0-9][a-zA-Z0-9._~-]{0,99}$/
+const SAFE_UTM_VALUE = /^[a-z0-9]+(?:_[a-z0-9]+)*$/
+const MAX_UTM_VALUE_LENGTH = 50
 const GOOGLE_TAG_SCRIPT_ID = "boat-binder-google-analytics"
 const INITIALIZED_KEY = "__boatBinderPublicAnalyticsInitialized"
 
@@ -15,6 +16,23 @@ export default class extends Controller {
   static values = { measurementId: String }
 
   connect() {
+    this.handlePageShow = this.handlePageShow.bind(this)
+    window.addEventListener("pageshow", this.handlePageShow)
+    this.initializeAnalytics()
+  }
+
+  disconnect() {
+    window.removeEventListener("pageshow", this.handlePageShow)
+  }
+
+  handlePageShow(event) {
+    if (!event.persisted) return
+
+    window[INITIALIZED_KEY] = false
+    this.initializeAnalytics()
+  }
+
+  initializeAnalytics() {
     if (!this.hasMeasurementIdValue || window[INITIALIZED_KEY]) return
 
     window[INITIALIZED_KEY] = true
@@ -62,7 +80,9 @@ export default class extends Controller {
 
     ALLOWED_UTM_PARAMETERS.forEach((name) => {
       const value = currentParameters.get(name)
-      if (value && SAFE_UTM_VALUE.test(value)) sanitizedUrl.searchParams.set(name, value)
+      if (value && value.length <= MAX_UTM_VALUE_LENGTH && SAFE_UTM_VALUE.test(value)) {
+        sanitizedUrl.searchParams.set(name, value)
+      }
     })
 
     return sanitizedUrl.toString()

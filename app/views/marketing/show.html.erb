@@ -38,8 +38,7 @@
             <%= link_to "Start Free Trial", signup_path,
               class: "inline-flex min-h-12 items-center justify-center rounded-md bg-[#1E5A7A] px-6 py-3 text-base font-black text-white shadow-sm transition hover:bg-[#174760]",
               data: @google_analytics_measurement_id.present? ? {
-                action: "click->public-analytics#trackSignupCta",
-                turbo: false
+                action: "click->public-analytics#trackSignupCta"
               } : {} %>
             <a href="#features" class="inline-flex min-h-12 items-center justify-center rounded-md border border-[#C9DEE2] bg-white px-6 py-3 text-base font-black transition hover:border-[#7DAAB3] hover:bg-[#E8F3F5]">
               Explore the product
@@ -152,7 +151,7 @@
           </article>
           <article id="privacy" class="rounded-xl border border-[#E7DED2] p-6">
             <h3 class="text-lg font-black">Privacy</h3>
-            <p class="mt-3 text-sm leading-6 text-slate-600">We use account, vessel, and service information to provide and secure Boat Binder. On our public homepage, cookieless Google Analytics helps us understand visits, referrals, campaigns, and trial-link clicks; it is not used inside Boat Binder accounts. Stripe processes payment details; Boat Binder does not store full card numbers. We do not sell personal information.</p>
+            <p class="mt-3 text-sm leading-6 text-slate-600">We use account, vessel, and service information to provide and secure Boat Binder. On our public homepage, cookieless Google Analytics receives limited visit, campaign, referral, browser/device, and network information, plus trial-link clicks, to help us understand interest. It is not used inside Boat Binder accounts. Stripe processes payment details; Boat Binder does not store full card numbers. We do not sell personal information.</p>
           </article>
         </div>
 

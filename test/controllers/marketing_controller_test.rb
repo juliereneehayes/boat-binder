@@ -47,10 +47,12 @@ class MarketingControllerTest < ActionDispatch::IntegrationTest
     end
 
     assert_response :success
-    assert_select "body[data-controller='public-analytics'][data-public-analytics-measurement-id-value='G-TEST123']", count: 1
-    assert_select "a[href='#{signup_path}'][data-action='click->public-analytics#trackSignupCta'][data-turbo='false']",
+    assert_select "body[data-controller='public-analytics'][data-public-analytics-measurement-id-value='G-TEST123'][data-turbo='false']",
+      count: 1
+    assert_select "a[href='#{signup_path}'][data-action='click->public-analytics#trackSignupCta']",
       text: "Start Free Trial", count: 1
-    assert_includes response.body, "cookieless Google Analytics"
+    assert_select "a[href='#{signup_path}'][data-turbo]", count: 0
+    assert_includes response.body, "browser/device, and network information"
     assert_not_includes response.body, "googletagmanager.com"
   end
 
@@ -61,6 +63,7 @@ class MarketingControllerTest < ActionDispatch::IntegrationTest
 
     assert_response :success
     assert_select "body[data-controller='public-analytics']", count: 0
+    assert_select "body[data-turbo]", count: 0
     assert_select "a[href='#{signup_path}'][data-action]", count: 0
     assert_select "a[href='#{signup_path}'][data-turbo]", count: 0
   end
@@ -82,6 +85,7 @@ class MarketingControllerTest < ActionDispatch::IntegrationTest
     assert_select "h1"
     assert_select "a[href='#{signup_path}']", text: "Start Free Trial", count: 1
     assert_select "body[data-controller='public-analytics']", count: 0
+    assert_select "body[data-turbo]", count: 0
     assert_select "a[href='#{signup_path}'][data-action]", count: 0
   end
 
