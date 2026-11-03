@@ -35,6 +35,23 @@ class SelfServiceRegistrationIntegrationTest < ActionDispatch::IntegrationTest
     assert_select "input[name='registration[payment_method]']", count: 0
   end
 
+  test "signup renders the existing registration form and submission path" do
+    get signup_path
+
+    assert_response :success
+    assert_select "h1", text: "Create your Boat Binder account"
+    assert_select "form[action='#{registration_path}'][method='post']"
+  end
+
+  test "authenticated users cannot access signup" do
+    owner = create_user(email: "signed-in-signup@example.test", role: "owner")
+    sign_in_as owner
+
+    get signup_path
+
+    assert_redirected_to root_path
+  end
+
   test "registration ignores privileged tampering and does not authenticate or call Stripe" do
     existing_account = create_account(name: "Existing Account")
     params = registration_params.merge(
