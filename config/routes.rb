@@ -41,6 +41,12 @@ Rails.application.routes.draw do
     root "marketing#show", as: :marketing_root
   end
 
+  # Shared staging uses the production Rails environment, so constrain the public preview to its
+  # exact hostname while preserving the authenticated staging root.
+  constraints ->(request) { request.host == "staging.boat-binder.com" } do
+    get "marketing-preview", to: "marketing#show", as: :marketing_preview
+  end
+
   root "dashboard#index"
 
   get "accounts", to: "accounts#index", as: :accounts
