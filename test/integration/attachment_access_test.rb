@@ -125,13 +125,20 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
   test "a ready profile variant skips Solid Queue state lookup" do
     @vessel.primary_photo.variant(:profile).processed
     sign_in_as(@owner)
-
-    queue_queries = count_sql_queries(->(sql) { sql.include?(%q("solid_queue_jobs")) }) do
-      get vessel_path(@vessel)
+    queue_lookup_called = false
+    receiver = Storage::VesselPrimaryPhotoVariantJob.singleton_class
+    original = receiver.instance_method(:queue_job_states_for)
+    receiver.define_method(:queue_job_states_for) do |_attachments|
+      queue_lookup_called = true
+      {}
     end
 
+    get vessel_path(@vessel)
+
     assert_response :success
-    assert_equal 0, queue_queries
+    assert_not queue_lookup_called
+  ensure
+    receiver&.define_method(:queue_job_states_for, original) if original
   end
 
   test "a stale card URL never serves a superseded photo after replacement" do
