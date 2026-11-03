@@ -16,7 +16,7 @@
     <%= javascript_importmap_tags %>
   </head>
 
-  <body class="bg-[#F7F5F2] text-[#0B1F35] antialiased">
+  <body class="bg-[#F7F5F2] text-[#0B1F35] antialiased"<% if @google_analytics_measurement_id.present? %> data-controller="public-analytics" data-public-analytics-measurement-id-value="<%= @google_analytics_measurement_id %>" data-turbo="false"<% end %>>
     <%= yield %>
   </body>
 </html>
