@@ -41,6 +41,8 @@ class SelfServiceRegistrationIntegrationTest < ActionDispatch::IntegrationTest
     assert_response :success
     assert_select "h1", text: "Create your Boat Binder account"
     assert_select "form[action='#{registration_path}'][method='post']"
+    assert_select "body[data-controller='public-analytics']", count: 0
+    assert_not_includes response.body, "googletagmanager.com"
   end
 
   test "authenticated users cannot access signup" do

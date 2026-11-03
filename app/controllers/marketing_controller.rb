@@ -3,5 +3,6 @@ class MarketingController < ApplicationController
   layout "marketing"
 
   def show
+    @google_analytics_measurement_id = PublicAnalytics::Configuration.measurement_id(host: request.host)
   end
 end

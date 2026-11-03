@@ -39,6 +39,32 @@ class MarketingControllerTest < ActionDispatch::IntegrationTest
     assert_select "link[rel='canonical'][href='https://boat-binder.com/']", count: 1
   end
 
+  test "approved production homepage renders privacy-limited analytics hooks" do
+    host! "boat-binder.com"
+
+    with_singleton_method(PublicAnalytics::Configuration, :measurement_id, ->(**) { "G-TEST123" }) do
+      get "/"
+    end
+
+    assert_response :success
+    assert_select "body[data-controller='public-analytics'][data-public-analytics-measurement-id-value='G-TEST123']", count: 1
+    assert_select "a[href='#{signup_path}'][data-action='click->public-analytics#trackSignupCta'][data-turbo='false']",
+      text: "Start Free Trial", count: 1
+    assert_includes response.body, "cookieless Google Analytics"
+    assert_not_includes response.body, "googletagmanager.com"
+  end
+
+  test "analytics hooks are absent when configuration is disabled" do
+    host! "boat-binder.com"
+
+    get "/"
+
+    assert_response :success
+    assert_select "body[data-controller='public-analytics']", count: 0
+    assert_select "a[href='#{signup_path}'][data-action]", count: 0
+    assert_select "a[href='#{signup_path}'][data-turbo]", count: 0
+  end
+
   test "staging domain root still requires authentication" do
     host! "staging.boat-binder.com"
 
@@ -55,6 +81,8 @@ class MarketingControllerTest < ActionDispatch::IntegrationTest
     assert_response :success
     assert_select "h1"
     assert_select "a[href='#{signup_path}']", text: "Start Free Trial", count: 1
+    assert_select "body[data-controller='public-analytics']", count: 0
+    assert_select "a[href='#{signup_path}'][data-action]", count: 0
   end
 
   test "marketing preview is unavailable on production hosts" do
@@ -83,5 +111,16 @@ class MarketingControllerTest < ActionDispatch::IntegrationTest
     get "/"
 
     assert_redirected_to new_session_path
+  end
+
+  private
+
+  def with_singleton_method(receiver, method_name, replacement)
+    original_method = receiver.method(method_name)
+    receiver.define_singleton_method(method_name, replacement)
+
+    yield
+  ensure
+    receiver.define_singleton_method(method_name, original_method)
   end
 end

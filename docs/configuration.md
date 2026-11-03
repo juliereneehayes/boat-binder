@@ -29,6 +29,19 @@ verified database backup instead of attempting to roll them back.
 
 - `APP_HOST` - host used in production email links, such as `app.boat-binder.com`.
 
+## Public Homepage Analytics
+
+- `GOOGLE_ANALYTICS_MEASUREMENT_ID` - optional GA4 web-stream measurement ID in `G-...` format.
+
+When configured, analytics loads only for `/` on `boat-binder.com` and `www.boat-binder.com` in
+the Rails production environment. It does not load on staging (including `/marketing-preview`),
+development, test, signup, authentication, or authenticated application pages. Unsetting the
+variable disables analytics without affecting the homepage or signup flow.
+
+The implementation uses cookieless consent defaults and disables Google Signals, advertising
+personalization, advertising storage, and URL passthrough. See [Public Homepage Analytics](public-analytics.md)
+for the event name, UTM convention, GA4 report setup, and verification checklist.
+
 ## Rails Application Secrets
 
 - `SECRET_KEY_BASE` - required in production and stored as a Heroku config var.
