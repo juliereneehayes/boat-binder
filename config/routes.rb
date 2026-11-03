@@ -13,6 +13,7 @@ Rails.application.routes.draw do
   delete "settings/sessions/others", to: "settings#destroy_other_sessions", as: :other_settings_sessions
   resource :email_change_confirmation, only: %i[show create], path: "email-change-confirmation"
   resource :registration, only: %i[new create]
+  get "signup", to: "registrations#new", as: :signup
   get "email-verifications", to: "email_verifications#show", as: :email_verification
   post "email-verifications", to: "email_verifications#create"
   get "email-verifications/resend", to: "email_verifications#new", as: :new_email_verification
