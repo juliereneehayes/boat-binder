@@ -126,14 +126,12 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
     @vessel.primary_photo.variant(:profile).processed
     sign_in_as(@owner)
 
-    Storage::VesselPrimaryPhotoVariantJob.stub(
-      :queue_job_states_for,
-      ->(_attachments) { flunk "ready profile variants must not query Solid Queue" }
-    ) do
+    queue_queries = count_sql_queries(->(sql) { sql.include?(%q("solid_queue_jobs")) }) do
       get vessel_path(@vessel)
     end
 
     assert_response :success
+    assert_equal 0, queue_queries
   end
 
   test "a stale card URL never serves a superseded photo after replacement" do
