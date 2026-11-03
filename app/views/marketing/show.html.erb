@@ -28,7 +28,6 @@
       <div class="absolute inset-0 -z-10 bg-gradient-to-br from-[#E8F3F5] via-[#F7F5F2] to-white"></div>
       <div class="mx-auto grid max-w-7xl items-center gap-12 px-5 py-16 md:px-8 md:py-24 lg:grid-cols-[1.05fr_0.95fr] lg:py-28">
         <div>
-          <span class="inline-flex rounded-full bg-white px-3 py-1.5 text-xs font-black uppercase tracking-wide text-[#1E5A7A] ring-1 ring-[#C9DEE2]">Launching soon</span>
           <h1 class="mt-6 max-w-3xl text-4xl font-black leading-tight tracking-tight sm:text-5xl lg:text-6xl">
             Your vessel records, organized and ready when you need them.
           </h1>
@@ -36,9 +35,7 @@
             Boat Binder gives boat owners one secure place for vessel details, documents, maintenance reminders, service history, and the notes that keep ownership running smoothly.
           </p>
           <div class="mt-8 flex flex-col gap-3 sm:flex-row">
-            <a href="mailto:support@boat-binder.com" class="inline-flex min-h-12 items-center justify-center rounded-md bg-[#1E5A7A] px-6 py-3 text-base font-black text-white shadow-sm transition hover:bg-[#174760]">
-              Contact Boat Binder
-            </a>
+            <%= link_to "Start Free Trial", signup_path, class: "inline-flex min-h-12 items-center justify-center rounded-md bg-[#1E5A7A] px-6 py-3 text-base font-black text-white shadow-sm transition hover:bg-[#174760]" %>
             <a href="#features" class="inline-flex min-h-12 items-center justify-center rounded-md border border-[#C9DEE2] bg-white px-6 py-3 text-base font-black transition hover:border-[#7DAAB3] hover:bg-[#E8F3F5]">
               Explore the product
             </a>
@@ -128,7 +125,7 @@
             </article>
           </div>
         </div>
-        <p class="mt-6 text-sm leading-6 text-slate-600">Subscriptions renew automatically unless canceled. Online enrollment is not yet open.</p>
+        <p class="mt-6 text-sm leading-6 text-slate-600">Subscriptions renew automatically unless canceled.</p>
       </div>
     </section>
 
