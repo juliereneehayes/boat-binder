@@ -8,8 +8,12 @@ class MarketingControllerTest < ActionDispatch::IntegrationTest
 
     assert_response :success
     assert_select "h1", text: /Your vessel records/
-    assert_select "a[href='mailto:support@boat-binder.com']"
+    assert_select "a[href='#{signup_path}']", text: "Start Free Trial", count: 1
+    assert_select "a[href='#features']", text: "Explore the product", count: 1
+    assert_select "a[href='mailto:support@boat-binder.com']", minimum: 1
     assert_select "a[href='https://app.boat-binder.com/']", count: 2
+    assert_not_includes response.body, "Launching soon"
+    assert_not_includes response.body, "Online enrollment is not yet open"
     catalog = Billing::SubscriptionPlanCatalog.new(
       price_ids: {
         "self_managed_monthly" => "price_marketing_monthly",
