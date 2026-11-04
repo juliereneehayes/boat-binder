@@ -11,7 +11,7 @@ const SAFE_UTM_VALUE = /^[a-z0-9]+(?:_[a-z0-9]+)*$/
 const MAX_UTM_VALUE_LENGTH = 50
 const GOOGLE_TAG_SCRIPT_ID = "boat-binder-google-analytics"
 const INITIALIZED_KEY = "__boatBinderPublicAnalyticsInitialized"
-const SIGNUP_NAVIGATION_TIMEOUT = 300
+const SIGNUP_ANALYTICS_DELAY = 300
 const SIGNUP_NAVIGATION_RECOVERY_TIMEOUT = 2000
 
 export default class extends Controller {
@@ -95,8 +95,8 @@ export default class extends Controller {
       if (navigated || this.signupNavigationOperation !== navigationOperation) return
 
       navigated = true
-      window.clearTimeout(this.signupNavigationFallbackTimeout)
-      this.signupNavigationFallbackTimeout = undefined
+      window.clearTimeout(this.signupNavigationDelayTimeout)
+      this.signupNavigationDelayTimeout = undefined
       this.signupNavigationRecoveryTimeout = window.setTimeout(
         () => this.resetSignupNavigation(),
         SIGNUP_NAVIGATION_RECOVERY_TIMEOUT
@@ -110,13 +110,10 @@ export default class extends Controller {
       }
     }
 
-    this.signupNavigationFallbackTimeout = window.setTimeout(navigate, SIGNUP_NAVIGATION_TIMEOUT)
+    this.signupNavigationDelayTimeout = window.setTimeout(navigate, SIGNUP_ANALYTICS_DELAY)
 
     try {
-      window.gtag("event", "start_free_trial_click", {
-        event_callback: navigate,
-        event_timeout: SIGNUP_NAVIGATION_TIMEOUT
-      })
+      window.gtag("event", "start_free_trial_click")
     } catch (_error) {
       navigate()
     }
@@ -125,9 +122,9 @@ export default class extends Controller {
   resetSignupNavigation() {
     this.signupNavigationPending = false
     this.signupNavigationOperation = undefined
-    window.clearTimeout(this.signupNavigationFallbackTimeout)
+    window.clearTimeout(this.signupNavigationDelayTimeout)
     window.clearTimeout(this.signupNavigationRecoveryTimeout)
-    this.signupNavigationFallbackTimeout = undefined
+    this.signupNavigationDelayTimeout = undefined
     this.signupNavigationRecoveryTimeout = undefined
   }
 
