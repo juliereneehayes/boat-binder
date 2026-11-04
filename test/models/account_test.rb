@@ -24,6 +24,14 @@ class AccountTest < ActiveSupport::TestCase
     assert_includes account.errors[:time_zone], "is not included in the list"
   end
 
+  test "keeps time zone identifiers supported before Rails 8.1.4 valid" do
+    Account::LEGACY_TIME_ZONE_ALIASES.each_key do |time_zone|
+      account = Account.new(name: "Hayes", account_type: "client", time_zone:)
+
+      assert account.valid?, "Expected #{time_zone} to remain valid"
+    end
+  end
+
   test "database default is Pacific time for existing-account backfills" do
     default = Account.columns_hash.fetch("time_zone").default
 

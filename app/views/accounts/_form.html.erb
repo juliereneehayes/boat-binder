@@ -14,7 +14,7 @@
     </div>
     <div>
       <%= form.label :time_zone, "Time zone", class: "text-sm font-semibold text-slate-700" %>
-      <%= form.select :time_zone, account_time_zone_options, {}, class: "mt-2 min-h-12 w-full rounded-md border border-slate-300 px-4 py-3 text-base" %>
+      <%= form.select :time_zone, account_time_zone_options(selected_time_zone: account.time_zone), {}, class: "mt-2 min-h-12 w-full rounded-md border border-slate-300 px-4 py-3 text-base" %>
       <p class="mt-2 text-sm leading-6 text-slate-600">Used for customer-facing dates, report timestamps, and account-local today.</p>
     </div>
     <label class="flex min-h-12 items-center gap-3 rounded-md border border-slate-300 px-4 py-3">

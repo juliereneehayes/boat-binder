@@ -77,6 +77,18 @@ class OwnerManagementTest < ActionDispatch::IntegrationTest
     assert_select "select[name='account[time_zone]'] option[value='America/New_York'][selected]"
   end
 
+  test "owner form preserves a time zone identifier supported before Rails 8.1.4" do
+    sign_in_as create_user(email: "admin-legacy-time-zone@example.test", role: "admin")
+    owner = create_account(name: "Legacy Time Zone Owner")
+    owner.update_column(:time_zone, "Europe/Kiev")
+
+    get edit_owner_path(owner)
+
+    assert_response :success
+    assert_select "select[name='account[time_zone]'] option[value='Europe/Kiev'][selected]", text: /Kyiv/
+    assert_select "select[name='account[time_zone]'] option[value='Europe/Kyiv']", count: 0
+  end
+
   test "owner creation failure after rollback rerenders create form action with submitted values" do
     original_default_attributes = Subscription.method(:default_local_attributes)
     Subscription.define_singleton_method(:default_local_attributes) do

@@ -17,9 +17,12 @@ module ApplicationHelper
     account_local_time(value, account)&.strftime("%b %-d, %Y at %-l:%M %p %Z") || "Not recorded"
   end
 
-  def account_time_zone_options
+  def account_time_zone_options(selected_time_zone: nil)
+    canonical_time_zone = Account::LEGACY_TIME_ZONE_ALIASES[selected_time_zone]
+
     ActiveSupport::TimeZone.all.map do |zone|
-      [ zone.to_s, zone.tzinfo.name ]
+      value = zone.tzinfo.name == canonical_time_zone ? selected_time_zone : zone.tzinfo.name
+      [ zone.to_s, value ]
     end
   end
 
