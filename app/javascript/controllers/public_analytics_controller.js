@@ -24,9 +24,11 @@ export default class extends Controller {
 
   disconnect() {
     window.removeEventListener("pageshow", this.handlePageShow)
+    this.resetSignupNavigation()
   }
 
   handlePageShow(event) {
+    this.resetSignupNavigation()
     if (!event.persisted) return
 
     window[INITIALIZED_KEY] = false
@@ -92,7 +94,17 @@ export default class extends Controller {
 
       navigated = true
       window.clearTimeout(fallbackTimeout)
-      window.location.assign(destination)
+      this.signupNavigationResetTimeout = window.setTimeout(
+        () => this.resetSignupNavigation(),
+        SIGNUP_NAVIGATION_TIMEOUT
+      )
+
+      try {
+        window.location.assign(destination)
+      } catch (_error) {
+        this.resetSignupNavigation()
+        window.location.href = destination
+      }
     }
 
     fallbackTimeout = window.setTimeout(navigate, SIGNUP_NAVIGATION_TIMEOUT)
@@ -105,6 +117,12 @@ export default class extends Controller {
     } catch (_error) {
       navigate()
     }
+  }
+
+  resetSignupNavigation() {
+    this.signupNavigationPending = false
+    window.clearTimeout(this.signupNavigationResetTimeout)
+    this.signupNavigationResetTimeout = undefined
   }
 
   isOrdinaryNavigation(event) {

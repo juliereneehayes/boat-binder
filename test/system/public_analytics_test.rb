@@ -43,14 +43,31 @@ class PublicAnalyticsSystemTest < ApplicationSystemTestCase
 
   test "ordinary CTA click navigates once when the analytics callback succeeds" do
     install_navigation_harness(<<~JAVASCRIPT)
+      const originalSetTimeout = window.setTimeout.bind(window)
+      let fallbackTimerWrapped = false
+      window.setTimeout = (callback, delay, ...arguments) => {
+        if (delay === 300 && !fallbackTimerWrapped) {
+          fallbackTimerWrapped = true
+          return originalSetTimeout(() => {
+            sessionStorage.setItem("fallbackTimerFired", "true")
+            callback(...arguments)
+          }, delay)
+        }
+
+        return originalSetTimeout(callback, delay, ...arguments)
+      }
+
       window.gtag = (...command) => {
-        if (command[0] !== "event") return
+        if (command[0] !== "event" || command[1] !== "start_free_trial_click") return
 
         const parameters = command[2]
         sessionStorage.setItem("analyticsEventCount", String(Number(sessionStorage.getItem("analyticsEventCount") || 0) + 1))
         sessionStorage.setItem("analyticsEventName", command[1])
         sessionStorage.setItem("analyticsEventTimeout", String(parameters.event_timeout))
-        window.setTimeout(parameters.event_callback, 25)
+        window.setTimeout(() => {
+          sessionStorage.setItem("analyticsCallbackRan", "true")
+          parameters.event_callback()
+        }, 25)
       }
     JAVASCRIPT
 
@@ -60,12 +77,40 @@ class PublicAnalyticsSystemTest < ApplicationSystemTestCase
     assert_equal "1", page.evaluate_script("sessionStorage.getItem('analyticsEventCount')")
     assert_equal "start_free_trial_click", page.evaluate_script("sessionStorage.getItem('analyticsEventName')")
     assert_equal "300", page.evaluate_script("sessionStorage.getItem('analyticsEventTimeout')")
+    assert_equal "true", page.evaluate_script("sessionStorage.getItem('analyticsCallbackRan')")
+    assert_nil page.evaluate_script("sessionStorage.getItem('fallbackTimerFired')")
+  end
+
+  test "CTA works again after signup navigation and browser back restores the homepage" do
+    install_navigation_harness(<<~JAVASCRIPT, destination: "back")
+      window.gtag = (...command) => {
+        if (command[0] !== "event" || command[1] !== "start_free_trial_click") return
+
+        sessionStorage.setItem("analyticsEventCount", String(Number(sessionStorage.getItem("analyticsEventCount") || 0) + 1))
+        window.setTimeout(command[2].event_callback, 25)
+      }
+    JAVASCRIPT
+
+    find("#analytics-test-cta").click
+    assert_signup_navigation("back")
+
+    page.go_back
+
+    assert_selector "#analytics-test-cta"
+    assert_equal false, page.evaluate_script(<<~JAVASCRIPT)
+      window.Stimulus.getControllerForElementAndIdentifier(document.body, "public-analytics").signupNavigationPending
+    JAVASCRIPT
+
+    find("#analytics-test-cta").click
+
+    assert_signup_navigation("back")
+    assert_equal "2", page.evaluate_script("sessionStorage.getItem('analyticsEventCount')")
   end
 
   test "ordinary CTA click navigates after the bounded timeout when no callback arrives" do
     install_navigation_harness(<<~JAVASCRIPT, destination: "timeout")
       window.gtag = (...command) => {
-        if (command[0] !== "event") return
+        if (command[0] !== "event" || command[1] !== "start_free_trial_click") return
 
         sessionStorage.setItem("analyticsEventCount", String(Number(sessionStorage.getItem("analyticsEventCount") || 0) + 1))
         sessionStorage.setItem("analyticsEventName", command[1])
@@ -79,6 +124,22 @@ class PublicAnalyticsSystemTest < ApplicationSystemTestCase
     assert_equal "1", page.evaluate_script("sessionStorage.getItem('analyticsEventCount')")
     assert_equal "start_free_trial_click", page.evaluate_script("sessionStorage.getItem('analyticsEventName')")
     assert_equal "300", page.evaluate_script("sessionStorage.getItem('analyticsEventTimeout')")
+  end
+
+  test "keyboard Enter activation follows the callback navigation path" do
+    install_navigation_harness(<<~JAVASCRIPT, destination: "keyboard")
+      window.gtag = (...command) => {
+        if (command[0] !== "event" || command[1] !== "start_free_trial_click") return
+
+        sessionStorage.setItem("analyticsEventCount", String(Number(sessionStorage.getItem("analyticsEventCount") || 0) + 1))
+        window.setTimeout(command[2].event_callback, 25)
+      }
+    JAVASCRIPT
+
+    find("#analytics-test-cta").send_keys(:enter)
+
+    assert_signup_navigation("keyboard")
+    assert_equal "1", page.evaluate_script("sessionStorage.getItem('analyticsEventCount')")
   end
 
   test "unavailable or failing analytics never blocks ordinary CTA navigation" do
@@ -172,6 +233,8 @@ class PublicAnalyticsSystemTest < ApplicationSystemTestCase
       sessionStorage.removeItem("analyticsEventCount")
       sessionStorage.removeItem("analyticsEventName")
       sessionStorage.removeItem("analyticsEventTimeout")
+      sessionStorage.removeItem("analyticsCallbackRan")
+      sessionStorage.removeItem("fallbackTimerFired")
       #{analytics_setup}
 
       const link = document.createElement("a")
