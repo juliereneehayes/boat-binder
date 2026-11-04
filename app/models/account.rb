@@ -1,7 +1,11 @@
 class Account < ApplicationRecord
   ACCOUNT_TYPES = %w[internal client].freeze
   DEFAULT_TIME_ZONE = "America/Los_Angeles"
-  VALID_TIME_ZONES = ActiveSupport::TimeZone.all.map { |zone| zone.tzinfo.name }.uniq.freeze
+  LEGACY_TIME_ZONE_ALIASES = {
+    "Europe/Kiev" => "Europe/Kyiv",
+    "Asia/Rangoon" => "Asia/Yangon"
+  }.freeze
+  VALID_TIME_ZONES = (ActiveSupport::TimeZone.all.map { |zone| zone.tzinfo.name } + LEGACY_TIME_ZONE_ALIASES.keys).uniq.freeze
 
   has_many :account_memberships, dependent: :destroy
   has_many :users, through: :account_memberships
