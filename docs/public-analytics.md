@@ -99,8 +99,7 @@ Use an owner-approved production verification window and a non-customer browser 
 8. Confirm the homepage content, navigation, pricing, layout, and interactions are otherwise
    unchanged.
 
-The CTA event is queued synchronously before immediate full-page navigation. If the Google tag has
-not loaded, a browser may discard that queued event during unload. Making delivery stronger would
-require delaying navigation or adding a callback/server-side flow, none of which is approved for
-this customer experience; production acceptance should measure this explicitly before deciding
-whether a later tradeoff is warranted.
+For an ordinary primary activation, the CTA uses GA4's `event_callback` and `event_timeout` controls
+and navigates as soon as the callback runs, with an independent 300 ms maximum fallback. Missing or
+failed analytics never blocks navigation. Modifier clicks, middle clicks, downloads, and links with
+a non-default target keep their native browser behavior without an analytics-driven delay.

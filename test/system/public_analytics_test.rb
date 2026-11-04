@@ -3,7 +3,7 @@ require "application_system_test_case"
 class PublicAnalyticsSystemTest < ApplicationSystemTestCase
   driven_by :selenium, using: :headless_chrome, screen_size: [ 1200, 900 ]
 
-  test "sanitizes analytics payloads and prevents duplicate pageviews and CTA events" do
+  test "sanitizes analytics payloads and prevents duplicate pageviews" do
     visit signup_path
 
     install_analytics_harness
@@ -33,27 +33,106 @@ class PublicAnalyticsSystemTest < ApplicationSystemTestCase
     assert_equal 1, event_count("page_view")
 
     page.execute_script(<<~JAVASCRIPT)
-      const link = document.createElement("a")
-      link.href = "/signup"
-      const controller = window.Stimulus.getControllerForElementAndIdentifier(document.body, "public-analytics")
-      controller.trackSignupCta({ currentTarget: link })
-      controller.trackSignupCta({ currentTarget: link })
-    JAVASCRIPT
-    wait_for_command("start_free_trial_click")
-
-    cta_commands = analytics_commands.select do |command|
-      command.first == "event" && command.second == "start_free_trial_click"
-    end
-    assert_equal 1, cta_commands.length
-    assert_equal [ "event", "start_free_trial_click" ], cta_commands.sole
-
-    page.execute_script(<<~JAVASCRIPT)
       const controller = window.Stimulus.getControllerForElementAndIdentifier(document.body, "public-analytics")
       controller.handlePageShow({ persisted: true })
     JAVASCRIPT
     wait_for_event_count("page_view", 2)
     assert_equal 2, event_count("page_view")
     assert_equal 1, document_script_load_count
+  end
+
+  test "ordinary CTA click navigates once when the analytics callback succeeds" do
+    install_navigation_harness(<<~JAVASCRIPT)
+      window.gtag = (...command) => {
+        if (command[0] !== "event") return
+
+        const parameters = command[2]
+        sessionStorage.setItem("analyticsEventCount", String(Number(sessionStorage.getItem("analyticsEventCount") || 0) + 1))
+        sessionStorage.setItem("analyticsEventName", command[1])
+        sessionStorage.setItem("analyticsEventTimeout", String(parameters.event_timeout))
+        window.setTimeout(parameters.event_callback, 25)
+      }
+    JAVASCRIPT
+
+    find("#analytics-test-cta").double_click
+
+    assert_signup_navigation("callback")
+    assert_equal "1", page.evaluate_script("sessionStorage.getItem('analyticsEventCount')")
+    assert_equal "start_free_trial_click", page.evaluate_script("sessionStorage.getItem('analyticsEventName')")
+    assert_equal "300", page.evaluate_script("sessionStorage.getItem('analyticsEventTimeout')")
+  end
+
+  test "ordinary CTA click navigates after the bounded timeout when no callback arrives" do
+    install_navigation_harness(<<~JAVASCRIPT, destination: "timeout")
+      window.gtag = (...command) => {
+        if (command[0] !== "event") return
+
+        sessionStorage.setItem("analyticsEventCount", String(Number(sessionStorage.getItem("analyticsEventCount") || 0) + 1))
+        sessionStorage.setItem("analyticsEventName", command[1])
+        sessionStorage.setItem("analyticsEventTimeout", String(command[2].event_timeout))
+      }
+    JAVASCRIPT
+
+    find("#analytics-test-cta").click
+
+    assert_signup_navigation("timeout")
+    assert_equal "1", page.evaluate_script("sessionStorage.getItem('analyticsEventCount')")
+    assert_equal "start_free_trial_click", page.evaluate_script("sessionStorage.getItem('analyticsEventName')")
+    assert_equal "300", page.evaluate_script("sessionStorage.getItem('analyticsEventTimeout')")
+  end
+
+  test "unavailable or failing analytics never blocks ordinary CTA navigation" do
+    {
+      "unavailable" => "window.gtag = undefined",
+      "error" => "window.gtag = () => { throw new Error('analytics unavailable') }"
+    }.each do |scenario, analytics_setup|
+      install_navigation_harness(analytics_setup, destination: scenario)
+
+      find("#analytics-test-cta").click
+
+      assert_signup_navigation(scenario)
+    end
+  end
+
+  test "modifier and middle-click behavior stays native while keyboard activation remains ordinary" do
+    visit signup_path
+    install_analytics_harness
+    wait_for_command("page_view")
+
+    result = page.evaluate_script(<<~JAVASCRIPT)
+      (() => {
+        let prevented = false
+        const link = document.createElement("a")
+        link.href = "/signup"
+        const controller = window.Stimulus.getControllerForElementAndIdentifier(document.body, "public-analytics")
+        const baseEvent = {
+          currentTarget: link,
+          defaultPrevented: false,
+          button: 0,
+          altKey: false,
+          ctrlKey: false,
+          metaKey: false,
+          shiftKey: false
+        }
+        controller.trackSignupCta({
+          ...baseEvent,
+          ctrlKey: true,
+          preventDefault: () => { prevented = true }
+        })
+
+        return {
+          modifiedPrevented: prevented,
+          modifiedIsOrdinary: controller.isOrdinaryNavigation({ ...baseEvent, ctrlKey: true }),
+          middleClickIsOrdinary: controller.isOrdinaryNavigation({ ...baseEvent, button: 1 }),
+          keyboardIsOrdinary: controller.isOrdinaryNavigation({ ...baseEvent, detail: 0 })
+        }
+      })()
+    JAVASCRIPT
+
+    assert_equal false, result.fetch("modifiedPrevented")
+    assert_equal false, result.fetch("modifiedIsOrdinary")
+    assert_equal false, result.fetch("middleClickIsOrdinary")
+    assert_equal true, result.fetch("keyboardIsOrdinary")
   end
 
   private
@@ -82,6 +161,34 @@ class PublicAnalyticsSystemTest < ApplicationSystemTestCase
       document.body.dataset.turbo = "false"
       document.body.dataset.controller = "public-analytics"
     JAVASCRIPT
+  end
+
+  def install_navigation_harness(analytics_setup, destination: "callback")
+    visit signup_path
+    install_analytics_harness
+    wait_for_command("page_view")
+
+    page.execute_script(<<~JAVASCRIPT)
+      sessionStorage.removeItem("analyticsEventCount")
+      sessionStorage.removeItem("analyticsEventName")
+      sessionStorage.removeItem("analyticsEventTimeout")
+      #{analytics_setup}
+
+      const link = document.createElement("a")
+      link.id = "analytics-test-cta"
+      link.href = "#{signup_path}?delivery=#{destination}"
+      link.textContent = "Start Free Trial"
+      link.dataset.action = "click->public-analytics#trackSignupCta"
+      document.body.appendChild(link)
+    JAVASCRIPT
+
+    assert_selector "#analytics-test-cta"
+  end
+
+  def assert_signup_navigation(delivery)
+    assert_current_path "#{signup_path}?delivery=#{delivery}", ignore_query: false
+    assert_no_selector "body[data-controller~='public-analytics']", visible: :all
+    assert_no_selector "#boat-binder-google-analytics", visible: :all
   end
 
   def analytics_commands

@@ -11,6 +11,7 @@ const SAFE_UTM_VALUE = /^[a-z0-9]+(?:_[a-z0-9]+)*$/
 const MAX_UTM_VALUE_LENGTH = 50
 const GOOGLE_TAG_SCRIPT_ID = "boat-binder-google-analytics"
 const INITIALIZED_KEY = "__boatBinderPublicAnalyticsInitialized"
+const SIGNUP_NAVIGATION_TIMEOUT = 300
 
 export default class extends Controller {
   static values = { measurementId: String }
@@ -66,12 +67,65 @@ export default class extends Controller {
   }
 
   trackSignupCta(event) {
-    const lastSentAt = Number(event.currentTarget.dataset.analyticsEventSentAt || 0)
-    const now = Date.now()
-    if (now - lastSentAt < 1000) return
+    if (event.defaultPrevented) return
 
-    event.currentTarget.dataset.analyticsEventSentAt = now.toString()
-    window.gtag?.("event", "start_free_trial_click")
+    if (!this.isOrdinaryNavigation(event)) {
+      this.sendSignupCtaEvent()
+      return
+    }
+
+    if (this.signupNavigationPending) {
+      event.preventDefault()
+      return
+    }
+
+    if (typeof window.gtag !== "function") return
+
+    event.preventDefault()
+    this.signupNavigationPending = true
+
+    const destination = event.currentTarget.href
+    let navigated = false
+    let fallbackTimeout
+    const navigate = () => {
+      if (navigated) return
+
+      navigated = true
+      window.clearTimeout(fallbackTimeout)
+      window.location.assign(destination)
+    }
+
+    fallbackTimeout = window.setTimeout(navigate, SIGNUP_NAVIGATION_TIMEOUT)
+
+    try {
+      window.gtag("event", "start_free_trial_click", {
+        event_callback: navigate,
+        event_timeout: SIGNUP_NAVIGATION_TIMEOUT
+      })
+    } catch (_error) {
+      navigate()
+    }
+  }
+
+  isOrdinaryNavigation(event) {
+    return !event.defaultPrevented &&
+      event.button === 0 &&
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !event.shiftKey &&
+      !event.currentTarget.hasAttribute("download") &&
+      (!event.currentTarget.target || event.currentTarget.target === "_self")
+  }
+
+  sendSignupCtaEvent() {
+    if (typeof window.gtag !== "function") return
+
+    try {
+      window.gtag("event", "start_free_trial_click")
+    } catch (_error) {
+      // Analytics must never interfere with native link behavior.
+    }
   }
 
   sanitizedPageLocation() {
