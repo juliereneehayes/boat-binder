@@ -99,11 +99,11 @@ Use an owner-approved production verification window and a non-customer browser 
 8. Confirm the homepage content, navigation, pricing, layout, and interactions are otherwise
    unchanged.
 
-For an ordinary primary activation, the CTA uses GA4's `event_callback` and `event_timeout` controls
-and navigates as soon as the callback runs, with an independent 300 ms maximum fallback. Missing or
-failed analytics never blocks navigation. Modifier clicks, middle clicks, downloads, and links with
-a non-default target keep their native browser behavior without an analytics-driven delay. The 300
-ms delay can still apply when the Google tag is blocked because the local `gtag` queue is available;
-a callback means the command ran, not that GA4 ingested the event. Browser Back restoration resets
-the CTA immediately, while an interrupted or canceled navigation recovers after approximately two
-seconds without delaying the initial navigation attempt.
+For an ordinary primary activation, the CTA queues the event and keeps the homepage active for a
+fixed 300 ms before navigating. Missing or failed analytics never blocks navigation. Modifier
+clicks, middle clicks, downloads, and links with a non-default target keep their native browser
+behavior without an analytics-driven delay. The 300 ms delay can still apply when the Google tag is
+blocked because the local `gtag` queue is available. This is best-effort delivery: keeping the page
+active improves the opportunity to start transmission but does not prove GA4 ingested the event.
+Browser Back restoration resets the CTA immediately, while an interrupted or canceled navigation
+recovers after approximately two seconds without delaying the initial navigation attempt.

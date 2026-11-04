@@ -41,17 +41,19 @@ class PublicAnalyticsSystemTest < ApplicationSystemTestCase
     assert_equal 1, document_script_load_count
   end
 
-  test "ordinary CTA click navigates once when the analytics callback succeeds" do
+  test "ordinary CTA keeps the homepage active for the fixed analytics delay" do
     install_navigation_harness(<<~JAVASCRIPT)
       const originalSetTimeout = window.setTimeout.bind(window)
-      let fallbackTimerWrapped = false
+      let analyticsDelayWrapped = false
       window.setTimeout = (callback, delay, ...arguments) => {
-        if (delay === 300 && !fallbackTimerWrapped) {
-          fallbackTimerWrapped = true
-          return originalSetTimeout(() => {
-            sessionStorage.setItem("fallbackTimerFired", "true")
+        if (delay === 300 && !analyticsDelayWrapped) {
+          analyticsDelayWrapped = true
+          sessionStorage.setItem("analyticsDelay", String(delay))
+          window.__finishAnalyticsDelay = () => {
+            sessionStorage.setItem("analyticsDelayElapsed", "true")
             callback(...arguments)
-          }, delay)
+          }
+          return 1
         }
 
         return originalSetTimeout(callback, delay, ...arguments)
@@ -63,22 +65,33 @@ class PublicAnalyticsSystemTest < ApplicationSystemTestCase
         const parameters = command[2]
         sessionStorage.setItem("analyticsEventCount", String(Number(sessionStorage.getItem("analyticsEventCount") || 0) + 1))
         sessionStorage.setItem("analyticsEventName", command[1])
-        sessionStorage.setItem("analyticsEventTimeout", String(parameters.event_timeout))
-        window.setTimeout(() => {
-          sessionStorage.setItem("analyticsCallbackRan", "true")
-          parameters.event_callback()
-        }, 25)
+        sessionStorage.setItem("analyticsCallbackSupplied", String(typeof parameters?.event_callback === "function"))
+        originalSetTimeout(() => sessionStorage.setItem("analyticsTransmissionStarted", "true"), 25)
       }
     JAVASCRIPT
+    homepage_url = page.current_url
 
-    find("#analytics-test-cta").double_click
+    page.execute_script(<<~JAVASCRIPT)
+      document.querySelector("#analytics-test-cta").click()
+      document.querySelector("#analytics-test-cta").click()
+    JAVASCRIPT
+    Selenium::WebDriver::Wait.new(timeout: 1).until do
+      page.evaluate_script("sessionStorage.getItem('analyticsTransmissionStarted')") == "true"
+    end
 
-    assert_signup_navigation("callback")
+    assert_equal homepage_url, page.current_url
+    assert_nil page.evaluate_script("sessionStorage.getItem('analyticsDelayElapsed')")
+    assert_equal "1", page.evaluate_script("sessionStorage.getItem('analyticsEventCount')")
+    assert_equal "false", page.evaluate_script("sessionStorage.getItem('analyticsCallbackSupplied')")
+    assert_equal "300", page.evaluate_script("sessionStorage.getItem('analyticsDelay')")
+
+    page.execute_script("window.__finishAnalyticsDelay()")
+
+    assert_signup_navigation("fixed_delay")
     assert_equal "1", page.evaluate_script("sessionStorage.getItem('analyticsEventCount')")
     assert_equal "start_free_trial_click", page.evaluate_script("sessionStorage.getItem('analyticsEventName')")
-    assert_equal "300", page.evaluate_script("sessionStorage.getItem('analyticsEventTimeout')")
-    assert_equal "true", page.evaluate_script("sessionStorage.getItem('analyticsCallbackRan')")
-    assert_nil page.evaluate_script("sessionStorage.getItem('fallbackTimerFired')")
+    assert_equal "true", page.evaluate_script("sessionStorage.getItem('analyticsDelayElapsed')")
+    assert_equal "true", page.evaluate_script("sessionStorage.getItem('analyticsTransmissionStarted')")
   end
 
   test "CTA works again after signup navigation and browser back restores the homepage" do
@@ -87,7 +100,6 @@ class PublicAnalyticsSystemTest < ApplicationSystemTestCase
         if (command[0] !== "event" || command[1] !== "start_free_trial_click") return
 
         sessionStorage.setItem("analyticsEventCount", String(Number(sessionStorage.getItem("analyticsEventCount") || 0) + 1))
-        window.setTimeout(command[2].event_callback, 25)
       }
     JAVASCRIPT
 
@@ -107,14 +119,13 @@ class PublicAnalyticsSystemTest < ApplicationSystemTestCase
     assert_equal "2", page.evaluate_script("sessionStorage.getItem('analyticsEventCount')")
   end
 
-  test "ordinary CTA click navigates after the bounded timeout when no callback arrives" do
+  test "ordinary CTA click navigates after the real fixed analytics delay" do
     install_navigation_harness(<<~JAVASCRIPT, destination: "timeout")
       window.gtag = (...command) => {
         if (command[0] !== "event" || command[1] !== "start_free_trial_click") return
 
         sessionStorage.setItem("analyticsEventCount", String(Number(sessionStorage.getItem("analyticsEventCount") || 0) + 1))
         sessionStorage.setItem("analyticsEventName", command[1])
-        sessionStorage.setItem("analyticsEventTimeout", String(command[2].event_timeout))
       }
     JAVASCRIPT
 
@@ -123,16 +134,14 @@ class PublicAnalyticsSystemTest < ApplicationSystemTestCase
     assert_signup_navigation("timeout")
     assert_equal "1", page.evaluate_script("sessionStorage.getItem('analyticsEventCount')")
     assert_equal "start_free_trial_click", page.evaluate_script("sessionStorage.getItem('analyticsEventName')")
-    assert_equal "300", page.evaluate_script("sessionStorage.getItem('analyticsEventTimeout')")
   end
 
-  test "slow navigation keeps duplicate suppression beyond the analytics fallback window" do
+  test "slow navigation keeps duplicate suppression beyond the analytics delay" do
     install_navigation_harness(<<~JAVASCRIPT)
       window.gtag = (...command) => {
         if (command[0] !== "event" || command[1] !== "start_free_trial_click") return
 
         sessionStorage.setItem("analyticsEventCount", String(Number(sessionStorage.getItem("analyticsEventCount") || 0) + 1))
-        window.setTimeout(command[2].event_callback, 25)
       }
     JAVASCRIPT
 
@@ -149,13 +158,13 @@ class PublicAnalyticsSystemTest < ApplicationSystemTestCase
     Selenium::WebDriver::Wait.new(timeout: 3).until { !signup_navigation_pending? }
   end
 
-  test "disconnect cancels fallback navigation and invalidates a late callback" do
+  test "disconnect cancels delayed navigation and no late callback can redirect" do
     install_navigation_harness(<<~JAVASCRIPT)
       window.gtag = (...command) => {
         if (command[0] !== "event" || command[1] !== "start_free_trial_click") return
 
         sessionStorage.setItem("analyticsEventCount", String(Number(sessionStorage.getItem("analyticsEventCount") || 0) + 1))
-        window.__lateSignupCallback = command[2].event_callback
+        window.__lateSignupCallback = command[2]?.event_callback
       }
     JAVASCRIPT
     homepage_url = page.current_url
@@ -168,21 +177,17 @@ class PublicAnalyticsSystemTest < ApplicationSystemTestCase
 
     assert_equal homepage_url, page.current_url
     assert_equal false, signup_navigation_pending?
-
-    page.execute_script("window.__lateSignupCallback()")
-    sleep 0.05
-
+    assert_nil page.evaluate_script("window.__lateSignupCallback")
     assert_equal homepage_url, page.current_url
     assert_equal "1", page.evaluate_script("sessionStorage.getItem('analyticsEventCount')")
   end
 
-  test "keyboard Enter activation follows the callback navigation path" do
+  test "keyboard Enter activation follows the fixed-delay navigation path" do
     install_navigation_harness(<<~JAVASCRIPT, destination: "keyboard")
       window.gtag = (...command) => {
         if (command[0] !== "event" || command[1] !== "start_free_trial_click") return
 
         sessionStorage.setItem("analyticsEventCount", String(Number(sessionStorage.getItem("analyticsEventCount") || 0) + 1))
-        window.setTimeout(command[2].event_callback, 25)
       }
     JAVASCRIPT
 
@@ -274,7 +279,7 @@ class PublicAnalyticsSystemTest < ApplicationSystemTestCase
     JAVASCRIPT
   end
 
-  def install_navigation_harness(analytics_setup, destination: "callback")
+  def install_navigation_harness(analytics_setup, destination: "fixed_delay")
     visit signup_path
     install_analytics_harness
     wait_for_command("page_view")
@@ -282,9 +287,10 @@ class PublicAnalyticsSystemTest < ApplicationSystemTestCase
     page.execute_script(<<~JAVASCRIPT)
       sessionStorage.removeItem("analyticsEventCount")
       sessionStorage.removeItem("analyticsEventName")
-      sessionStorage.removeItem("analyticsEventTimeout")
-      sessionStorage.removeItem("analyticsCallbackRan")
-      sessionStorage.removeItem("fallbackTimerFired")
+      sessionStorage.removeItem("analyticsCallbackSupplied")
+      sessionStorage.removeItem("analyticsDelay")
+      sessionStorage.removeItem("analyticsDelayElapsed")
+      sessionStorage.removeItem("analyticsTransmissionStarted")
       #{analytics_setup}
 
       const link = document.createElement("a")
