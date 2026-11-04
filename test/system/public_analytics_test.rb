@@ -126,6 +126,56 @@ class PublicAnalyticsSystemTest < ApplicationSystemTestCase
     assert_equal "300", page.evaluate_script("sessionStorage.getItem('analyticsEventTimeout')")
   end
 
+  test "slow navigation keeps duplicate suppression beyond the analytics fallback window" do
+    install_navigation_harness(<<~JAVASCRIPT)
+      window.gtag = (...command) => {
+        if (command[0] !== "event" || command[1] !== "start_free_trial_click") return
+
+        sessionStorage.setItem("analyticsEventCount", String(Number(sessionStorage.getItem("analyticsEventCount") || 0) + 1))
+        window.setTimeout(command[2].event_callback, 25)
+      }
+    JAVASCRIPT
+
+    page.execute_script(<<~JAVASCRIPT)
+      document.querySelector("#analytics-test-cta").href = `${window.location.href.split("#")[0]}#slow-signup`
+    JAVASCRIPT
+    find("#analytics-test-cta").click
+    sleep 0.35
+
+    find("#analytics-test-cta").click
+
+    assert_equal "1", page.evaluate_script("sessionStorage.getItem('analyticsEventCount')")
+    assert_equal true, signup_navigation_pending?
+    Selenium::WebDriver::Wait.new(timeout: 3).until { !signup_navigation_pending? }
+  end
+
+  test "disconnect cancels fallback navigation and invalidates a late callback" do
+    install_navigation_harness(<<~JAVASCRIPT)
+      window.gtag = (...command) => {
+        if (command[0] !== "event" || command[1] !== "start_free_trial_click") return
+
+        sessionStorage.setItem("analyticsEventCount", String(Number(sessionStorage.getItem("analyticsEventCount") || 0) + 1))
+        window.__lateSignupCallback = command[2].event_callback
+      }
+    JAVASCRIPT
+    homepage_url = page.current_url
+
+    page.execute_script(<<~JAVASCRIPT)
+      document.querySelector("#analytics-test-cta").click()
+      window.Stimulus.getControllerForElementAndIdentifier(document.body, "public-analytics").disconnect()
+    JAVASCRIPT
+    sleep 0.35
+
+    assert_equal homepage_url, page.current_url
+    assert_equal false, signup_navigation_pending?
+
+    page.execute_script("window.__lateSignupCallback()")
+    sleep 0.05
+
+    assert_equal homepage_url, page.current_url
+    assert_equal "1", page.evaluate_script("sessionStorage.getItem('analyticsEventCount')")
+  end
+
   test "keyboard Enter activation follows the callback navigation path" do
     install_navigation_harness(<<~JAVASCRIPT, destination: "keyboard")
       window.gtag = (...command) => {
@@ -266,6 +316,12 @@ class PublicAnalyticsSystemTest < ApplicationSystemTestCase
 
   def document_script_load_count
     page.evaluate_script("window.__publicAnalyticsScriptLoads")
+  end
+
+  def signup_navigation_pending?
+    page.evaluate_script(<<~JAVASCRIPT)
+      window.Stimulus.getControllerForElementAndIdentifier(document.body, "public-analytics").signupNavigationPending
+    JAVASCRIPT
   end
 
   def wait_for_command(name)

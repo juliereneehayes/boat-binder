@@ -12,6 +12,7 @@ const MAX_UTM_VALUE_LENGTH = 50
 const GOOGLE_TAG_SCRIPT_ID = "boat-binder-google-analytics"
 const INITIALIZED_KEY = "__boatBinderPublicAnalyticsInitialized"
 const SIGNUP_NAVIGATION_TIMEOUT = 300
+const SIGNUP_NAVIGATION_RECOVERY_TIMEOUT = 2000
 
 export default class extends Controller {
   static values = { measurementId: String }
@@ -85,18 +86,20 @@ export default class extends Controller {
 
     event.preventDefault()
     this.signupNavigationPending = true
+    const navigationOperation = Symbol()
+    this.signupNavigationOperation = navigationOperation
 
     const destination = event.currentTarget.href
     let navigated = false
-    let fallbackTimeout
     const navigate = () => {
-      if (navigated) return
+      if (navigated || this.signupNavigationOperation !== navigationOperation) return
 
       navigated = true
-      window.clearTimeout(fallbackTimeout)
-      this.signupNavigationResetTimeout = window.setTimeout(
+      window.clearTimeout(this.signupNavigationFallbackTimeout)
+      this.signupNavigationFallbackTimeout = undefined
+      this.signupNavigationRecoveryTimeout = window.setTimeout(
         () => this.resetSignupNavigation(),
-        SIGNUP_NAVIGATION_TIMEOUT
+        SIGNUP_NAVIGATION_RECOVERY_TIMEOUT
       )
 
       try {
@@ -107,7 +110,7 @@ export default class extends Controller {
       }
     }
 
-    fallbackTimeout = window.setTimeout(navigate, SIGNUP_NAVIGATION_TIMEOUT)
+    this.signupNavigationFallbackTimeout = window.setTimeout(navigate, SIGNUP_NAVIGATION_TIMEOUT)
 
     try {
       window.gtag("event", "start_free_trial_click", {
@@ -121,8 +124,11 @@ export default class extends Controller {
 
   resetSignupNavigation() {
     this.signupNavigationPending = false
-    window.clearTimeout(this.signupNavigationResetTimeout)
-    this.signupNavigationResetTimeout = undefined
+    this.signupNavigationOperation = undefined
+    window.clearTimeout(this.signupNavigationFallbackTimeout)
+    window.clearTimeout(this.signupNavigationRecoveryTimeout)
+    this.signupNavigationFallbackTimeout = undefined
+    this.signupNavigationRecoveryTimeout = undefined
   }
 
   isOrdinaryNavigation(event) {
