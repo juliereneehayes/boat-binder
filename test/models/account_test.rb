@@ -104,6 +104,19 @@ class AccountTest < ActiveSupport::TestCase
     assert_equal first_verified_owner, account.verified_transactional_owner_recipient
   end
 
+  test "primary contact deterministically selects the earliest owner contact" do
+    account = create_account(name: "Deterministic Contact Harbor")
+    account.contacts.create!(name: "Earlier Manager", role: "Manager")
+    first_owner = account.contacts.create!(name: "First Owner", role: "Owner Representative")
+    account.contacts.create!(name: "Second Owner", role: "owner")
+    fallback_account = create_account(name: "Deterministic Fallback Harbor")
+    first_contact = fallback_account.contacts.create!(name: "First Manager", role: "Manager")
+    fallback_account.contacts.create!(name: "Second Manager", role: "Manager")
+
+    assert_equal first_owner, account.primary_contact
+    assert_equal first_contact, fallback_account.primary_contact
+  end
+
   test "accepted invitation qualifies an owner as a verified transactional recipient" do
     account = create_account(name: "Invitation Verified Harbor")
     owner = create_user(email: "accepted-owner@example.test", role: "owner")

@@ -97,6 +97,73 @@ class ServiceVisitTest < ActiveSupport::TestCase
     assert visit.summary_recipient_can_access_report?("authorized-summary@example.test")
   end
 
+  test "report link matching normalizes recipient email case and whitespace" do
+    account = create_account(name: "Normalized Summary Owner")
+    account.contacts.create!(name: "Normalized Owner", email: "normalized-summary@example.test", role: "Owner")
+    qualify_self_managed_subscription(account)
+    owner = create_user(email: "normalized-summary@example.test", role: "owner")
+    owner.update!(email_verification_sent_at: 1.hour.ago, email_verified_at: Time.current)
+    create_account_membership(user: owner, account:)
+    visit = ServiceVisit.create!(
+      asset: create_vessel(account:),
+      performed_by_user: create_user(email: "captain-normalized-summary@example.test"),
+      visit_date: Date.current
+    )
+
+    assert visit.summary_recipient_can_access_report?("  NORMALIZED-SUMMARY@EXAMPLE.TEST  ")
+  end
+
+  test "matching inactive owner cannot receive a report link" do
+    account = create_account(name: "Inactive Summary Owner")
+    account.contacts.create!(name: "Inactive Owner", email: "inactive-summary@example.test", role: "Owner")
+    qualify_self_managed_subscription(account)
+    owner = create_user(email: "inactive-summary@example.test", role: "owner")
+    owner.update!(email_verification_sent_at: 1.hour.ago, email_verified_at: Time.current, active: false)
+    create_account_membership(user: owner, account:)
+    visit = ServiceVisit.create!(
+      asset: create_vessel(account:),
+      performed_by_user: create_user(email: "captain-inactive-summary@example.test"),
+      visit_date: Date.current
+    )
+
+    assert_not visit.summary_recipient_can_access_report?(visit.summary_recipient_email)
+  end
+
+  test "matching unverified owner cannot receive a report link" do
+    account = create_account(name: "Unverified Summary Owner")
+    account.contacts.create!(name: "Unverified Owner", email: "unverified-summary@example.test", role: "Owner")
+    qualify_self_managed_subscription(account)
+    owner = create_user(email: "unverified-summary@example.test", role: "owner")
+    create_account_membership(user: owner, account:)
+    visit = ServiceVisit.create!(
+      asset: create_vessel(account:),
+      performed_by_user: create_user(email: "captain-unverified-summary@example.test"),
+      visit_date: Date.current
+    )
+
+    assert_not visit.summary_recipient_can_access_report?(visit.summary_recipient_email)
+  end
+
+  test "matching owner with inactive membership cannot receive a report link" do
+    account = create_account(name: "Inactive Membership Summary Owner")
+    account.contacts.create!(
+      name: "Inactive Membership Owner",
+      email: "inactive-membership-summary@example.test",
+      role: "Owner"
+    )
+    qualify_self_managed_subscription(account)
+    owner = create_user(email: "inactive-membership-summary@example.test", role: "owner")
+    owner.update!(email_verification_sent_at: 1.hour.ago, email_verified_at: Time.current)
+    create_account_membership(user: owner, account:, active: false)
+    visit = ServiceVisit.create!(
+      asset: create_vessel(account:),
+      performed_by_user: create_user(email: "captain-inactive-membership-summary@example.test"),
+      visit_date: Date.current
+    )
+
+    assert_not visit.summary_recipient_can_access_report?(visit.summary_recipient_email)
+  end
+
   test "matching owner without access to the visit account cannot receive a report link" do
     account = create_account(name: "Unauthorized Summary Owner")
     account.contacts.create!(name: "Unauthorized Owner", email: "unauthorized-summary@example.test", role: "Owner")

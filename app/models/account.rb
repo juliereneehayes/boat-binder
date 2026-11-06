@@ -31,7 +31,9 @@ class Account < ApplicationRecord
   scope :ordered, -> { order(:name) }
 
   def primary_contact
-    contacts.find { |contact| contact.role.to_s.downcase.include?("owner") } || contacts.first
+    contacts.min_by do |contact|
+      [ contact.role.to_s.downcase.include?("owner") ? 0 : 1, contact.id || Float::INFINITY ]
+    end
   end
 
   def owner_user_memberships
