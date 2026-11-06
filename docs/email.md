@@ -49,6 +49,10 @@ heroku config:set SMTP_USERNAME=postmaster@mg.example.com SMTP_PASSWORD=... --ap
 
 Password reset delivery failures are logged server-side and shown to users as a generic safe message to avoid account enumeration.
 
+Production SMTP connections use bounded connection and read timeouts for every transactional
+message. A timeout or other SMTP failure can occur after the provider accepts a message but before
+Boat Binder receives the response, so an immediate retry can occasionally produce a duplicate.
+
 Operational alerts use the same SMTP delivery path but are not customer mail. Their recipient is
 configured separately through `OPERATIONAL_ALERT_RECIPIENT`, and delivery is performed directly by
 the recurring monitor so alert contents are not serialized into another background job. See
