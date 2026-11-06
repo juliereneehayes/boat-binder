@@ -60,6 +60,7 @@ Rails.application.routes.draw do
     end
     resources :service_visits, only: %i[index new create show edit update] do
       get :report, on: :member
+      post :resend_summary, on: :member
       patch :complete_follow_up, on: :member
       patch :reopen_follow_up, on: :member
     end
