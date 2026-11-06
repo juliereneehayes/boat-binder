@@ -62,7 +62,23 @@ class ServiceVisit < ApplicationRecord
   end
 
   def summary_recipient_email
-    account.verified_transactional_owner_recipient&.email_address
+    valid_primary_contact_email
+  end
+
+  def summary_recipient_can_access_report?(recipient_email)
+    normalized_email = recipient_email.to_s.strip.downcase
+    contact_email = valid_primary_contact_email
+    return false unless contact_email&.casecmp?(normalized_email)
+
+    membership = account.owner_user_memberships.find do |candidate|
+      candidate.transactional_email_eligible? &&
+        candidate.user.email_address.casecmp?(normalized_email)
+    end
+    return false unless membership
+
+    Authorization::SelfManagedOwnerPolicy.new(user: membership.user)
+      .readable_account_ids
+      .include?(account_id)
   end
 
   def build_workflow_defaults
@@ -120,6 +136,11 @@ class ServiceVisit < ApplicationRecord
   end
 
   private
+
+  def valid_primary_contact_email
+    email = account.primary_contact&.email.to_s.strip
+    email if email.present? && email.match?(URI::MailTo::EMAIL_REGEXP)
+  end
 
   def follow_up_completion_is_consistent
     completion_fields_match = follow_up_completed_at.present? == follow_up_completed_by_user_id.present?

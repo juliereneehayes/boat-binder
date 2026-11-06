@@ -5,7 +5,9 @@ class ServiceVisitMailer < ApplicationMailer
     @service_visit = service_visit
     @vessel = service_visit.asset
     @account = @vessel.account
-    @report_url = report_vessel_service_visit_url(@vessel, @service_visit)
+    if service_visit.summary_recipient_can_access_report?(recipient_email)
+      @report_url = report_vessel_service_visit_url(@vessel, @service_visit)
+    end
 
     mail(
       subject: "#{@vessel.name} service visit report - #{@service_visit.visit_date.to_fs(:long)}",

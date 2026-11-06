@@ -70,10 +70,12 @@
       <% end %>
     </div>
 
-    <p style="margin: 24px 0 0; text-align: center;">
-      <%= link_to "View full report in Boat Binder",
-          @report_url,
-          style: "display: inline-block; border-radius: 8px; background: #1E5A7A; color: #FFFFFF; font-size: 15px; font-weight: 700; padding: 14px 18px; text-decoration: none;" %>
-    </p>
+    <% if @report_url %>
+      <p style="margin: 24px 0 0; text-align: center;">
+        <%= link_to "View full report in Boat Binder",
+            @report_url,
+            style: "display: inline-block; border-radius: 8px; background: #1E5A7A; color: #FFFFFF; font-size: 15px; font-weight: 700; padding: 14px 18px; text-decoration: none;" %>
+      </p>
+    <% end %>
   </div>
 </div>

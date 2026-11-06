@@ -38,9 +38,9 @@ class ServiceVisitTest < ActiveSupport::TestCase
     assert_equal [ active_battery ], visit.service_visit_battery_checks.map(&:asset_battery)
   end
 
-  test "summary recipient email uses the account verified owner recipient" do
+  test "summary recipient email uses the primary owner contact" do
     account = create_account(name: "Service Summary Owner")
-    account.contacts.create!(name: "Fallback Owner", email: "fallback-summary@example.test", role: "Owner")
+    account.contacts.create!(name: "Primary Owner", email: "primary-summary@example.test", role: "Owner")
     owner = create_user(email: "linked-summary-owner@example.test", role: "owner")
     owner.update!(email_verification_sent_at: 1.hour.ago, email_verified_at: Time.current)
     create_account_membership(user: owner, account: account)
@@ -50,35 +50,84 @@ class ServiceVisitTest < ActiveSupport::TestCase
       visit_date: Date.current
     )
 
-    assert_equal "linked-summary-owner@example.test", visit.summary_recipient_email
+    assert_equal "primary-summary@example.test", visit.summary_recipient_email
   end
 
-  test "summary recipient email does not use an unverified owner or manual contact" do
-    account = create_account(name: "Unverified Service Summary Owner")
-    account.contacts.create!(name: "Manual Owner", email: "manual-summary@example.test", role: "Owner")
-    owner = create_user(email: "unverified-summary-owner@example.test", role: "owner")
-    create_account_membership(user: owner, account:)
+  test "summary recipient email is available without an owner user" do
+    account = create_account(name: "Contact-only Service Summary Owner")
+    account.contacts.create!(name: "Contact Owner", email: "contact-summary@example.test", role: "Owner")
     visit = ServiceVisit.create!(
       asset: create_vessel(account:),
-      performed_by_user: create_user(email: "captain-unverified-summary@example.test"),
+      performed_by_user: create_user(email: "captain-contact-summary@example.test"),
+      visit_date: Date.current
+    )
+
+    assert_equal "contact-summary@example.test", visit.summary_recipient_email
+  end
+
+  test "summary recipient email fails closed for missing and invalid contact addresses" do
+    account = create_account(name: "Missing Service Summary Owner")
+    contact = account.contacts.create!(name: "Owner Without Email", role: "Owner")
+    visit = ServiceVisit.create!(
+      asset: create_vessel(account:),
+      performed_by_user: create_user(email: "captain-missing-summary@example.test"),
       visit_date: Date.current
     )
 
     assert_nil visit.summary_recipient_email
+
+    contact.update_column(:email, "not-an-email")
+
+    assert_nil visit.summary_recipient_email
   end
 
-  test "summary recipient email accepts an owner with an accepted invitation" do
-    account = create_account(name: "Invited Service Summary Owner")
-    owner = create_user(email: "accepted-summary-owner@example.test", role: "owner")
-    owner.update!(invitation_sent_at: 1.day.ago, invitation_accepted_at: Time.current)
+  test "matching eligible owner with account read access can receive a report link" do
+    account = create_account(name: "Authorized Summary Owner")
+    account.contacts.create!(name: "Authorized Owner", email: "authorized-summary@example.test", role: "Owner")
+    qualify_self_managed_subscription(account)
+    owner = create_user(email: "authorized-summary@example.test", role: "owner")
+    owner.update!(email_verification_sent_at: 1.hour.ago, email_verified_at: Time.current)
     create_account_membership(user: owner, account:)
     visit = ServiceVisit.create!(
       asset: create_vessel(account:),
-      performed_by_user: create_user(email: "captain-accepted-summary@example.test"),
+      performed_by_user: create_user(email: "captain-authorized-summary@example.test"),
       visit_date: Date.current
     )
 
-    assert_equal owner.email_address, visit.summary_recipient_email
+    assert visit.summary_recipient_can_access_report?("authorized-summary@example.test")
+  end
+
+  test "matching owner without access to the visit account cannot receive a report link" do
+    account = create_account(name: "Unauthorized Summary Owner")
+    account.contacts.create!(name: "Unauthorized Owner", email: "unauthorized-summary@example.test", role: "Owner")
+    other_account = create_account(name: "Other Summary Account")
+    qualify_self_managed_subscription(other_account)
+    owner = create_user(email: "unauthorized-summary@example.test", role: "owner")
+    owner.update!(email_verification_sent_at: 1.hour.ago, email_verified_at: Time.current)
+    create_account_membership(user: owner, account: other_account)
+    visit = ServiceVisit.create!(
+      asset: create_vessel(account:),
+      performed_by_user: create_user(email: "captain-unauthorized-summary@example.test"),
+      visit_date: Date.current
+    )
+
+    assert_not visit.summary_recipient_can_access_report?("unauthorized-summary@example.test")
+  end
+
+  test "report link recipient must remain the primary contact" do
+    account = create_account(name: "Mismatched Summary Owner")
+    account.contacts.create!(name: "Primary Owner", email: "primary-contact@example.test", role: "Owner")
+    qualify_self_managed_subscription(account)
+    owner = create_user(email: "linked-owner@example.test", role: "owner")
+    owner.update!(email_verification_sent_at: 1.hour.ago, email_verified_at: Time.current)
+    create_account_membership(user: owner, account:)
+    visit = ServiceVisit.create!(
+      asset: create_vessel(account:),
+      performed_by_user: create_user(email: "captain-mismatched-summary@example.test"),
+      visit_date: Date.current
+    )
+
+    assert_not visit.summary_recipient_can_access_report?(owner.email_address)
   end
 
   test "completes and reopens follow up with an auditable history" do

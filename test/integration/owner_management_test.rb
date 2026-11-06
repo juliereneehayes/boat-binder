@@ -181,7 +181,7 @@ class OwnerManagementTest < ActionDispatch::IntegrationTest
     assert_includes response.body, "Invitation pending"
     assert_select "span", text: "Email recipient eligible", count: 1
     assert_select "span", text: "Not email eligible", count: 2
-    assert_includes response.body, "Additional contact information"
+    assert_includes response.body, "Primary owner contact"
     assert_includes response.body, "manual-owner@example.test"
     assert_not_includes response.body, "other-account-owner@example.test"
     assert_select "a[href='#{new_admin_user_path}']", text: "Invite owner user"
@@ -197,7 +197,7 @@ class OwnerManagementTest < ActionDispatch::IntegrationTest
 
     assert_response :success
     assert_includes response.body, "No linked owner users yet."
-    assert_includes response.body, "No additional contact information saved yet."
+    assert_includes response.body, "No primary owner contact saved yet."
     assert_includes response.body, "Subscription"
     assert_includes response.body, "Legacy"
     assert_includes response.body, "Active"
@@ -324,14 +324,14 @@ class OwnerManagementTest < ActionDispatch::IntegrationTest
     end
   end
 
-  test "owner form clarifies manual contact information does not grant access" do
+  test "owner form identifies the Service Visit summary recipient" do
     sign_in_as create_user(email: "admin-owner-contact-copy@example.test", role: "admin")
 
     get new_owner_path
 
     assert_response :success
-    assert_includes response.body, "Additional contact information"
-    assert_includes response.body, "Use this for a contact who does not have Boat Binder access."
-    assert_includes response.body, "Transactional emails are sent to linked active owner users when available."
+    assert_includes response.body, "Primary owner contact"
+    assert_includes response.body, "Service Visit summaries are sent to this email"
+    assert_includes response.body, "even when the contact does not have Boat Binder access."
   end
 end
