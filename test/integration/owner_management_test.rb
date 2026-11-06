@@ -1,6 +1,213 @@
 require "test_helper"
 
 class OwnerManagementTest < ActionDispatch::IntegrationTest
+  test "captain adds and repeatedly updates the first primary contact without changing account access" do
+    account = create_account(name: "Contactless Owner")
+    subscription_id = account.subscription.id
+    captain = create_user(email: "captain-first-contact@example.test", role: "captain")
+    sign_in_as captain
+
+    assert_difference -> { account.contacts.count }, 1 do
+      patch owner_path(account), params: {
+        account: {
+          name: account.name,
+          notes: "Contact added during intake.",
+          active: "1",
+          time_zone: account.time_zone
+        },
+        contact: {
+          name: "Primary Contact",
+          email: "primary-contact@example.test",
+          phone: "555-0110"
+        }
+      }
+    end
+
+    contact = account.reload.primary_contact
+    assert_redirected_to owner_path(account)
+    assert_equal account, contact.account
+    assert_equal "Primary Contact", contact.name
+    assert_equal "primary-contact@example.test", contact.email
+    assert_equal "Owner", contact.role
+    assert_empty account.owner_user_memberships
+    assert_equal subscription_id, account.subscription.id
+
+    assert_no_difference -> { account.contacts.count } do
+      patch owner_path(account), params: {
+        account: {
+          name: account.name,
+          notes: account.notes,
+          active: "1",
+          time_zone: account.time_zone
+        },
+        contact: {
+          name: "Updated Primary Contact",
+          email: "updated-primary@example.test",
+          phone: "555-0111"
+        }
+      }
+    end
+
+    assert_redirected_to owner_path(account)
+    assert_equal contact.id, account.reload.primary_contact.id
+    assert_equal "Updated Primary Contact", contact.reload.name
+    assert_equal "updated-primary@example.test", contact.email
+  end
+
+  test "owner update modifies the deterministic existing primary contact rather than replacing it" do
+    account = create_account(name: "Multiple Contact Owner")
+    manager = account.contacts.create!(name: "Account Manager", email: "manager@example.test", role: "Manager")
+    primary = account.contacts.create!(name: "First Owner", email: "first-owner@example.test", role: "Owner")
+    secondary = account.contacts.create!(name: "Second Owner", email: "second-owner@example.test", role: "Owner")
+    sign_in_as create_user(email: "admin-existing-contact@example.test", role: "admin")
+
+    assert_no_difference -> { account.contacts.count } do
+      patch owner_path(account), params: {
+        account: {
+          name: account.name,
+          notes: account.notes,
+          active: "1",
+          time_zone: account.time_zone
+        },
+        contact: {
+          name: "Updated First Owner",
+          email: "updated-first-owner@example.test",
+          phone: "555-0120"
+        }
+      }
+    end
+
+    assert_redirected_to owner_path(account)
+    assert_equal primary.id, account.reload.primary_contact.id
+    assert_equal "Updated First Owner", primary.reload.name
+    assert_equal "Account Manager", manager.reload.name
+    assert_equal "Second Owner", secondary.reload.name
+  end
+
+  test "invalid first contact rolls back account changes without persisting a contact" do
+    account = create_account(name: "Atomic Contact Owner")
+    sign_in_as create_user(email: "admin-invalid-contact@example.test", role: "admin")
+
+    assert_no_difference -> { account.contacts.count } do
+      patch owner_path(account), params: {
+        account: {
+          name: "Changed Atomic Contact Owner",
+          notes: "Must roll back.",
+          active: "0",
+          time_zone: "America/New_York"
+        },
+        contact: {
+          name: "",
+          email: "not-an-email",
+          phone: "555-0130"
+        }
+      }
+    end
+
+    assert_response :unprocessable_entity
+    assert_includes response.body, "Name can&#39;t be blank"
+    assert_includes response.body, "Email is invalid"
+    assert_select "input[name='account[name]'][value='Changed Atomic Contact Owner']"
+    assert_select "input[name='contact[email]'][value='not-an-email']"
+    account.reload
+    assert_equal "Atomic Contact Owner", account.name
+    assert_nil account.notes
+    assert account.active?
+    assert_equal Account::DEFAULT_TIME_ZONE, account.time_zone
+    assert_empty account.contacts
+  end
+
+  test "invalid account rolls back an existing primary contact update" do
+    account = create_account(name: "Atomic Existing Contact Owner")
+    contact = account.contacts.create!(
+      name: "Existing Primary Contact",
+      email: "existing-primary@example.test",
+      role: "Owner"
+    )
+    sign_in_as create_user(email: "admin-invalid-account@example.test", role: "admin")
+
+    assert_no_difference -> { account.contacts.count } do
+      patch owner_path(account), params: {
+        account: {
+          name: "",
+          notes: "Must roll back with the contact.",
+          active: "1",
+          time_zone: account.time_zone
+        },
+        contact: {
+          name: "Changed Primary Contact",
+          email: "changed-primary@example.test",
+          phone: "555-0131"
+        }
+      }
+    end
+
+    assert_response :unprocessable_entity
+    assert_includes response.body, "Name can&#39;t be blank"
+    assert_select "input[name='contact[email]'][value='changed-primary@example.test']"
+    assert_equal "Atomic Existing Contact Owner", account.reload.name
+    assert_equal "Existing Primary Contact", contact.reload.name
+    assert_equal "existing-primary@example.test", contact.email
+  end
+
+  test "invalid account rolls back creation of the first primary contact" do
+    account = create_account(name: "Atomic New Contact Owner")
+    original_active = account.active?
+    original_time_zone = account.time_zone
+    sign_in_as create_user(email: "admin-invalid-account-new-contact@example.test", role: "admin")
+
+    assert_no_difference -> { account.contacts.count } do
+      patch owner_path(account), params: {
+        account: {
+          name: "",
+          notes: "Must roll back with the new contact.",
+          active: "0",
+          time_zone: "America/New_York"
+        },
+        contact: {
+          name: "Valid New Primary Contact",
+          email: "valid-new-primary@example.test",
+          phone: "555-0132"
+        }
+      }
+    end
+
+    assert_response :unprocessable_entity
+    assert_includes response.body, "Name can&#39;t be blank"
+    account.reload
+    assert_equal "Atomic New Contact Owner", account.name
+    assert_nil account.notes
+    assert_equal original_active, account.active?
+    assert_equal original_time_zone, account.time_zone
+    assert_empty account.contacts
+  end
+
+  test "owner cannot add a contact to an account through a crafted update" do
+    owner_account = create_account(name: "Authorized Owner Account")
+    target_account = create_account(name: "Restricted Owner Account")
+    qualify_self_managed_subscription(owner_account)
+    owner = create_user(email: "owner-contact-isolation@example.test", role: "owner")
+    create_account_membership(user: owner, account: owner_account, access_level: "editor")
+    sign_in_as owner
+
+    assert_no_difference -> { target_account.contacts.count } do
+      patch owner_path(target_account), params: {
+        account: {
+          name: "Crafted Account Name",
+          active: "1",
+          time_zone: target_account.time_zone
+        },
+        contact: {
+          name: "Crafted Contact",
+          email: "crafted-contact@example.test"
+        }
+      }
+    end
+
+    assert_access_denied_redirect
+    assert_equal "Restricted Owner Account", target_account.reload.name
+  end
+
   test "captain creates and edits an owner with contact details and active status" do
     sign_in_as create_user(email: "admin-owner-timezone@example.test", role: "admin")
 
