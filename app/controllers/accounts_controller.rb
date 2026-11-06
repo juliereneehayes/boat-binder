@@ -47,10 +47,12 @@ class AccountsController < ApplicationController
 
   def update
     @contact = @account.primary_contact || @account.contacts.new(role: "Owner")
+    @account.assign_attributes(account_params)
+    @contact.assign_attributes(contact_params.merge(role: @contact.role.presence || "Owner"))
 
     Account.transaction do
-      @account.update!(account_params)
-      @contact.update!(contact_params.merge(role: @contact.role.presence || "Owner"))
+      @contact.save!
+      @account.save!
     end
 
     redirect_to owner_path(@account), notice: "Owner updated."
