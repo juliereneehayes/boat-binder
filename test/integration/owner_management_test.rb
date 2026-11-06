@@ -150,6 +150,38 @@ class OwnerManagementTest < ActionDispatch::IntegrationTest
     assert_equal "existing-primary@example.test", contact.email
   end
 
+  test "invalid account rolls back creation of the first primary contact" do
+    account = create_account(name: "Atomic New Contact Owner")
+    original_active = account.active?
+    original_time_zone = account.time_zone
+    sign_in_as create_user(email: "admin-invalid-account-new-contact@example.test", role: "admin")
+
+    assert_no_difference -> { account.contacts.count } do
+      patch owner_path(account), params: {
+        account: {
+          name: "",
+          notes: "Must roll back with the new contact.",
+          active: "0",
+          time_zone: "America/New_York"
+        },
+        contact: {
+          name: "Valid New Primary Contact",
+          email: "valid-new-primary@example.test",
+          phone: "555-0132"
+        }
+      }
+    end
+
+    assert_response :unprocessable_entity
+    assert_includes response.body, "Name can&#39;t be blank"
+    account.reload
+    assert_equal "Atomic New Contact Owner", account.name
+    assert_nil account.notes
+    assert_equal original_active, account.active?
+    assert_equal original_time_zone, account.time_zone
+    assert_empty account.contacts
+  end
+
   test "owner cannot add a contact to an account through a crafted update" do
     owner_account = create_account(name: "Authorized Owner Account")
     target_account = create_account(name: "Restricted Owner Account")
