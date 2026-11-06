@@ -32,6 +32,14 @@ The authenticated full-report link is a separate authorization decision. It is i
 the primary Contact email matches an active, eligible Owner User with current access to that Account
 and Service Visit. A linked User email is never used as a fallback delivery address.
 
+Authorized Admins and Captains can resend an existing Service Visit summary from its detail page.
+The resend resolves the current primary Owner Contact email at request time, uses the same summary
+template and authenticated report-link policy as create-time delivery, and does not change the
+Service Visit. Successful manual sends are serialized on the Service Visit and suppress another
+manual submission for one minute; missing or invalid recipients and failed SMTP submissions remain
+immediately retryable. Manual attempts are recorded as `service_visit.summary_resend` audit events,
+while automatic create-time delivery remains `service_visit.summary_delivery`.
+
 Do not commit SMTP credentials or add `.env`/dotenv support. Set values through Heroku config vars, for example:
 
 ```sh
