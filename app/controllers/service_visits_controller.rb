@@ -1,8 +1,14 @@
 class ServiceVisitsController < ApplicationController
+  MANUAL_SUMMARY_RESEND_AUDIT_ACTION = "service_visit.summary_resend"
+  MANUAL_SUMMARY_RESEND_COOLDOWN = 1.minute
+
   before_action :require_owner_read_access!, only: :index
   before_action :set_vessel, if: -> { params[:vessel_id].present? }
-  before_action :require_vessel_write_access!, only: %i[new create edit update complete_follow_up reopen_follow_up]
-  before_action :set_service_visit, only: %i[show edit update report complete_follow_up reopen_follow_up]
+  before_action :require_internal!, only: :resend_summary
+  before_action :require_vessel_write_access!,
+    only: %i[new create edit update complete_follow_up reopen_follow_up resend_summary]
+  before_action :set_service_visit,
+    only: %i[show edit update report complete_follow_up reopen_follow_up resend_summary]
 
   def index
     service_visits = if @vessel
@@ -79,6 +85,21 @@ class ServiceVisitsController < ApplicationController
   end
 
   def report
+  end
+
+  def resend_summary
+    result = nil
+
+    @service_visit.with_lock do
+      result = if recent_successful_manual_summary_resend?
+        record_summary_delivery_outcome("denied", action: MANUAL_SUMMARY_RESEND_AUDIT_ACTION)
+        :recently_sent
+      else
+        deliver_summary_email(audit_action: MANUAL_SUMMARY_RESEND_AUDIT_ACTION)
+      end
+    end
+
+    redirect_to vessel_service_visit_path(@vessel, @service_visit), **summary_resend_flash(result)
   end
 
   def complete_follow_up
@@ -231,39 +252,39 @@ class ServiceVisitsController < ApplicationController
     )
   end
 
-  def deliver_summary_email
+  def deliver_summary_email(audit_action: "service_visit.summary_delivery")
     recipient_email = @service_visit.summary_recipient_email
     unless recipient_email
       Rails.logger.info(
         "Service visit summary email result=skipped " \
         "service_visit_id=#{@service_visit.id} reason=eligible_recipient_unavailable"
       )
-      record_summary_delivery_outcome("denied")
-      return false
+      record_summary_delivery_outcome("denied", action: audit_action)
+      return :denied
     end
 
     ServiceVisitMailer.summary(@service_visit, recipient_email).deliver_now
     Rails.logger.info(
       "Service visit summary email result=delivered service_visit_id=#{@service_visit.id}"
     )
-    record_summary_delivery_outcome("succeeded")
-    true
+    record_summary_delivery_outcome("succeeded", action: audit_action)
+    :succeeded
   rescue *ApplicationMailer::DELIVERY_ERRORS => error
     Rails.logger.error(
       "Service visit summary email result=failed service_visit_id=#{@service_visit.id} " \
       "exception_class=#{error.class.name}"
     )
-    record_summary_delivery_outcome("failed")
-    false
+    record_summary_delivery_outcome("failed", action: audit_action)
+    :failed
   end
 
   def automatic_summary_delivery?
     @service_visit.performed_by_user.internal?
   end
 
-  def record_summary_delivery_outcome(outcome)
+  def record_summary_delivery_outcome(outcome, action: "service_visit.summary_delivery")
     SecurityAudit::Recorder.record!(
-      action: "service_visit.summary_delivery",
+      action:,
       outcome:,
       actor: Current.user,
       account: @service_visit.account,
@@ -275,6 +296,30 @@ class ServiceVisitsController < ApplicationController
       "Service visit summary audit failed service_visit_id=#{@service_visit.id} " \
       "exception_class=#{error.class.name}"
     )
+  end
+
+  def recent_successful_manual_summary_resend?
+    SecurityAuditEvent.where(
+      action: MANUAL_SUMMARY_RESEND_AUDIT_ACTION,
+      outcome: "succeeded",
+      account_id: @service_visit.account_id,
+      target_type: "ServiceVisit",
+      target_id: @service_visit.id,
+      created_at: MANUAL_SUMMARY_RESEND_COOLDOWN.ago..
+    ).exists?
+  end
+
+  def summary_resend_flash(result)
+    case result
+    when :succeeded
+      { notice: "Summary email sent." }
+    when :denied
+      { alert: "Add a valid primary owner contact email before sending the summary." }
+    when :recently_sent
+      { alert: "Summary email was recently sent. Please wait before sending it again." }
+    else
+      { alert: "Summary email could not be sent. Please try again." }
+    end
   end
 
   def default_location
