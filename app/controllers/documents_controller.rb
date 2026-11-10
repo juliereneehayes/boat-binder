@@ -4,7 +4,7 @@ class DocumentsController < ApplicationController
   DOCUMENT_RELATIONSHIP_KEYS = %i[account_id asset_id].freeze
 
   before_action :require_owner_read_access!, only: :index
-  before_action :set_vessel, only: %i[new create]
+  before_action :set_vessel, only: %i[new create destroy]
   before_action :require_document_write_access!, only: %i[new create]
   before_action :set_document, only: %i[show edit update destroy]
   before_action :require_existing_document_write_access!, only: %i[edit update destroy]
@@ -36,6 +36,7 @@ class DocumentsController < ApplicationController
     else
       Document.new(document_attribute_params)
     end
+    @document.created_by_user = current_user
     return unless assign_document_relationships(@document, template: :new)
     return unless attachment_upload_account_active?(@document.account, file_upload)
 
@@ -103,7 +104,8 @@ class DocumentsController < ApplicationController
   end
 
   def set_document
-    @document = scoped_documents.with_attached_file.find(params[:id])
+    documents = @vessel ? scoped_documents.where(asset_id: @vessel.id) : scoped_documents
+    @document = documents.with_attached_file.find(params[:id])
     preload_attachment_scans(@document.file)
   end
 
@@ -235,7 +237,7 @@ class DocumentsController < ApplicationController
   end
 
   def require_existing_document_write_access!
-    require_write_access!(@document.account)
+    deny_access! unless can_manage_document?(@document)
   end
 
   def after_create_path

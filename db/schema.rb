@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_11_10_000000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_10_180000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -267,9 +267,13 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_10_000000) do
     t.text "notes"
     t.string "title", null: false
     t.datetime "updated_at", null: false
+    t.bigint "created_by_user_id"
+    t.string "author_kind"
     t.index ["account_id"], name: "index_documents_on_account_id"
     t.index ["asset_id"], name: "index_documents_on_asset_id"
+    t.index ["created_by_user_id"], name: "index_documents_on_created_by_user_id"
     t.index ["document_type"], name: "index_documents_on_document_type"
+    t.check_constraint "author_kind::text = ANY (ARRAY['owner'::character varying, 'professional'::character varying]::text[])", name: "chk_documents_author_kind"
   end
 
   create_table "managed_service_relationships", force: :cascade do |t|
@@ -629,6 +633,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_11_10_000000) do
   add_foreign_key "contacts", "accounts"
   add_foreign_key "documents", "accounts"
   add_foreign_key "documents", "assets"
+  add_foreign_key "documents", "users", column: "created_by_user_id"
   add_foreign_key "managed_service_relationships", "accounts"
   add_foreign_key "reminders", "assets"
   add_foreign_key "service_visit_battery_checks", "asset_batteries"

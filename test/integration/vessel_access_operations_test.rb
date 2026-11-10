@@ -394,7 +394,7 @@ class VesselAccessOperationsTest < ActionDispatch::IntegrationTest
     assert_nil @managed_vessel.reload.engine_startup_instructions
   end
 
-  test "managed service owner restricted endpoints also require ordinary Vessel visibility" do
+  test "managed service owner restricted endpoints share ordinary Vessel entitlement" do
     owner = create_user(email: "access-operations-managed-editor@example.test", role: "owner")
     create_account_membership(user: owner, account: @managed_account, access_level: "editor")
     VesselAccessInformation::Persistence.update_fields!(
@@ -403,21 +403,6 @@ class VesselAccessOperationsTest < ActionDispatch::IntegrationTest
       actor: @admin
     )
     sign_in_as owner
-
-    post reveal_vessel_access_information_path(@managed_vessel), params: { field: "marina_gate_code" }
-    assert_response :not_found
-    assert_not_includes response.body, @gate_code
-
-    patch vessel_access_information_path(@managed_vessel), params: {
-      restricted_fields: {
-        marina_gate_code: { operation: "replace", value: "Synthetic blocked managed replacement 1051" }
-      }
-    }
-    assert_response :not_found
-    assert_equal @gate_code,
-      @managed_vessel.reload.vessel_access_information.restricted_field("marina_gate_code")
-
-    qualify_self_managed_subscription(@managed_account)
 
     post reveal_vessel_access_information_path(@managed_vessel), params: { field: "marina_gate_code" }
     assert_response :success
@@ -433,15 +418,16 @@ class VesselAccessOperationsTest < ActionDispatch::IntegrationTest
       @managed_vessel.reload.vessel_access_information.restricted_field("marina_gate_code")
   end
 
-  test "alternate restricted scope cannot surface inactive deleted or otherwise unavailable Vessels" do
+  test "restricted scope cannot surface Vessels through inactive memberships or inactive Accounts" do
     owner = create_user(email: "access-operations-unavailable-owner@example.test", role: "owner")
-    create_account_membership(user: owner, account: @managed_account, access_level: "editor")
-    @managed_vessel.update!(active: false)
+    membership = create_account_membership(user: owner, account: @managed_account, access_level: "editor")
+    membership.update!(active: false)
     sign_in_as owner
 
     post reveal_vessel_access_information_path(@managed_vessel), params: { field: "marina_gate_code" }
     assert_response :not_found
 
+    membership.update!(active: true)
     deleted_vessel = create_vessel(account: @managed_account, name: "Deleted Access Operations Vessel")
     deleted_slug = deleted_vessel.slug
     deleted_vessel.destroy!

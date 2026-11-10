@@ -75,7 +75,7 @@ module Billing
 
     def local_evidence
       StripeAccountStateLock.call(account:) do |subscription, _attempt|
-        valid = account.persisted? && account.active? && account.account_type == "client" &&
+        valid = !ManagedServiceRelationship.effective_for?(account) && account.persisted? && account.active? && account.account_type == "client" &&
           subscription&.provider == Subscription::STRIPE_PROVIDER &&
           subscription.plan == "self_managed" &&
           subscription.status == "canceled" &&

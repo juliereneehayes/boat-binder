@@ -397,6 +397,8 @@ module Billing
     end
 
     def validate_subscription!(subscription)
+      raise InvalidAccountError, "Account already has Managed Service access" if ManagedServiceRelationship.effective_for?(account)
+
       raise InvalidAccountError, "Account subscription state is unavailable" unless subscription
 
       if reactivation?

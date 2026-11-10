@@ -9,6 +9,7 @@ class Document < ApplicationRecord
   MAX_FILE_SIZE = 25.megabytes
   FILE_EXTENSION_ERROR = "extension does not match the uploaded file type"
 
+  belongs_to :created_by_user, class_name: "User", optional: true
   belongs_to :account
   belongs_to :asset, optional: true
   has_one_attached :file
@@ -18,6 +19,9 @@ class Document < ApplicationRecord
   validates :document_type, inclusion: { in: DOCUMENT_TYPES }
   validate :asset_belongs_to_account
   validate :file_is_safe_upload
+  validates :author_kind, inclusion: { in: %w[owner professional] }, allow_nil: true
+  validate :authorship_unchanged, on: :update
+  before_validation :classify_author, on: :create
 
   def self.file_upload_error(upload)
     return if upload.blank?
@@ -30,6 +34,16 @@ class Document < ApplicationRecord
   end
 
   private
+
+  def classify_author
+    self.author_kind = created_by_user&.owner? ? "owner" : "professional" if created_by_user
+  end
+
+  def authorship_unchanged
+    if will_save_change_to_created_by_user_id? || will_save_change_to_author_kind?
+      errors.add(:base, "Document authorship cannot be changed")
+    end
+  end
 
   def asset_belongs_to_account
     return if asset.blank? || account_id.blank? || asset.account_id == account_id

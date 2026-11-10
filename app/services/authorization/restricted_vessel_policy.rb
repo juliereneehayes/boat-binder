@@ -43,14 +43,7 @@ module Authorization
     def authorized_for_account?(account, write:)
       return false unless user&.active? && account&.persisted?
 
-      if ManagedServiceRelationship.effective_for?(account)
-        return true if user.internal?
-        return false unless user.owner?
-
-        memberships = user.account_memberships.active.where(account_id: account.id)
-        memberships = memberships.where(access_level: "editor") if write
-        return memberships.exists?
-      end
+      return ManagedServiceRelationship.effective_for?(account) if user.internal?
 
       return false unless user.owner?
 
@@ -63,7 +56,7 @@ module Authorization
       return managed_service_account_ids if user.internal?
       return [] unless user.owner?
 
-      (self_managed_owner_policy.readable_account_ids + managed_service_owner_account_ids).uniq
+      self_managed_owner_policy.readable_account_ids
     end
 
     def writable_account_ids
@@ -71,20 +64,11 @@ module Authorization
       return managed_service_account_ids if user.internal?
       return [] unless user.owner?
 
-      (self_managed_owner_policy.writable_account_ids + managed_service_owner_account_ids(write: true)).uniq
+      self_managed_owner_policy.writable_account_ids
     end
 
     def managed_service_account_ids
       ManagedServiceRelationship.effective.select(:account_id)
-    end
-
-    def managed_service_owner_account_ids(write: false)
-      memberships = user.account_memberships.active
-      memberships = memberships.where(access_level: "editor") if write
-
-      ManagedServiceRelationship.effective
-        .where(account_id: memberships.select(:account_id))
-        .pluck(:account_id)
     end
 
     def self_managed_owner_policy
