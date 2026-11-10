@@ -39,8 +39,13 @@ class ServiceVisit < ApplicationRecord
   validates :visit_date, presence: true
   validates :engine_hours, numericality: { greater_than_or_equal_to: 0 }, allow_blank: true
   validates :summary, :condition_notes, :follow_up_notes, length: { maximum: 2_000 }
+  # NULL represents historical visits whose original author role is unverified.
+  validates :author_kind, inclusion: { in: %w[owner professional] }, allow_nil: true
   validate :photos_are_safe_uploads
   validate :follow_up_completion_is_consistent
+  validate :authorship_unchanged, on: :update
+
+  before_validation :classify_author, on: :create
 
   scope :recent, -> { order(visit_date: :desc, created_at: :desc) }
   scope :with_open_follow_up, -> { where(follow_up_needed: true, follow_up_completed_at: nil) }
@@ -136,6 +141,16 @@ class ServiceVisit < ApplicationRecord
   end
 
   private
+
+  def classify_author
+    self.author_kind = performed_by_user.owner? ? "owner" : "professional" if performed_by_user
+  end
+
+  def authorship_unchanged
+    if will_save_change_to_performed_by_user_id? || will_save_change_to_author_kind?
+      errors.add(:base, "Visit authorship cannot be changed")
+    end
+  end
 
   def valid_primary_contact_email
     email = account.primary_contact&.email.to_s.strip

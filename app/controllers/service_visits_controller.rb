@@ -9,6 +9,8 @@ class ServiceVisitsController < ApplicationController
     only: %i[new create edit update complete_follow_up reopen_follow_up resend_summary]
   before_action :set_service_visit,
     only: %i[show edit update report complete_follow_up reopen_follow_up resend_summary]
+  before_action :require_service_visit_write_access!,
+    only: %i[edit update complete_follow_up reopen_follow_up]
 
   def index
     service_visits = if @vessel
@@ -155,6 +157,10 @@ class ServiceVisitsController < ApplicationController
 
   def require_vessel_write_access!
     require_write_access!(@vessel.account)
+  end
+
+  def require_service_visit_write_access!
+    deny_access! unless can_manage_service_visit?(@service_visit)
   end
 
   def service_visit_params

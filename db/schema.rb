@@ -10,7 +10,7 @@
 #
 # It's strongly recommended that you check this file into your version control system.
 
-ActiveRecord::Schema[8.1].define(version: 2026_10_31_120000) do
+ActiveRecord::Schema[8.1].define(version: 2026_11_10_000000) do
   # These are extensions that must be enabled in order to support this database
   enable_extension "pg_catalog.plpgsql"
 
@@ -367,6 +367,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_31_120000) do
 
   create_table "service_visits", force: :cascade do |t|
     t.bigint "asset_id", null: false
+    t.string "author_kind"
     t.text "condition_notes"
     t.datetime "created_at", null: false
     t.decimal "engine_hours", precision: 8, scale: 1
@@ -384,6 +385,7 @@ ActiveRecord::Schema[8.1].define(version: 2026_10_31_120000) do
     t.index ["follow_up_needed", "follow_up_completed_at"], name: "index_service_visits_on_open_follow_up"
     t.index ["performed_by_user_id"], name: "index_service_visits_on_performed_by_user_id"
     t.index ["visit_date"], name: "index_service_visits_on_visit_date"
+    t.check_constraint "author_kind::text = ANY (ARRAY['owner'::character varying, 'professional'::character varying]::text[])", name: "chk_service_visits_author_kind"
     t.check_constraint "(follow_up_completed_at IS NULL) = (follow_up_completed_by_user_id IS NULL)", name: "chk_service_visits_follow_up_completion_pair"
     t.check_constraint "engine_hours IS NULL OR engine_hours >= 0::numeric", name: "chk_service_visits_engine_hours_non_negative"
     t.check_constraint "follow_up_completed_at IS NULL OR follow_up_needed", name: "chk_service_visits_follow_up_completion_needed"

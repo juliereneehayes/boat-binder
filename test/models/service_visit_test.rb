@@ -1,6 +1,25 @@
 require "test_helper"
 
 class ServiceVisitTest < ActiveSupport::TestCase
+  test "classifies new visits from the author and keeps authorship immutable" do
+    vessel = create_vessel
+    owner = create_user(email: "visit-model-owner@example.test", role: "owner")
+    captain = create_user(email: "visit-model-captain@example.test", role: "captain")
+    owner_visit = vessel.service_visits.create!(
+      performed_by_user: owner, visit_date: Date.current, author_kind: "professional"
+    )
+    captain_visit = vessel.service_visits.create!(performed_by_user: captain, visit_date: Date.current)
+
+    assert_equal "owner", owner_visit.author_kind
+    assert_equal "professional", captain_visit.author_kind
+
+    assert_not owner_visit.update(author_kind: "professional")
+    owner_visit.reload
+    assert_not owner_visit.update(performed_by_user: captain)
+    assert_equal owner.id, owner_visit.reload.performed_by_user_id
+    assert_equal "owner", owner_visit.author_kind
+  end
+
   test "belongs to an asset and captain" do
     asset = create_vessel
     user = create_user

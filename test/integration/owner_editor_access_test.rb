@@ -252,7 +252,9 @@ class OwnerEditorAccessTest < ActionDispatch::IntegrationTest
         service_visit: {
           visit_date: Date.current,
           summary: "Owner completed the dock check.",
-          condition_notes: "All systems normal."
+          condition_notes: "All systems normal.",
+          performed_by_user_id: @read_only_owner.id,
+          author_kind: "professional"
         }
       }
     end
@@ -260,6 +262,7 @@ class OwnerEditorAccessTest < ActionDispatch::IntegrationTest
     visit = @vessel.service_visits.find_by!(summary: "Owner completed the dock check.")
     assert_redirected_to vessel_service_visit_path(@vessel, visit)
     assert_equal @editor_owner, visit.performed_by_user
+    assert_equal "owner", visit.author_kind
     visit.photos.attach(fixture_file_upload("sample.jpg", "image/jpeg"))
 
     get vessel_service_visit_path(@vessel, visit)
@@ -277,6 +280,8 @@ class OwnerEditorAccessTest < ActionDispatch::IntegrationTest
         visit_date: Date.current,
         summary: "Owner updated the dock check.",
         condition_notes: "Battery reading added.",
+        performed_by_user_id: @read_only_owner.id,
+        author_kind: "professional",
         photos: [ fixture_file_upload("sample.png", "image/png") ]
       }
     }
@@ -284,7 +289,199 @@ class OwnerEditorAccessTest < ActionDispatch::IntegrationTest
     assert_redirected_to vessel_service_visit_path(@vessel, visit)
     assert_equal "Owner updated the dock check.", visit.reload.summary
     assert_equal @editor_owner, visit.performed_by_user
+    assert_equal "owner", visit.author_kind
     assert_equal [ "image/jpeg", "image/png" ], visit.photos.map { |photo| photo.blob.content_type }.sort
+  end
+
+  test "editor owner can view but cannot mutate admin or captain visits" do
+    admin = create_user(email: "protected-admin@example.test", role: "admin")
+    captain = create_user(email: "protected-captain@example.test", role: "captain")
+    sign_in_as @editor_owner
+
+    [ admin, captain ].each do |professional|
+      visit = @vessel.service_visits.create!(
+        performed_by_user: professional,
+        visit_date: Date.current,
+        summary: "Professional #{professional.role} visit",
+        follow_up_needed: true
+      )
+      assert_equal "professional", visit.author_kind
+
+      get vessel_service_visit_path(@vessel, visit)
+      assert_response :success
+      assert_includes response.body, visit.summary
+      assert_select "a[href=?]", edit_vessel_service_visit_path(@vessel, visit), count: 0
+      assert_select "form[action=?]", complete_follow_up_vessel_service_visit_path(@vessel, visit), count: 0
+
+      get service_visits_path
+      assert_response :success
+      assert_select "form[action=?]", complete_follow_up_vessel_service_visit_path(@vessel, visit), count: 0
+
+      get vessel_path(@vessel)
+      assert_response :success
+      assert_select "form[action=?]", complete_follow_up_vessel_service_visit_path(@vessel, visit), count: 0
+
+      get root_path
+      assert_response :success
+      assert_select "form[action=?]", complete_follow_up_vessel_service_visit_path(@vessel, visit), count: 0
+
+      get edit_vessel_service_visit_path(@vessel, visit)
+      assert_access_denied_redirect
+
+      patch vessel_service_visit_path(@vessel, visit), params: {
+        service_visit: { summary: "Changed by owner", performed_by_user_id: @editor_owner.id, author_kind: "owner" }
+      }
+      assert_access_denied_redirect
+      assert_equal "Professional #{professional.role} visit", visit.reload.summary
+      assert_equal professional, visit.performed_by_user
+      assert_equal "professional", visit.author_kind
+
+      assert_no_difference -> { visit.follow_up_events.count } do
+        patch complete_follow_up_vessel_service_visit_path(@vessel, visit)
+      end
+      assert_access_denied_redirect
+      assert visit.reload.follow_up_open?
+
+      visit.complete_follow_up!(by: professional)
+      completed_at = visit.reload.follow_up_completed_at
+      assert_no_difference -> { visit.follow_up_events.count } do
+        patch reopen_follow_up_vessel_service_visit_path(@vessel, visit)
+      end
+      assert_access_denied_redirect
+      assert_equal completed_at, visit.reload.follow_up_completed_at
+      assert_equal professional, visit.follow_up_completed_by_user
+    end
+  end
+
+  test "historical visit with unknown authorship stays owner read only" do
+    visit = @vessel.service_visits.create!(
+      performed_by_user: @editor_owner, visit_date: Date.current,
+      summary: "Historical visit", follow_up_needed: true
+    )
+    visit.update_column(:author_kind, nil)
+    sign_in_as @editor_owner
+
+    get vessel_service_visit_path(@vessel, visit)
+    assert_response :success
+    assert_select "a[href=?]", edit_vessel_service_visit_path(@vessel, visit), count: 0
+    assert_select "form[action=?]", complete_follow_up_vessel_service_visit_path(@vessel, visit), count: 0
+
+    get edit_vessel_service_visit_path(@vessel, visit)
+    assert_access_denied_redirect
+
+    patch vessel_service_visit_path(@vessel, visit), params: { service_visit: { summary: "Tampered" } }
+    assert_access_denied_redirect
+    assert_equal "Historical visit", visit.reload.summary
+
+    assert_no_difference -> { visit.follow_up_events.count } do
+      patch complete_follow_up_vessel_service_visit_path(@vessel, visit)
+    end
+    assert_access_denied_redirect
+    assert visit.reload.follow_up_open?
+    assert_nil visit.author_kind
+
+    captain = create_user(email: "historical-internal@example.test", role: "captain")
+    visit.complete_follow_up!(by: captain)
+    completed_at = visit.reload.follow_up_completed_at
+    assert_no_difference -> { visit.follow_up_events.count } do
+      patch reopen_follow_up_vessel_service_visit_path(@vessel, visit)
+    end
+    assert_access_denied_redirect
+    assert_equal completed_at, visit.reload.follow_up_completed_at
+
+    sign_in_as captain
+    patch vessel_service_visit_path(@vessel, visit), params: { service_visit: { summary: "Captain correction" } }
+    assert_redirected_to vessel_service_visit_path(@vessel, visit)
+    assert_equal "Captain correction", visit.reload.summary
+    assert_nil visit.author_kind
+  end
+
+  test "another owner cannot mutate a verified owner visit in the same account" do
+    other_owner = create_user(email: "other-visit-owner@example.test", role: "owner")
+    visit = @vessel.service_visits.create!(
+      performed_by_user: @editor_owner, visit_date: Date.current,
+      summary: "Other owner's visit", follow_up_needed: true
+    )
+    @editor_owner.account_memberships.find_by!(account: @account).update!(active: false)
+    create_account_membership(user: other_owner, account: @account, access_level: "editor")
+    sign_in_as other_owner
+
+    get vessel_service_visit_path(@vessel, visit)
+    assert_response :success
+    assert_select "a[href=?]", edit_vessel_service_visit_path(@vessel, visit), count: 0
+
+    patch vessel_service_visit_path(@vessel, visit), params: { service_visit: { summary: "Changed" } }
+    assert_access_denied_redirect
+    assert_equal "Other owner's visit", visit.reload.summary
+
+    patch complete_follow_up_vessel_service_visit_path(@vessel, visit)
+    assert_access_denied_redirect
+    assert visit.reload.follow_up_open?
+    assert_empty visit.follow_up_events
+  end
+
+  test "role change does not unlock a professional visit" do
+    professional = create_user(email: "former-admin-visit@example.test", role: "admin")
+    visit = @vessel.service_visits.create!(
+      performed_by_user: professional, visit_date: Date.current,
+      summary: "Admin authored", follow_up_needed: true
+    )
+    @editor_owner.account_memberships.find_by!(account: @account).update!(active: false)
+    professional.update!(role: "owner")
+    create_account_membership(user: professional, account: @account, access_level: "editor")
+    sign_in_as professional
+
+    get edit_vessel_service_visit_path(@vessel, visit)
+    assert_access_denied_redirect
+
+    patch vessel_service_visit_path(@vessel, visit), params: { service_visit: { summary: "Changed" } }
+    assert_access_denied_redirect
+    assert_equal "Admin authored", visit.reload.summary
+    assert_equal "professional", visit.author_kind
+
+    patch complete_follow_up_vessel_service_visit_path(@vessel, visit)
+    assert_access_denied_redirect
+    assert visit.reload.follow_up_open?
+  end
+
+  test "verified owner visit still requires current account write eligibility" do
+    visit = @vessel.service_visits.create!(
+      performed_by_user: @editor_owner, visit_date: Date.current,
+      summary: "Owner verified visit", follow_up_needed: true
+    )
+    membership = @editor_owner.account_memberships.find_by!(account: @account)
+    membership.update!(access_level: "read_only")
+    sign_in_as @editor_owner
+
+    get vessel_service_visit_path(@vessel, visit)
+    assert_response :success
+    assert_select "a[href=?]", edit_vessel_service_visit_path(@vessel, visit), count: 0
+
+    patch complete_follow_up_vessel_service_visit_path(@vessel, visit)
+    assert_access_denied_redirect
+    assert visit.reload.follow_up_open?
+
+    membership.update!(access_level: "editor")
+    @account.subscription.update!(status: "suspended", entitlement_ended_at: Time.current)
+    patch vessel_service_visit_path(@vessel, visit), params: { service_visit: { summary: "Changed" } }
+    assert_response :not_found
+    assert_equal "Owner verified visit", visit.reload.summary
+    assert_equal "owner", visit.author_kind
+  end
+
+  test "same account but different vessel cannot resolve a visit for mutation" do
+    other_vessel = create_vessel(account: @account, name: "Another Vessel")
+    visit = @vessel.service_visits.create!(
+      performed_by_user: @editor_owner, visit_date: Date.current, summary: "Bound to Blue Meridian"
+    )
+    sign_in_as @editor_owner
+
+    get edit_vessel_service_visit_path(other_vessel, visit)
+    assert_response :not_found
+
+    patch vessel_service_visit_path(other_vessel, visit), params: { service_visit: { summary: "Changed" } }
+    assert_response :not_found
+    assert_equal "Bound to Blue Meridian", visit.reload.summary
   end
 
   test "editor owner cannot create or edit service visits outside their account" do
