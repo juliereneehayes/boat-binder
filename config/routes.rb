@@ -50,7 +50,10 @@ Rails.application.routes.draw do
   root "dashboard#index"
 
   get "accounts", to: "accounts#index", as: :accounts
-  resources :owners, controller: :accounts, except: %i[destroy]
+  resources :owners, controller: :accounts, except: %i[destroy] do
+    post :activate_managed_service, on: :member
+    post :revoke_managed_service, on: :member
+  end
 
   resources :vessels do
     delete :primary_photo, on: :member, action: :destroy_primary_photo

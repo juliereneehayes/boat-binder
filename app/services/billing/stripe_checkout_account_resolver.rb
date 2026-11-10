@@ -2,13 +2,14 @@ module Billing
   class StripeCheckoutAccountResolver
     class ResolutionError < StandardError; end
 
-    def self.call(user, account_reference: nil)
-      new(user, account_reference:).call
+    def self.call(user, account_reference: nil, allow_managed: false)
+      new(user, account_reference:, allow_managed:).call
     end
 
-    def initialize(user, account_reference: nil)
+    def initialize(user, account_reference: nil, allow_managed: false)
       @user = user
       @account_reference = account_reference
+      @allow_managed = allow_managed
     end
 
     def call
@@ -17,7 +18,7 @@ module Billing
       return referenced_account if account_reference
 
       accounts = eligible_accounts.includes(:subscription).select do |account|
-        OwnerUserLimit.compliant_for_plan?(
+        (@allow_managed || !ManagedServiceRelationship.effective_for?(account)) && OwnerUserLimit.compliant_for_plan?(
           account,
           plan_key: SubscriptionPlanCatalog::SELF_MANAGED_PLAN_KEY
         )
@@ -37,7 +38,7 @@ module Billing
         account_reference:,
         access_levels: [ "editor" ]
       ).account
-      return account if OwnerUserLimit.compliant_for_plan?(
+      return account if (@allow_managed || !ManagedServiceRelationship.effective_for?(account)) && OwnerUserLimit.compliant_for_plan?(
         account,
         plan_key: SubscriptionPlanCatalog::SELF_MANAGED_PLAN_KEY
       )

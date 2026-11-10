@@ -7,7 +7,7 @@
       <p class="mt-2 text-sm leading-6 text-slate-600"><%= @document.account.name %><%= " · #{@document.asset.name}" if @document.asset.present? %></p>
     </div>
     <div class="flex flex-wrap gap-2 md:justify-end">
-      <% if can_manage_account?(@document.account) %>
+      <% if can_manage_document?(@document) %>
         <%= link_to @document.file.attached? ? "Edit" : "Edit / Add file", edit_document_path(@document), class: primary_button_class %>
         <%= button_to "Delete", document_path(@document), method: :delete, form: { data: { turbo_confirm: "Delete #{@document.title}?" } }, class: "min-h-11 rounded-md border border-red-200 px-4 py-2 text-sm font-bold text-red-700", data: { turbo_submits_with: "Deleting..." } %>
       <% end %>
@@ -72,7 +72,7 @@
         <div class="mt-4 rounded-md border border-dashed border-slate-300 bg-slate-50 p-5">
           <p class="font-black">No file is currently attached.</p>
           <p class="mt-2 text-sm leading-6 text-slate-600">Add a PDF or image file from the edit screen when you are ready.</p>
-          <% if can_manage_account?(@document.account) %>
+          <% if can_manage_document?(@document) %>
             <%= link_to "Edit / Add file", edit_document_path(@document), class: primary_button_class("mt-4") %>
           <% end %>
         </div>

@@ -68,14 +68,15 @@ class DocumentManagementTest < ActionDispatch::IntegrationTest
   end
 
   test "document index shows view edit and metadata only status" do
+    editor_owner = create_user(email: "document-index-editor@example.test", role: "owner")
     account = create_account(name: "Elliott Family")
     vessel = create_vessel(account: account)
-    document = vessel.documents.create!(account: account, title: "Metadata only", document_type: "insurance")
-    attached_document = vessel.documents.create!(account: account, title: "Attached file", document_type: "registration")
+    document = vessel.documents.create!(created_by_user: editor_owner, account: account, title: "Metadata only", document_type: "insurance")
+    attached_document = vessel.documents.create!(created_by_user: editor_owner, account: account, title: "Attached file", document_type: "registration")
     attached_document.file.attach(fixture_file_upload("sample.pdf", "application/pdf"))
     trust_attachment(attached_document.file)
     pending_documents = [ "Pending insurance", "Pending registration" ].map do |title|
-      pending_document = vessel.documents.create!(account: account, title:, document_type: "other")
+      pending_document = vessel.documents.create!(created_by_user: editor_owner, account: account, title:, document_type: "other")
       pending_document.file.attach(fixture_file_upload("sample.pdf", "application/pdf"))
       AttachmentScan.create!(
         active_storage_blob: pending_document.file.blob,
@@ -84,7 +85,6 @@ class DocumentManagementTest < ActionDispatch::IntegrationTest
       )
       pending_document
     end
-    editor_owner = create_user(email: "document-index-editor@example.test", role: "owner")
     qualify_self_managed_subscription(account)
     create_account_membership(user: editor_owner, account: account, access_level: "editor")
     sign_in_as editor_owner
@@ -105,15 +105,14 @@ class DocumentManagementTest < ActionDispatch::IntegrationTest
   end
 
   test "owner editor can view and edit document metadata" do
+    editor_owner = create_user(email: "document-editor@example.test", role: "owner")
     account = create_account(name: "Elliott Family")
     vessel = create_vessel(account: account)
-    document = vessel.documents.create!(
-      account: account,
+    document = vessel.documents.create!(created_by_user: editor_owner, account: account,
       title: "Insurance binder",
       document_type: "insurance",
       notes: "Original notes."
     )
-    editor_owner = create_user(email: "document-editor@example.test", role: "owner")
     qualify_self_managed_subscription(account)
     create_account_membership(user: editor_owner, account: account, access_level: "editor")
     sign_in_as editor_owner
@@ -148,9 +147,9 @@ class DocumentManagementTest < ActionDispatch::IntegrationTest
   end
 
   test "owner editor can attach a file to a metadata only document" do
-    account = create_account(name: "Elliott Family")
-    document = Document.create!(account: account, title: "Registration", document_type: "registration")
     editor_owner = create_user(email: "document-attach-editor@example.test", role: "owner")
+    account = create_account(name: "Elliott Family")
+    document = Document.create!(created_by_user: editor_owner, account: account, title: "Registration", document_type: "registration")
     qualify_self_managed_subscription(account)
     create_account_membership(user: editor_owner, account: account, access_level: "editor")
     sign_in_as editor_owner
@@ -179,11 +178,11 @@ class DocumentManagementTest < ActionDispatch::IntegrationTest
   end
 
   test "owner editor can replace an existing file and metadata updates preserve attachment" do
+    editor_owner = create_user(email: "document-replace-editor@example.test", role: "owner")
     account = create_account(name: "Elliott Family")
-    document = Document.create!(account: account, title: "Receipt", document_type: "receipt")
+    document = Document.create!(created_by_user: editor_owner, account: account, title: "Receipt", document_type: "receipt")
     document.file.attach(fixture_file_upload("sample.pdf", "application/pdf"))
     original_blob_id = document.file.blob.id
-    editor_owner = create_user(email: "document-replace-editor@example.test", role: "owner")
     qualify_self_managed_subscription(account)
     create_account_membership(user: editor_owner, account: account, access_level: "editor")
     sign_in_as editor_owner
@@ -254,10 +253,10 @@ class DocumentManagementTest < ActionDispatch::IntegrationTest
   end
 
   test "owner editor cannot view or mutate documents in another account" do
+    editor_owner = create_user(email: "document-scope-editor@example.test", role: "owner")
     account = create_account(name: "Elliott Family")
     other_account = create_account(name: "Harbor North")
-    document = Document.create!(account: other_account, title: "Private document", document_type: "other")
-    editor_owner = create_user(email: "document-scope-editor@example.test", role: "owner")
+    document = Document.create!(created_by_user: editor_owner, account: other_account, title: "Private document", document_type: "other")
     create_account_membership(user: editor_owner, account: account, access_level: "editor")
     sign_in_as editor_owner
 
@@ -282,12 +281,12 @@ class DocumentManagementTest < ActionDispatch::IntegrationTest
   end
 
   test "crafted owner editor relationship requests cannot escape manageable accounts" do
+    editor_owner = create_user(email: "document-crafted-editor@example.test", role: "owner")
     account = create_account(name: "Elliott Family")
     other_account = create_account(name: "Harbor North")
     vessel = create_vessel(account: account)
     other_vessel = create_vessel(account: other_account, name: "Restricted Vessel")
-    document = vessel.documents.create!(account: account, title: "Managed document", document_type: "other")
-    editor_owner = create_user(email: "document-crafted-editor@example.test", role: "owner")
+    document = vessel.documents.create!(created_by_user: editor_owner, account: account, title: "Managed document", document_type: "other")
     qualify_self_managed_subscription(account)
     create_account_membership(user: editor_owner, account: account, access_level: "editor")
     sign_in_as editor_owner
@@ -309,11 +308,11 @@ class DocumentManagementTest < ActionDispatch::IntegrationTest
   end
 
   test "invalid edit upload rerenders without replacing existing attachment" do
+    editor_owner = create_user(email: "document-invalid-editor@example.test", role: "owner")
     account = create_account(name: "Elliott Family")
-    document = Document.create!(account: account, title: "Safe file", document_type: "other")
+    document = Document.create!(created_by_user: editor_owner, account: account, title: "Safe file", document_type: "other")
     document.file.attach(fixture_file_upload("sample.pdf", "application/pdf"))
     original_blob_id = document.file.blob.id
-    editor_owner = create_user(email: "document-invalid-editor@example.test", role: "owner")
     qualify_self_managed_subscription(account)
     create_account_membership(user: editor_owner, account: account, access_level: "editor")
     sign_in_as editor_owner
@@ -335,11 +334,11 @@ class DocumentManagementTest < ActionDispatch::IntegrationTest
   end
 
   test "oversized edit upload rerenders without replacing existing attachment" do
+    editor_owner = create_user(email: "document-oversized-editor@example.test", role: "owner")
     account = create_account(name: "Elliott Family")
-    document = Document.create!(account: account, title: "Sized file", document_type: "other")
+    document = Document.create!(created_by_user: editor_owner, account: account, title: "Sized file", document_type: "other")
     document.file.attach(fixture_file_upload("sample.pdf", "application/pdf"))
     original_blob_id = document.file.blob.id
-    editor_owner = create_user(email: "document-oversized-editor@example.test", role: "owner")
     qualify_self_managed_subscription(account)
     create_account_membership(user: editor_owner, account: account, access_level: "editor")
     oversized_file = Tempfile.new([ "oversized-edit", ".pdf" ])
@@ -580,11 +579,11 @@ class DocumentManagementTest < ActionDispatch::IntegrationTest
   end
 
   test "unexpected file attachment failure rerenders edit form and preserves existing attachment" do
+    editor_owner = create_user(email: "document-attachment-failure@example.test", role: "owner")
     account = create_account(name: "Elliott Family")
-    document = Document.create!(account: account, title: "Existing document", document_type: "other")
+    document = Document.create!(created_by_user: editor_owner, account: account, title: "Existing document", document_type: "other")
     document.file.attach(fixture_file_upload("sample.pdf", "application/pdf"))
     original_blob_id = document.file.blob.id
-    editor_owner = create_user(email: "document-attachment-failure@example.test", role: "owner")
     qualify_self_managed_subscription(account)
     create_account_membership(user: editor_owner, account: account, access_level: "editor")
     log_output = StringIO.new
@@ -642,11 +641,11 @@ class DocumentManagementTest < ActionDispatch::IntegrationTest
   end
 
   test "document replacement rejects an extension that does not match detected content" do
+    editor = create_user(email: "document-extension-editor@example.test", role: "owner")
     account = create_account(name: "Extension Match Owner")
-    document = Document.create!(account:, title: "Original file", document_type: "other")
+    document = Document.create!(created_by_user: editor, account:, title: "Original file", document_type: "other")
     document.file.attach(fixture_file_upload("sample.pdf", "application/pdf"))
     original_blob_id = document.file.blob.id
-    editor = create_user(email: "document-extension-editor@example.test", role: "owner")
     qualify_self_managed_subscription(account)
     create_account_membership(user: editor, account:, access_level: "editor")
     sign_in_as editor

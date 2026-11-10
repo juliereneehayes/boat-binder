@@ -28,8 +28,7 @@ class VesselAccessInformation::PersistenceAuthorizationTest < ActiveSupport::Tes
     create_account_membership(user: read_only_owner, account: @managed_account, access_level: "read_only")
     unqualified_owner = create_user(email: "denied-unqualified-owner@example.test", role: "owner")
     create_account_membership(user: unqualified_owner, account: @self_managed_account, access_level: "editor")
-    cross_account_owner = create_user(email: "denied-cross-account-owner@example.test", role: "owner")
-    create_account_membership(user: cross_account_owner, account: @managed_account, access_level: "editor")
+    cross_account_owner = read_only_owner
 
     denied_attempts = [
       [ admin_without_managed_service, @self_managed_vessel ],

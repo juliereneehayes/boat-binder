@@ -58,7 +58,7 @@ class DashboardController < ApplicationController
   end
 
   def billing_portal_available?
-    account = Billing::StripeCheckoutAccountResolver.call(current_user)
+    account = Billing::StripeCheckoutAccountResolver.call(current_user, allow_managed: true)
     Billing::StripePortalSessionCreator.eligible_account?(account)
   rescue Billing::StripeCheckoutAccountResolver::ResolutionError
     false

@@ -1,7 +1,8 @@
 class AccountsController < ApplicationController
   before_action :require_internal!
   before_action :require_write_access!, only: %i[new create edit update]
-  before_action :set_account, only: %i[show edit update]
+  before_action :require_admin!, only: %i[activate_managed_service revoke_managed_service]
+  before_action :set_account, only: %i[show edit update activate_managed_service revoke_managed_service]
 
   def index
     @include_inactive = params[:include_inactive].present?
@@ -60,7 +61,22 @@ class AccountsController < ApplicationController
     render :edit, status: :unprocessable_entity
   end
 
+  def activate_managed_service
+    transition_managed_service(active: true)
+  end
+
+  def revoke_managed_service
+    transition_managed_service(active: false)
+  end
+
   private
+
+  def transition_managed_service(active:)
+    ManagedServiceRelationship::Transition.call!(account: @account, active:, actor: current_user, request_id: request.request_id)
+    redirect_to owner_path(@account), notice: active ? "HYC Managed Service activated." : "HYC Managed Service revoked."
+  rescue ManagedServiceRelationship::Transition::EnrollmentError => error
+    redirect_to owner_path(@account), alert: error.message
+  end
 
   def set_account
     @account = scoped_accounts.find(params[:id])

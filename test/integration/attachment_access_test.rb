@@ -12,6 +12,7 @@ class AttachmentAccessTest < ActionDispatch::IntegrationTest
     )
     @vessel = create_vessel(account: @account, name: "Attachment Vessel")
     @document = Document.create!(
+      created_by_user: @owner,
       account: @account,
       asset: @vessel,
       title: "Private policy",

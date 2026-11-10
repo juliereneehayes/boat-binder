@@ -10,7 +10,7 @@ module Authorization
 
   included do
     helper_method :current_user, :admin_user?, :internal_user?, :owner_user?, :can_manage_records?,
-      :can_manage_account?, :can_manage_service_visit?, :can_create_vessels?,
+      :can_manage_account?, :can_manage_document?, :can_manage_service_visit?, :can_create_vessels?,
       :owner_lifecycle_restricted?, :owner_lifecycle_recoveries
   end
 
@@ -43,6 +43,13 @@ module Authorization
     return false unless account.present?
 
     manageable_account_ids.include?(account.id)
+  end
+
+  def can_manage_document?(document)
+    return false unless can_manage_account?(document.account)
+    return true if internal_user?
+
+    document.author_kind == "owner" && document.created_by_user_id == current_user.id
   end
 
   def can_manage_service_visit?(visit)

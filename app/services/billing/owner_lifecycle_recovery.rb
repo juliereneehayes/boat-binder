@@ -15,8 +15,9 @@ module Billing
       @membership = membership
       @now = now
       entitlement = SelfManagedEntitlement.new(account:, now:)
+      @managed_service = ManagedServiceRelationship.effective_for?(account)
       @phase = if OwnerUserLimit.compliant?(account)
-        entitlement.lifecycle_phase
+        @managed_service ? :current_entitlement : entitlement.lifecycle_phase
       else
         :manual_review
       end
@@ -33,7 +34,7 @@ module Billing
     end
 
     def scheduled_cancellation?
-      phase == :current_entitlement && account.subscription&.scheduled_cancellation?(now:)
+      !@managed_service && phase == :current_entitlement && account.subscription&.scheduled_cancellation?(now:)
     end
 
     def status_label

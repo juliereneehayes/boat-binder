@@ -28,10 +28,9 @@ class RestrictedVesselAuthorizationTest < ActiveSupport::TestCase
 
   test "managed service owners follow active membership read and write semantics" do
     reader = create_user(email: "managed-reader@example.test", role: "owner")
-    editor = create_user(email: "managed-editor@example.test", role: "owner")
+    editor = reader
     inactive_member = create_user(email: "managed-inactive-member@example.test", role: "owner")
     create_account_membership(user: reader, account: @managed_account, access_level: "read_only")
-    create_account_membership(user: editor, account: @managed_account, access_level: "editor")
     create_account_membership(
       user: inactive_member,
       account: @managed_account,
@@ -41,37 +40,28 @@ class RestrictedVesselAuthorizationTest < ActiveSupport::TestCase
 
     assert restricted_readable?(reader, @managed_vessel)
     assert_not restricted_manageable?(reader, @managed_vessel)
+    reader.account_memberships.find_by!(account: @managed_account).update!(access_level: "editor")
     assert restricted_readable?(editor, @managed_vessel)
     assert restricted_manageable?(editor, @managed_vessel)
     assert_not restricted_readable?(inactive_member, @managed_vessel)
   end
 
-  test "managed service owner access is independent of unrelated subscription plans and owner limits" do
+  test "managed service owner access enforces the shared Owner limit independently of subscription plans" do
     first_owner = create_user(email: "managed-first-owner@example.test", role: "owner")
     second_owner = create_user(email: "managed-second-owner@example.test", role: "owner")
     create_account_membership(user: first_owner, account: @managed_account, access_level: "editor")
-    create_account_membership(user: second_owner, account: @managed_account, access_level: "editor")
+    membership = create_account_membership(user: second_owner, account: @managed_account, access_level: "editor", active: false)
+    assert_not membership.update(active: true)
+    # Simulate preexisting noncompliant state without weakening model validation.
+    membership.update_column(:active, true)
 
-    [ "legacy", "starter", "professional" ].each do |plan|
+    %w[legacy starter professional].each do |plan|
       @managed_account.subscription.update!(provider: "local", plan:, status: "active")
-
-      assert restricted_manageable?(first_owner, @managed_vessel), plan
-      assert restricted_manageable?(second_owner, @managed_vessel), plan
+      assert_not Billing::OwnerUserLimit.compliant?(@managed_account.reload)
+      assert_not restricted_manageable?(first_owner, @managed_vessel), plan
+      assert_not restricted_manageable?(second_owner, @managed_vessel), plan
+      assert_empty Authorization::SelfManagedOwnerPolicy.new(user: first_owner).readable_account_ids
     end
-
-    now = Time.current
-    @managed_account.subscription.update_columns(
-      provider: "stripe",
-      plan: "self_managed",
-      status: "active",
-      external_customer_id: "cus_managed_multiple_owners",
-      external_subscription_id: "sub_managed_multiple_owners",
-      current_period_ends_at: now + 1.month,
-      last_synced_at: now
-    )
-    assert_not Billing::OwnerUserLimit.compliant?(@managed_account.reload)
-    assert restricted_manageable?(first_owner, @managed_vessel), "noncompliant Self Managed state"
-    assert restricted_manageable?(second_owner, @managed_vessel), "noncompliant Self Managed state"
   end
 
   test "managed service owner access remains isolated across mixed account memberships" do
@@ -194,11 +184,10 @@ class RestrictedVesselAuthorizationTest < ActiveSupport::TestCase
     admin = create_user(email: "parity-admin@example.test", role: "admin")
     captain = create_user(email: "parity-captain@example.test", role: "captain")
     managed_reader = create_user(email: "parity-managed-reader@example.test", role: "owner")
-    managed_editor = create_user(email: "parity-managed-editor@example.test", role: "owner")
+    managed_editor = managed_reader
     inactive_member = create_user(email: "parity-inactive-member@example.test", role: "owner")
     self_managed_owner = create_user(email: "parity-self-owner@example.test", role: "owner")
     create_account_membership(user: managed_reader, account: @managed_account, access_level: "read_only")
-    create_account_membership(user: managed_editor, account: @managed_account, access_level: "editor")
     create_account_membership(
       user: inactive_member,
       account: @managed_account,
@@ -216,6 +205,7 @@ class RestrictedVesselAuthorizationTest < ActiveSupport::TestCase
       assert_policy_parity(internal_user, @self_managed_vessel, readable: false, writable: false)
     end
     assert_policy_parity(managed_reader, @managed_vessel, readable: true, writable: false)
+    managed_reader.account_memberships.find_by!(account: @managed_account).update!(access_level: "editor")
     assert_policy_parity(managed_editor, @managed_vessel, readable: true, writable: true)
     assert_policy_parity(inactive_member, @managed_vessel, readable: false, writable: false)
     assert_policy_parity(self_managed_owner, @self_managed_vessel, readable: true, writable: false)
