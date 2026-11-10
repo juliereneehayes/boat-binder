@@ -44,6 +44,15 @@ class Authorization::SelfManagedOwnerPolicyTest < ActiveSupport::TestCase
     assert_empty policy.writable_account_ids
   end
 
+  test "existing Managed Service relationship does not grant Owner access to an internal Account" do
+    @account.update!(account_type: "internal")
+    @account.create_managed_service_relationship!(active: true)
+
+    assert ManagedServiceRelationship.effective_for?(@account)
+    assert_empty policy.readable_account_ids
+    assert_empty policy.writable_account_ids
+  end
+
   test "inactive membership user and retained lifecycle state fail closed" do
     qualify_self_managed_subscription(@account, now: @now)
     @membership.update!(active: false)

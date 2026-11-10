@@ -39,7 +39,7 @@ module Authorization
         .filter_map do |account|
           next unless Billing::OwnerUserLimit.compliant?(account)
 
-          next account.id if ManagedServiceRelationship.effective_for?(account)
+          next account.id if account.account_type == "client" && ManagedServiceRelationship.effective_for?(account)
 
           entitlement = Billing::SelfManagedEntitlement.new(account:, now:)
           account.id if write ? entitlement.qualifying? : readable?(entitlement)
