@@ -67,8 +67,10 @@ class ServiceVisitBatteryManagementTest < ApplicationSystemTestCase
     check "House Bank Updated"
     click_button "Save visit report"
 
-    service_visit = @vessel.service_visits.order(:id).last
+    assert_text "Visit report saved."
     assert_equal 1, @vessel.service_visits.count
+    service_visit = @vessel.service_visits.order(:id).last
+    assert_current_path vessel_service_visit_path(@vessel, service_visit)
     battery_check = service_visit.service_visit_battery_checks.find_by!(asset_battery: battery)
     assert battery_check.checked?
     assert_equal 12.64.to_d, battery_check.voltage
@@ -107,6 +109,7 @@ class ServiceVisitBatteryManagementTest < ApplicationSystemTestCase
       click_button "Add battery"
     end
 
+    assert_no_text "Name can't be blank"
     battery = @vessel.asset_batteries.find_by!(name: "Reopened Battery")
     assert_selector "#service_visit_battery_#{battery.id}_name", text: "Reopened Battery"
     assert_equal "Still here", find_field("Owner summary").value
@@ -148,6 +151,8 @@ class ServiceVisitBatteryManagementTest < ApplicationSystemTestCase
     fill_in "service_visit_battery_checks_#{new_battery.id}_notes", with: "Installed inline"
     click_button "Save visit changes"
 
+    assert_text "Visit report updated."
+    assert_current_path vessel_service_visit_path(@vessel, service_visit)
     service_visit.reload
     new_check = service_visit.service_visit_battery_checks.find_by!(asset_battery: new_battery)
     assert new_check.checked?
@@ -169,7 +174,8 @@ class ServiceVisitBatteryManagementTest < ApplicationSystemTestCase
     click_button "Add battery"
 
     assert_text "Battery added."
-    assert_current_path vessel_path(@vessel, anchor: "batteries")
+    assert_current_path vessel_path(@vessel)
+    assert_includes page.current_url, "#batteries"
     assert_no_text "turbo-stream"
   end
 
