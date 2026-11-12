@@ -12,9 +12,13 @@ class AssetBatteriesController < ApplicationController
     @battery = @vessel.asset_batteries.new(battery_params)
 
     if @battery.save
-      redirect_to vessel_path(@vessel, anchor: "batteries"), notice: "Battery added."
+      if service_visit_battery_management?
+        render :create, formats: :turbo_stream
+      else
+        redirect_to vessel_path(@vessel, anchor: "batteries"), notice: "Battery added."
+      end
     else
-      render :new, status: :unprocessable_entity
+      render_battery_form(:new)
     end
   end
 
@@ -23,9 +27,13 @@ class AssetBatteriesController < ApplicationController
 
   def update
     if @battery.update(battery_params)
-      redirect_to vessel_path(@vessel, anchor: "batteries"), notice: "Battery updated."
+      if service_visit_battery_management?
+        render :update, formats: :turbo_stream
+      else
+        redirect_to vessel_path(@vessel, anchor: "batteries"), notice: "Battery updated."
+      end
     else
-      render :edit, status: :unprocessable_entity
+      render_battery_form(:edit)
     end
   end
 
@@ -50,5 +58,15 @@ class AssetBatteriesController < ApplicationController
 
   def battery_params
     params.require(:asset_battery).permit(:name, :location, :battery_type, :notes, :active)
+  end
+
+  def service_visit_battery_management?
+    params[:from_service_visit] == "1" && request.format.turbo_stream?
+  end
+
+  def render_battery_form(template)
+    options = { status: :unprocessable_entity }
+    options[:formats] = :html if params[:from_service_visit] == "1"
+    render template, **options
   end
 end

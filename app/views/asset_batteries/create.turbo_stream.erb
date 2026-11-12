@@ -1,0 +1,3 @@
+<%= turbo_stream.remove "service_visit_no_batteries" %>
+<%= turbo_stream.append "service_visit_battery_checks", partial: "service_visits/battery_check", locals: { vessel: @vessel, battery: @battery, battery_check: nil } %>
+<%= turbo_stream.replace "service_visit_battery_management", partial: "asset_batteries/empty_battery_management" %>

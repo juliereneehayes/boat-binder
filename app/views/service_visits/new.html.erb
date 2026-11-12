@@ -9,7 +9,7 @@
   <%= field_error_messages(@service_visit) %>
 
   <div
-    data-controller="upload-preview"
+    data-controller="upload-preview battery-management"
     data-action="turbo:before-render@document->upload-preview#beforeRender turbo:before-cache@document->upload-preview#beforeCache turbo:submit-end@document->upload-preview#submitEnd"
     data-upload-preview-existing-count-value="<%= @service_visit.photos.attachments.size %>"
     data-upload-preview-flow-value="service-visit-photos"
@@ -68,32 +68,21 @@
     <section class="space-y-4 rounded-md border border-slate-200 bg-white p-4 shadow-sm">
       <div class="flex items-center justify-between gap-3">
         <h2 class="text-lg font-black">Battery checks</h2>
-        <%= link_to "Add battery", new_vessel_battery_path(@vessel), class: "rounded-md px-3 py-2 text-sm font-bold text-cyan-700" %>
+        <%= link_to "Add battery", new_vessel_battery_path(@vessel, from_service_visit: 1),
+          class: "rounded-md px-3 py-2 text-sm font-bold text-cyan-700",
+          data: { turbo_frame: "service_visit_battery_management", action: "click->battery-management#open" } %>
       </div>
-      <% if @service_visit.service_visit_battery_checks.any? %>
-        <div class="space-y-3">
+      <div id="service_visit_battery_checks" class="space-y-3">
+        <% if @service_visit.service_visit_battery_checks.any? %>
           <% @service_visit.ordered_battery_checks.each do |battery_check| %>
-            <% battery = battery_check.asset_battery %>
-            <div class="rounded-md border border-slate-200 bg-slate-50 p-3">
-              <label class="flex min-h-12 items-start gap-3">
-                <%= hidden_field_tag "service_visit[battery_checks][#{battery.id}][checked]", "0" %>
-                <%= check_box_tag "service_visit[battery_checks][#{battery.id}][checked]", "1", battery_check.checked?, class: "mt-1 h-6 w-6 rounded border-slate-300 text-cyan-700" %>
-                <span>
-                  <span class="block text-base font-black text-slate-800"><%= battery.name %></span>
-                  <span class="mt-1 block text-sm text-slate-600"><%= battery.location.presence || "Location not set" %></span>
-                </span>
-              </label>
-              <div class="mt-2 grid gap-3 sm:grid-cols-[10rem_1fr]">
-                <%= number_field_tag "service_visit[battery_checks][#{battery.id}][voltage]", battery_check.voltage, step: "0.01", inputmode: "decimal", placeholder: "12.70", class: "min-h-12 w-full rounded-md border border-slate-300 bg-white px-4 py-3 text-base" %>
-                <%= text_field_tag "service_visit[battery_checks][#{battery.id}][notes]", battery_check.notes, placeholder: "Optional battery note", class: "min-h-12 w-full rounded-md border border-slate-300 bg-white px-4 py-3 text-base" %>
-              </div>
-            </div>
+            <%= render "service_visits/battery_check", vessel: @vessel, battery_check: battery_check %>
           <% end %>
-        </div>
-      <% else %>
-        <div class="rounded-md border border-amber-200 bg-amber-50 p-4">
+        <% end %>
+      </div>
+      <% if @service_visit.service_visit_battery_checks.empty? %>
+        <div id="service_visit_no_batteries" class="rounded-md border border-amber-200 bg-amber-50 p-4">
           <p class="font-black text-amber-900">No batteries have been added for this vessel yet.</p>
-          <p class="mt-1 text-sm leading-6 text-amber-800">Add batteries from the vessel detail page so they appear during future visits.</p>
+          <p class="mt-1 text-sm leading-6 text-amber-800">Add batteries here so they can be checked during this visit.</p>
         </div>
       <% end %>
     </section>
@@ -169,5 +158,8 @@
       <%= form.submit @service_visit.persisted? ? "Save visit changes" : "Save visit report", class: "min-h-14 w-full rounded-md bg-cyan-700 px-5 py-4 text-base font-black text-white shadow-lg md:shadow-sm", data: { turbo_submits_with: "Saving..." } %>
     </div>
   <% end %>
+  <%= turbo_frame_tag "service_visit_battery_management",
+    hidden: true,
+    data: { action: "turbo:frame-load->battery-management#reveal" } %>
   </div>
 </section>

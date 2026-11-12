@@ -1,0 +1,3 @@
+<%= turbo_stream.update "service_visit_battery_#{@battery.id}_name", @battery.name %>
+<%= turbo_stream.update "service_visit_battery_#{@battery.id}_location", @battery.location.presence || "Location not set" %>
+<%= turbo_stream.replace "service_visit_battery_management", partial: "asset_batteries/empty_battery_management" %>
