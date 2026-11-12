@@ -1,6 +1,12 @@
 <%= field_error_messages(@battery) %>
 
-<%= form_with model: [@vessel, @battery], url: @battery.persisted? ? vessel_battery_path(@vessel, @battery) : vessel_batteries_path(@vessel), class: "space-y-5" do |form| %>
+<% inline_frame_request = params[:from_service_visit] == "1" && request.headers["Turbo-Frame"] == "service_visit_battery_management" %>
+<% form_path = if @battery.persisted?
+  vessel_battery_path(@vessel, @battery, format: inline_frame_request ? :turbo_stream : nil, from_service_visit: inline_frame_request ? 1 : nil)
+else
+  vessel_batteries_path(@vessel, format: inline_frame_request ? :turbo_stream : nil, from_service_visit: inline_frame_request ? 1 : nil)
+end %>
+<%= form_with model: [@vessel, @battery], url: form_path, class: "space-y-5" do |form| %>
   <section class="space-y-4 rounded-md border border-slate-200 bg-white p-4 shadow-sm">
     <div>
       <%= form.label :name, "Battery name", class: "text-sm font-semibold text-slate-700" %>

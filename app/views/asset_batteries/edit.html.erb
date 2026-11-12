@@ -1,9 +1,19 @@
+<% if params[:from_service_visit] == "1" && request.headers["Turbo-Frame"] == "service_visit_battery_management" %>
+  <turbo-frame id="service_visit_battery_management">
+<% end %>
 <section class="mx-auto max-w-2xl space-y-5">
   <div>
-    <%= link_to "Back to #{@vessel.name}", vessel_path(@vessel, anchor: "batteries"), class: "inline-flex min-h-10 items-center rounded-md py-2 text-sm font-bold text-cyan-700" %>
+    <% if params[:from_service_visit] == "1" && request.headers["Turbo-Frame"] == "service_visit_battery_management" %>
+      <%= link_to "Cancel", "#", class: "inline-flex min-h-10 items-center rounded-md py-2 text-sm font-bold text-cyan-700", data: { turbo: false, action: "click->battery-management#close" } %>
+    <% else %>
+      <%= link_to "Back to #{@vessel.name}", vessel_path(@vessel, anchor: "batteries"), class: "inline-flex min-h-10 items-center rounded-md py-2 text-sm font-bold text-cyan-700" %>
+    <% end %>
     <p class="mt-3 text-sm font-bold uppercase tracking-normal text-cyan-700">Batteries</p>
     <h1 class="mt-1 text-3xl font-black tracking-normal">Edit battery</h1>
   </div>
 
   <%= render "form" %>
 </section>
+<% if params[:from_service_visit] == "1" && request.headers["Turbo-Frame"] == "service_visit_battery_management" %>
+  </turbo-frame>
+<% end %>

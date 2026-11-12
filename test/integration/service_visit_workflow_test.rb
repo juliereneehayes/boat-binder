@@ -110,6 +110,87 @@ class ServiceVisitWorkflowTest < ActionDispatch::IntegrationTest
     assert_select "input[type='file'][name='service_visit[photos][]'][capture]", count: 0
   end
 
+  test "service visit battery checks cannot associate a battery from another vessel" do
+    sign_in_as
+    vessel = create_vessel
+    other_vessel = create_vessel(account: vessel.account, name: "Other Vessel")
+    other_battery = create_battery(asset: other_vessel, name: "Other Vessel Battery")
+
+    post vessel_service_visits_path(vessel), params: {
+      service_visit: {
+        visit_date: Date.current,
+        summary: "Vessel scoped battery checks.",
+        battery_checks: {
+          other_battery.id.to_s => { checked: "1", voltage: "12.80", notes: "Must not associate" }
+        }
+      }
+    }
+
+    service_visit = ServiceVisit.find_by!(summary: "Vessel scoped battery checks.")
+    assert_redirected_to vessel_service_visit_path(vessel, service_visit)
+    assert_empty service_visit.service_visit_battery_checks
+    assert_equal other_vessel.id, other_battery.reload.asset_id
+  end
+
+  test "service visit creation ignores an inactive same-vessel battery check" do
+    sign_in_as
+    vessel = create_vessel
+    inactive_battery = create_battery(asset: vessel, name: "Retired Battery")
+    inactive_battery.update!(active: false)
+
+    assert_no_difference -> { ServiceVisitBatteryCheck.count } do
+      post vessel_service_visits_path(vessel), params: {
+        service_visit: {
+          visit_date: Date.current,
+          summary: "Inactive battery is not checked.",
+          battery_checks: {
+            inactive_battery.id.to_s => { checked: "1", voltage: "12.80", notes: "Must be ignored" }
+          }
+        }
+      }
+    end
+
+    service_visit = ServiceVisit.find_by!(summary: "Inactive battery is not checked.")
+    assert_redirected_to vessel_service_visit_path(vessel, service_visit)
+    assert_empty service_visit.service_visit_battery_checks
+  end
+
+  test "service visit update ignores a battery check ID belonging to another vessel" do
+    captain = create_user(email: "cross-vessel-battery-update@example.test")
+    sign_in_as captain
+    vessel = create_vessel
+    other_vessel = create_vessel(account: vessel.account, name: "Other Battery Vessel")
+    vessel_battery = create_battery(asset: vessel, name: "Current Vessel Battery")
+    other_battery = create_battery(asset: other_vessel, name: "Other Vessel Battery")
+    visit = vessel.service_visits.new(performed_by_user: captain, visit_date: Date.current)
+    visit.build_workflow_defaults
+    visit.save!
+    other_visit = other_vessel.service_visits.new(performed_by_user: captain, visit_date: Date.current)
+    other_visit.build_workflow_defaults
+    other_visit.save!
+    other_check = other_visit.service_visit_battery_checks.find_by!(asset_battery: other_battery)
+    other_check.update!(checked: true, voltage: 12.35, notes: "Original other-vessel check")
+
+    patch vessel_service_visit_path(vessel, visit), params: {
+      service_visit: {
+        visit_date: visit.visit_date,
+        summary: "Ignore foreign battery check ID.",
+        battery_checks: {
+          vessel_battery.id.to_s => { checked: "0", voltage: "12.40", notes: "Current vessel battery" },
+          other_battery.id.to_s => { checked: "0", voltage: "99.99", notes: "Must not modify" }
+        }
+      }
+    }
+
+    assert_redirected_to vessel_service_visit_path(vessel, visit)
+    visit.reload
+    assert_nil visit.service_visit_battery_checks.find_by(asset_battery: other_battery)
+    other_check.reload
+    assert other_check.checked?
+    assert_equal 12.35.to_d, other_check.voltage
+    assert_equal "Original other-vessel check", other_check.notes
+  end
+
   test "service visit dates use app timezone for defaults and summary emails" do
     travel_to Time.utc(2026, 7, 6, 6, 30) do
       account = create_account(name: "Elliott Family")

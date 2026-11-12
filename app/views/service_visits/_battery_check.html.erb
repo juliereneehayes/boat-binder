@@ -1,0 +1,18 @@
+<% battery = local_assigns[:battery] || battery_check.asset_battery %>
+<div id="service_visit_battery_check_<%= battery.id %>" class="rounded-md border border-slate-200 bg-slate-50 p-3">
+  <label class="flex min-h-12 items-start gap-3">
+    <%= hidden_field_tag "service_visit[battery_checks][#{battery.id}][checked]", "0" %>
+    <%= check_box_tag "service_visit[battery_checks][#{battery.id}][checked]", "1", battery_check&.checked? || false, class: "mt-1 h-6 w-6 rounded border-slate-300 text-cyan-700" %>
+    <span>
+      <span id="service_visit_battery_<%= battery.id %>_name" class="block text-base font-black text-slate-800"><%= battery.name %></span>
+      <span id="service_visit_battery_<%= battery.id %>_location" class="mt-1 block text-sm text-slate-600"><%= battery.location.presence || "Location not set" %></span>
+    </span>
+  </label>
+  <div class="mt-2 grid gap-3 sm:grid-cols-[10rem_1fr]">
+    <%= number_field_tag "service_visit[battery_checks][#{battery.id}][voltage]", battery_check&.voltage, step: "0.01", inputmode: "decimal", placeholder: "12.70", class: "min-h-12 w-full rounded-md border border-slate-300 bg-white px-4 py-3 text-base" %>
+    <%= text_field_tag "service_visit[battery_checks][#{battery.id}][notes]", battery_check&.notes, placeholder: "Optional battery note", class: "min-h-12 w-full rounded-md border border-slate-300 bg-white px-4 py-3 text-base" %>
+  </div>
+  <%= link_to "Edit battery", edit_vessel_battery_path(vessel, battery, from_service_visit: 1),
+    class: "mt-2 inline-flex min-h-10 items-center text-sm font-bold text-cyan-700",
+    data: { turbo_frame: "service_visit_battery_management", action: "click->battery-management#open" } %>
+</div>
