@@ -143,8 +143,12 @@ class ServiceVisitBatteryManagementTest < ApplicationSystemTestCase
     click_link "Add battery"
     within "#service_visit_battery_management" do
       fill_in "Battery name", with: "New Visit Battery"
+      assert_equal "New Visit Battery", find_field("Battery name").value
       click_button "Add battery"
     end
+    assert_no_text "Name can't be blank"
+    assert_current_path edit_vessel_service_visit_path(@vessel, service_visit)
+    assert_text "New Visit Battery"
     new_battery = @vessel.asset_batteries.find_by!(name: "New Visit Battery")
     check "New Visit Battery"
     fill_in "service_visit_battery_checks_#{new_battery.id}_voltage", with: "12.83"
@@ -175,7 +179,7 @@ class ServiceVisitBatteryManagementTest < ApplicationSystemTestCase
 
     assert_text "Battery added."
     assert_current_path vessel_path(@vessel)
-    assert_includes page.current_url, "#batteries"
+    assert_selector "#batteries"
     assert_no_text "turbo-stream"
   end
 
