@@ -25,9 +25,14 @@ class ServiceVisitBatteryManagementTest < ApplicationSystemTestCase
     within "#service_visit_battery_management" do
       fill_in "Battery name", with: "House Bank"
       fill_in "Location", with: "Aft locker"
+      assert_equal "House Bank", find_field("Battery name").value
+      assert_equal "Aft locker", find_field("Location").value
       click_button "Add battery"
     end
 
+    assert_current_path new_vessel_service_visit_path(@vessel)
+    assert_no_text "Name can't be blank"
+    assert_selector "#service_visit_battery_checks"
     battery = @vessel.asset_batteries.find_by!(name: "House Bank")
     assert_selector "#service_visit_battery_#{battery.id}_name", text: "House Bank"
     assert_equal "Port side", find_field("Location").value
