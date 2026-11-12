@@ -199,8 +199,15 @@ class ServiceVisitsController < ApplicationController
 
   def assign_battery_checks
     submitted_checks = params.dig(:service_visit, :battery_checks) || {}
+    checks = @service_visit.service_visit_battery_checks
 
-    @service_visit.service_visit_battery_checks.each do |check|
+    @vessel.active_batteries.where(id: submitted_checks.keys).each do |battery|
+      next if checks.any? { |check| check.asset_battery_id == battery.id }
+
+      checks.build(asset_battery: battery)
+    end
+
+    checks.each do |check|
       attrs = submitted_checks[check.asset_battery_id.to_s] || {}
       check.checked = ActiveModel::Type::Boolean.new.cast(attrs.fetch(:checked, "0"))
       check.voltage = attrs[:voltage]

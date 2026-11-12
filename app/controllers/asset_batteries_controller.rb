@@ -61,12 +61,14 @@ class AssetBatteriesController < ApplicationController
   end
 
   def service_visit_battery_management?
-    params[:from_service_visit] == "1" && request.format.turbo_stream?
+    service_visit_battery_management_frame_request? && request.format.turbo_stream?
   end
 
   def render_battery_form(template)
-    options = { status: :unprocessable_entity }
-    options[:formats] = :html if params[:from_service_visit] == "1"
-    render template, **options
+    render template, formats: :html, status: :unprocessable_entity
+  end
+
+  def service_visit_battery_management_frame_request?
+    params[:from_service_visit] == "1" && request.headers["Turbo-Frame"] == "service_visit_battery_management"
   end
 end

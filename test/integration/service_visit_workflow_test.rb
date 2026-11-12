@@ -110,6 +110,28 @@ class ServiceVisitWorkflowTest < ActionDispatch::IntegrationTest
     assert_select "input[type='file'][name='service_visit[photos][]'][capture]", count: 0
   end
 
+  test "service visit battery checks cannot associate a battery from another vessel" do
+    sign_in_as
+    vessel = create_vessel
+    other_vessel = create_vessel(account: vessel.account, name: "Other Vessel")
+    other_battery = create_battery(asset: other_vessel, name: "Other Vessel Battery")
+
+    post vessel_service_visits_path(vessel), params: {
+      service_visit: {
+        visit_date: Date.current,
+        summary: "Vessel scoped battery checks.",
+        battery_checks: {
+          other_battery.id.to_s => { checked: "1", voltage: "12.80", notes: "Must not associate" }
+        }
+      }
+    }
+
+    service_visit = ServiceVisit.find_by!(summary: "Vessel scoped battery checks.")
+    assert_redirected_to vessel_service_visit_path(vessel, service_visit)
+    assert_empty service_visit.service_visit_battery_checks
+    assert_equal other_vessel.id, other_battery.reload.asset_id
+  end
+
   test "service visit dates use app timezone for defaults and summary emails" do
     travel_to Time.utc(2026, 7, 6, 6, 30) do
       account = create_account(name: "Elliott Family")
