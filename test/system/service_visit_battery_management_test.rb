@@ -57,6 +57,7 @@ class ServiceVisitBatteryManagementTest < ApplicationSystemTestCase
     end
 
     assert_selector "#service_visit_battery_#{battery.id}_name", text: "House Bank Updated"
+    assert_checked_field "House Bank Updated"
     assert_equal "12.64", find_field("service_visit_battery_checks_#{battery.id}_voltage").value
     assert_equal "Stable", find_field("service_visit_battery_checks_#{battery.id}_notes").value
     assert_equal "Unsaved summary", find_field("Owner summary").value
@@ -64,7 +65,6 @@ class ServiceVisitBatteryManagementTest < ApplicationSystemTestCase
     assert_selected_visit_photo_preview(preview_src)
     assert_equal 0, @vessel.service_visits.count
 
-    check "House Bank Updated"
     click_button "Save visit report"
 
     assert_text "Visit report saved."
