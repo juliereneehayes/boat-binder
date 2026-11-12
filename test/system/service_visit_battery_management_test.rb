@@ -71,7 +71,7 @@ class ServiceVisitBatteryManagementTest < ApplicationSystemTestCase
     assert_equal 1, selected_visit_photo_count
 
     click_link "Cancel"
-    assert_selector "#service_visit_battery_management[hidden]"
+    assert_selector "#service_visit_battery_management[hidden]", visible: :all
     assert_equal "Still here", find_field("Owner summary").value
     assert_equal 1, selected_visit_photo_count
     assert_equal 0, @vessel.service_visits.count
