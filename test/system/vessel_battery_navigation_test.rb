@@ -27,7 +27,8 @@ class VesselBatteryNavigationTest < ApplicationSystemTestCase
   private
 
   def assert_batteries_section_navigation(vessel)
-    assert_current_path vessel_path(vessel, anchor: "batteries")
+    assert_current_path vessel_path(vessel)
+    assert_includes page.current_url, "#{vessel_path(vessel)}#batteries"
     assert_equal "#batteries", page.evaluate_script("window.location.hash")
 
     section_position = page.evaluate_script("document.getElementById('batteries').getBoundingClientRect()")
