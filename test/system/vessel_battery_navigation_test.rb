@@ -16,7 +16,9 @@ class VesselBatteryNavigationTest < ApplicationSystemTestCase
 
     assert_batteries_section_navigation(vessel)
 
-    click_link "Edit", match: :first
+    within "#batteries" do
+      click_link "Edit"
+    end
     fill_in "Battery name", with: "Updated House Battery"
     click_button "Save battery"
 
