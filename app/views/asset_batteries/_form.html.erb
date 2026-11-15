@@ -6,7 +6,7 @@
 else
   vessel_batteries_path(@vessel, format: inline_frame_request ? :turbo_stream : nil, from_service_visit: inline_frame_request ? 1 : nil)
 end %>
-<%= form_with model: [@vessel, @battery], url: form_path, class: "space-y-5" do |form| %>
+<%= form_with model: [@vessel, @battery], url: form_path, class: "space-y-5", data: (inline_frame_request ? {} : { turbo: false }) do |form| %>
   <section class="space-y-4 rounded-md border border-slate-200 bg-white p-4 shadow-sm">
     <div>
       <%= form.label :name, "Battery name", class: "text-sm font-semibold text-slate-700" %>
