@@ -79,7 +79,7 @@ Documentation currently includes:
 
 - `README.md` for project overview, setup, and verification commands
 - `docs/configuration.md` for environment variables
-- `docs/email.md` for Mailgun SMTP setup
+- the authoritative [private email guide](https://github.com/juliereneehayes/boat-binder-internal/blob/main/docs/email.md) for Mailgun SMTP setup
 - `docs/stripe.md` for Stripe webhook setup
 
 Ordinary `db/seeds.rb` is non-destructive outside production and aborts immediately in production.
@@ -120,7 +120,7 @@ The following values or behaviors require environment-specific handling:
 
 - `APP_HOST` controls email and service-visit report links.
 - `SECRET_KEY_BASE` is required in production and must be unique to that environment.
-- `docs/email.md` examples use `app.boat-binder.com`.
+- the [private email guide](https://github.com/juliereneehayes/boat-binder-internal/blob/main/docs/email.md) uses `app.boat-binder.com` in sanitized SMTP examples.
 - `docs/stripe.md` documents `https://app.boat-binder.com/webhooks/stripe` as the production webhook endpoint.
 - Production mail delivery requires Mailgun SMTP variables.
 - Production uploads require S3 variables and a bucket.
@@ -325,7 +325,7 @@ designed and approved; until then, shared staging represents `main` only.
 
 - Update `README.md` with the staging URL and the high-level deployment flow.
 - Expand `docs/configuration.md` into per-environment config var tables.
-- Update `docs/email.md` with staging SMTP guidance and sender/domain expectations.
+- Historical proposal: review staging SMTP guidance and sender/domain expectations in the [private email guide](https://github.com/juliereneehayes/boat-binder-internal/blob/main/docs/email.md) if separately needed.
 - Update `docs/stripe.md` with staging webhook endpoint setup, test-mode secret handling, and event verification steps.
 - Add a deployment runbook that covers staging deploy, smoke tests, production promotion, rollback, and release-phase migration checks.
 - If #103 adds a future demo, document its isolated data lifecycle without weakening ordinary seed
