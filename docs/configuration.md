@@ -61,8 +61,8 @@ deploying the MFA capability or running its release migration. Generate independ
 environment-specific values of at least 32 bytes (for example, separate outputs from
 `bin/rails secret`); never reuse `SECRET_KEY_BASE`.
 Local development and test derive disposable/local material from the local Rails secret when these
-variables are absent. Key rotation and re-encryption are documented in
-[Issue #233: TOTP MFA rollout and operations](issue-233-mfa.md).
+variables are absent. MFA encryption-key rotation, re-encryption, verification, and recovery are
+covered in the [private authentication and account security guide](https://github.com/juliereneehayes/boat-binder-internal/blob/main/docs/authentication.md).
 
 MFA challenge replay markers and MFA attempt/password-reprompt throttles use the shared Rails cache.
 Production must retain `config.cache_store = :solid_cache_store`; `NullStore`, memory-only, or another
