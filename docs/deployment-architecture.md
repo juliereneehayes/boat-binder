@@ -78,7 +78,7 @@ GitHub Actions CI runs on pull requests and pushes to `main`. It includes separa
 Documentation currently includes:
 
 - `README.md` for project overview, setup, and verification commands
-- `docs/configuration.md` for environment variables
+- the authoritative [private configuration guide](https://github.com/juliereneehayes/boat-binder-internal/blob/main/docs/configuration.md) for environment variables
 - the authoritative [private email guide](https://github.com/juliereneehayes/boat-binder-internal/blob/main/docs/email.md) for Mailgun SMTP setup
 - `docs/stripe.md` for Stripe webhook setup
 
@@ -324,7 +324,7 @@ designed and approved; until then, shared staging represents `main` only.
 ## Documentation Follow-Up
 
 - Update `README.md` with the staging URL and the high-level deployment flow.
-- Expand `docs/configuration.md` into per-environment config var tables.
+- Historical proposal (not an approved current task): expand the [private configuration guide](https://github.com/juliereneehayes/boat-binder-internal/blob/main/docs/configuration.md) into per-environment config var tables.
 - Historical proposal: review staging SMTP guidance and sender/domain expectations in the [private email guide](https://github.com/juliereneehayes/boat-binder-internal/blob/main/docs/email.md) if separately needed.
 - Update `docs/stripe.md` with staging webhook endpoint setup, test-mode secret handling, and event verification steps.
 - Add a deployment runbook that covers staging deploy, smoke tests, production promotion, rollback, and release-phase migration checks.
